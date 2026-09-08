@@ -1,0 +1,18 @@
+# Dependencies & Portable Runtimes
+node_modules/
+.runtime/
+
+# Logs & Process IDs
+logs/
+*.log
+*.pid
+
+# Environment Variables
+.env
+.env.local
+.env.*.local
+
+# OS Generated Files
+.DS_Store
+Thumbs.db
+desktop.ini
