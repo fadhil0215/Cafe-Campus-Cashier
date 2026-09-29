@@ -3783,6 +3783,38 @@ img {
 .category-row.archived { opacity: 0.5; }
 .category-grab { color: #a79487; }
 
+/* Print button group in order modal header */
+.print-btn-group {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+/* Kitchen type selector (radio cards in category modal) */
+.kitchen-type-selector {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+  margin-top: 6px;
+}
+.kitchen-type-option {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  border: 2px solid var(--line);
+  border-radius: 10px;
+  cursor: pointer;
+  transition: border-color 0.15s, background 0.15s;
+  user-select: none;
+}
+.kitchen-type-option input[type="radio"] { display: none; }
+.kitchen-type-option span { font-size: 22px; line-height: 1; }
+.kitchen-type-option div b { display: block; font-size: 13px; font-weight: 700; }
+.kitchen-type-option div small { font-size: 11px; color: var(--muted); }
+.kitchen-type-option.selected { border-color: var(--orange); background: rgba(214, 123, 51, 0.07); }
+
+
 .table-summary { display: flex; gap: 16px; margin-bottom: 14px; color: var(--muted); font-size: 13px; }
 .table-summary b { color: var(--orange); }
 

@@ -616,7 +616,7 @@ function setupAdminRealtime(refresh) {
     es = new EventSource('/api/events?channel=admin');
     es.addEventListener('admin-order', e => {
       let ord = null; try { ord = JSON.parse(e.data); } catch { }
-      if (ord && ord.paid !== true) { refresh(); return; }
+      if (ord && ord.paid !== true && ord.payment?.method !== 'CASH' && ord.payment?.method !== 'CASH_DEMO') { refresh(); return; }
       const title = ord ? `Pesanan Baru #${ord.orderNumber} (${ord.tableName})` : 'Pesanan Baru Masuk!';
       toast(`🔔 ${title}`); alarm.startAlarm10s('admin'); showAlarmBanner(title, 'Alarm pesanan masuk berbunyi selama 10 detik...', () => alarm.stopAlarm()); refresh();
     });
@@ -835,7 +835,7 @@ async function checkoutPage() {
   const fee = Math.round(sub * Number(settings.serviceFee || 0) / 100); const tax = Math.round((sub + fee) * Number(settings.taxPercent || 0) / 100); const total = sub + fee + tax;
 
   document.body.className = 'customer-body checkout-body';
-  document.body.innerHTML = customerShell(`<main class="simple-customer-page checkout-page"><div class="customer-page-title"><button id="back" class="circle-back" aria-label="Kembali">${icon('back', 18)}</button><h1>${addTo ? 'Bayar Pesanan Tambahan' : 'Pilih Pembayaran'}</h1></div><div class="checkout-grid"><section class="checkout-summary-section">${addTo ? `<div class="addon-info-card"><b>➕ Tambahan untuk pesanan #${esc(addTo.orderNumber)}</b><small>Data verifikasi pelajar dan meja otomatis mengikuti pesanan utama, jadi tidak perlu diisi lagi.</small></div>` : ''}${isStud && !addTo ? `<div class="student-form-card"><div class="student-form-header"><h4>🎓 Verifikasi Identitas Pelajar & Edu ID</h4><span class="badge-role-student">Harga Hemat Aktif</span></div><div class="student-form-grid"><label class="full">Nama Lengkap Pelajar / Mahasiswa<input id="studentName" placeholder="Contoh: Rian Ardiansyah" value="${esc(c.studentInfo?.studentName || '')}" required></label><label>Asal Kampus / Sekolah<input id="studentCampus" placeholder="Contoh: Universitas Indonesia / ITB / SMA 1" value="${esc(c.studentInfo?.campus || '')}" required></label><label>Nomor Induk (NIM / NIS)<input id="studentIdNum" placeholder="Contoh: 2106781290" value="${esc(c.studentInfo?.studentId || '')}" required></label><div class="full" style="margin-top:2px;"><label style="display:block;font-size:12px;font-weight:700;color:var(--ink);">Email Institusi Kampus Resmi (.ac.id / .edu)</label><div class="otp-input-group"><input id="studentEmail" type="email" placeholder="Contoh: mahasiswa@ui.ac.id" value="${esc(studentEmailVal)}"><button type="button" id="btnSendOtp" class="btn btn-soft btn-small" style="white-space:nowrap;">Kirim OTP</button></div><div id="otpVerifyRow" style="margin-top:8px;display:none;"><div class="otp-input-group"><input id="studentOtp" type="text" placeholder="Masukkan 4 digit OTP..." maxlength="6"><button type="button" id="btnVerifyOtp" class="btn btn-green btn-small" style="white-space:nowrap;">Verifikasi OTP</button></div></div><div id="emailVerifiedBadge" style="${isEmailVerified ? '' : 'display:none;'}"><span class="badge-edu-verified">✅ Email Kampus Terverifikasi Resmi (.ac.id)</span></div></div></div><div class="student-photo-section"><div class="student-photo-label"><span>📸 Foto Liveness bersama Kartu Pelajar / KTM</span><span style="font-size:10.5px;color:#2c8b5b;font-weight:700;">Wajib Kamera Langsung (Real-time)</span></div><div id="photoDropzone" class="student-photo-dropzone" style="cursor:pointer;"><div id="dropzoneEmpty" class="dropzone-content" style="${studentPhotoData ? 'display:none;' : ''}"><div class="dropzone-icon">📷</div><div class="dropzone-text"><b>Buka Kamera Langsung (Selfie bersama KTM)</b><small>Foto wajib diambil langsung saat ini</small></div></div><div id="dropzonePreview" class="student-photo-preview-wrap" style="${studentPhotoData ? '' : 'display:none;'}"><img id="previewImg" src="${esc(studentPhotoData || '')}" alt="Selfie KTM"><div class="student-photo-preview-info"><b>✅ Foto Liveness Kamera Berhasil Diambil</b><small>Klik untuk membuka kamera dan mengambil ulang</small></div><button type="button" id="btnChangePhoto" class="btn btn-soft btn-small">Ambil Ulang</button></div></div></div><div class="quota-notice-badge"><span>🔒</span><div><b>Anti-Sybil Quota:</b> Diskon pelajar dibatasi maksimal 3 pesanan per hari per identitas (NIM/Email) untuk mencegah jastip/pinjam akun.</div></div></div>` : ''}<div class="checkout-order-card"><div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;"><h3 style="margin:0;">Ringkasan Pesanan (${esc(c.tableName || 'Meja')})</h3><span class="${isStud ? 'badge-role-student' : 'badge-role-regular'}">${isStud ? '🎓 Pelajar' : '☕ Umum'}</span></div>${c.items.map(i => `<div class="checkout-item"><div><b>${i.quantity}x ${esc(i.name)}</b><small>${esc(optionSummary(i))}${i.note ? ` • ${esc(i.note)}` : ''}</small>${i.savings ? `<small style="color:#2c8b5b;display:block;font-weight:700;">Hemat ${money(i.savings)}</small>` : ''}</div><strong>${money(i.price * i.quantity)}</strong></div>`).join('')}<div class="payment-summary compact">${savings > 0 ? `<div><span>Subtotal Reguler</span><span style="text-decoration:line-through;color:var(--muted);">${money(regSub)}</span></div><div class="student-savings-row"><span>🎉 Subsidi Harga Pelajar</span><strong>- ${money(savings)}</strong></div>` : ''}<div><span>Subtotal</span><b>${money(sub)}</b></div>${fee ? `<div><span>Biaya Layanan (${settings.serviceFee}%)</span><b>${money(fee)}</b></div>` : ''}${tax ? `<div><span>Pajak (${settings.taxPercent}%)</span><b>${money(tax)}</b></div>` : ''}<hr><div class="summary-total"><span>Total Pembayaran</span><strong>${money(total)}</strong></div></div></div><div class="order-note-box"><label class="field-label">Catatan untuk Barista / Dapur</label><textarea id="orderNote" class="textarea" placeholder="Contoh: sajikan bersamaan, sendok tambahan...">${esc(orderNote)}</textarea></div></section><section class="payment-methods"><h3>Pilih Metode Pembayaran</h3><div id="paymentChoiceList">${settings.qrisEnabled !== false ? `<button type="button" class="payment-choice ${method === 'QRIS_DEMO' ? 'selected' : ''}" data-pay="QRIS_DEMO"><div class="payment-choice-icon qris-icon">QR</div><div><b>QRIS</b><span>Bayar instan via BCA, GoPay, OVO, ShopeePay</span></div><i></i></button>` : ''}${settings.cashEnabled !== false ? `<button type="button" class="payment-choice ${method === 'CASH' ? 'selected' : ''}" data-pay="CASH"><div class="payment-choice-icon">${icon('cart', 19)}</div><div><b>Bayar di Kasir (Tunai)</b><span>Lakukan pembayaran langsung ke meja kasir</span></div><i></i></button>` : ''}</div><div class="demo-payment-note">ℹ️ <b>Mode Demo:</b> QRIS adalah simulasi sandbox (tidak menggunakan saldo nyata).</div><button id="place" class="btn btn-primary btn-wide btn-large">Konfirmasi Pesanan • ${money(total)}</button></section></div></main>`, { tableName: c.tableName, className: 'simple-shell' });
+  document.body.innerHTML = customerShell(`<main class="simple-customer-page checkout-page"><div class="customer-page-title"><button id="back" class="circle-back" aria-label="Kembali">${icon('back', 18)}</button><h1>${addTo ? 'Bayar Pesanan Tambahan' : 'Pilih Pembayaran'}</h1></div><div class="checkout-grid"><section class="checkout-summary-section">${addTo ? `<div class="addon-info-card"><b>➕ Tambahan untuk pesanan #${esc(addTo.orderNumber)}</b><small>Data verifikasi pelajar dan meja otomatis mengikuti pesanan utama, jadi tidak perlu diisi lagi.</small></div>` : ''}${isStud && !addTo ? `<div class="student-form-card"><div class="student-form-header"><h4>🎓 Verifikasi Identitas Pelajar & Edu ID</h4><span class="badge-role-student">Harga Hemat Aktif</span></div><div class="student-form-grid"><label class="full">Nama Lengkap Pelajar / Mahasiswa<input id="studentName" placeholder="Contoh: Rian Ardiansyah" value="${esc(c.studentInfo?.studentName || '')}" required></label><label>Asal Kampus / Sekolah<input id="studentCampus" placeholder="Contoh: Universitas Indonesia / ITB / SMA 1" value="${esc(c.studentInfo?.campus || '')}" required></label><label>Nomor Induk (NIM / NIS)<input id="studentIdNum" placeholder="Contoh: 2106781290" value="${esc(c.studentInfo?.studentId || '')}" required></label><div class="full" style="margin-top:2px;"><label style="display:block;font-size:12px;font-weight:700;color:var(--ink);">Email Institusi Kampus Resmi (.ac.id / .edu)</label><div class="otp-input-group"><input id="studentEmail" type="email" placeholder="Contoh: mahasiswa@ui.ac.id" value="${esc(studentEmailVal)}"><button type="button" id="btnSendOtp" class="btn btn-soft btn-small" style="white-space:nowrap;">Kirim OTP</button></div><div id="otpVerifyRow" style="margin-top:8px;display:none;"><div class="otp-input-group"><input id="studentOtp" type="text" placeholder="Masukkan 6 digit OTP..." maxlength="6"><button type="button" id="btnVerifyOtp" class="btn btn-green btn-small" style="white-space:nowrap;">Verifikasi OTP</button></div></div><div id="emailVerifiedBadge" style="${isEmailVerified ? '' : 'display:none;'}"><span class="badge-edu-verified">✅ Email Kampus Terverifikasi Resmi (.ac.id)</span></div></div></div><div class="student-photo-section"><div class="student-photo-label"><span>📸 Foto Liveness bersama Kartu Pelajar / KTM</span><span style="font-size:10.5px;color:#2c8b5b;font-weight:700;">Wajib Kamera Langsung (Real-time)</span></div><div id="photoDropzone" class="student-photo-dropzone" style="cursor:pointer;"><div id="dropzoneEmpty" class="dropzone-content" style="${studentPhotoData ? 'display:none;' : ''}"><div class="dropzone-icon">📷</div><div class="dropzone-text"><b>Buka Kamera Langsung (Selfie bersama KTM)</b><small>Foto wajib diambil langsung saat ini</small></div></div><div id="dropzonePreview" class="student-photo-preview-wrap" style="${studentPhotoData ? '' : 'display:none;'}"><img id="previewImg" src="${esc(studentPhotoData || '')}" alt="Selfie KTM"><div class="student-photo-preview-info"><b>✅ Foto Liveness Kamera Berhasil Diambil</b><small>Klik untuk membuka kamera dan mengambil ulang</small></div><button type="button" id="btnChangePhoto" class="btn btn-soft btn-small">Ambil Ulang</button></div></div></div><div class="quota-notice-badge"><span>🔒</span><div><b>Anti-Sybil Quota:</b> Diskon pelajar dibatasi maksimal 3 pesanan per hari per identitas (NIM/Email) untuk mencegah jastip/pinjam akun.</div></div></div>` : ''}<div class="checkout-order-card"><div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;"><h3 style="margin:0;">Ringkasan Pesanan (${esc(c.tableName || 'Meja')})</h3><span class="${isStud ? 'badge-role-student' : 'badge-role-regular'}">${isStud ? '🎓 Pelajar' : '☕ Umum'}</span></div>${c.items.map(i => `<div class="checkout-item"><div><b>${i.quantity}x ${esc(i.name)}</b><small>${esc(optionSummary(i))}${i.note ? ` • ${esc(i.note)}` : ''}</small>${i.savings ? `<small style="color:#2c8b5b;display:block;font-weight:700;">Hemat ${money(i.savings)}</small>` : ''}</div><strong>${money(i.price * i.quantity)}</strong></div>`).join('')}<div class="payment-summary compact">${savings > 0 ? `<div><span>Subtotal Reguler</span><span style="text-decoration:line-through;color:var(--muted);">${money(regSub)}</span></div><div class="student-savings-row"><span>🎉 Subsidi Harga Pelajar</span><strong>- ${money(savings)}</strong></div>` : ''}<div><span>Subtotal</span><b>${money(sub)}</b></div>${fee ? `<div><span>Biaya Layanan (${settings.serviceFee}%)</span><b>${money(fee)}</b></div>` : ''}${tax ? `<div><span>Pajak (${settings.taxPercent}%)</span><b>${money(tax)}</b></div>` : ''}<hr><div class="summary-total"><span>Total Pembayaran</span><strong>${money(total)}</strong></div></div></div><div class="order-note-box"><label class="field-label">Catatan untuk Barista / Dapur</label><textarea id="orderNote" class="textarea" placeholder="Contoh: sajikan bersamaan, sendok tambahan...">${esc(orderNote)}</textarea></div></section><section class="payment-methods"><h3>Pilih Metode Pembayaran</h3><div id="paymentChoiceList">${settings.qrisEnabled !== false ? `<button type="button" class="payment-choice ${method === 'QRIS_DEMO' ? 'selected' : ''}" data-pay="QRIS_DEMO"><div class="payment-choice-icon qris-icon">QR</div><div><b>QRIS</b><span>Bayar instan via BCA, GoPay, OVO, ShopeePay</span></div><i></i></button>` : ''}${settings.cashEnabled !== false ? `<button type="button" class="payment-choice ${method === 'CASH' ? 'selected' : ''}" data-pay="CASH"><div class="payment-choice-icon">${icon('cart', 19)}</div><div><b>Bayar di Kasir (Tunai)</b><span>Lakukan pembayaran langsung ke meja kasir</span></div><i></i></button>` : ''}</div><div class="demo-payment-note">ℹ️ <b>Mode Demo:</b> QRIS adalah simulasi sandbox (tidak menggunakan saldo nyata).</div><button id="place" class="btn btn-primary btn-wide btn-large">Konfirmasi Pesanan • ${money(total)}</button></section></div></main>`, { tableName: c.tableName, className: 'simple-shell' });
 
   $('#back').onclick = () => nav('/cart');
   const n = $('#orderNote'); if (n) n.oninput = e => orderNote = e.target.value;
@@ -849,8 +849,8 @@ async function checkoutPage() {
       btnSendOtp.disabled = true; btnSendOtp.textContent = 'Mengirim...';
       try {
         const res = await api('/public/student/send-otp', { method: 'POST', body: JSON.stringify({ email }) });
-        toast(`📩 OTP Dikirim! (Kode Demo: ${res.demoOtp})`);
-        if (otpVerifyRow) { otpVerifyRow.style.display = 'block'; const otpIn = $('#studentOtp'); if (otpIn && res.demoOtp) otpIn.value = res.demoOtp; }
+        toast(`📩 OTP Dikirim! (Kode Demo: ${res._demoOnly_otp})`);
+        if (otpVerifyRow) { otpVerifyRow.style.display = 'block'; const otpIn = $('#studentOtp'); if (otpIn && res._demoOnly_otp) otpIn.value = res._demoOnly_otp; }
       } catch (err) { toast(err.message, true); } finally { btnSendOtp.disabled = false; btnSendOtp.textContent = 'Kirim Ulang OTP'; }
     };
   }
@@ -1243,14 +1243,148 @@ async function orderDetailModal(orderNumber, onUpdate) {
   const orders = await api('/admin/orders?q=' + encodeURIComponent(orderNumber)); const o = orders.find(x => x.orderNumber === orderNumber);
   if (!o) return toast('Pesanan tidak ditemukan.', true);
   const isStud = o.customerType === 'STUDENT'; const vStatus = o.studentInfo?.verificationStatus;
-  const d = modal(`<div class="modal-heading"><div><span>DETAIL PESANAN</span><h2>#${esc(o.orderNumber)} (${esc(o.tableName)})</h2></div><div style="display:flex;align-items:center;gap:8px;"><button class="btn btn-small btn-soft" id="btnPrintReceiptModal">🖨️ Cetak Struk</button>${statusBadge(o.status)}</div></div><div class="order-detail-grid"><div><div class="detail-meta"><div><span>WAKTU PESAN</span><b>${formatTime(o.createdAt)}</b></div><div><span>TIPE CUSTOMER</span><b>${isStud ? '🎓 Pelajar / Mahasiswa' : '☕ Pelanggan Umum'}</b></div><div><span>METODE</span><b>${o.payment.method === 'QRIS_DEMO' ? 'QRIS' : 'Tunai di Kasir'}</b></div><div><span>STATUS BAYAR</span><b>${o.payment.status === 'PAID' ? 'Lunas' : 'Belum Bayar'}</b></div></div>${o.studentInfo ? `<div class="student-form-card" style="margin-bottom:14px;padding:12px 16px;"><div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;"><h4 style="margin:0;color:#1b633a;font-size:13px;display:flex;align-items:center;gap:5px;">🎓 Verifikasi Pelajar & Anti-Fraud</h4><div style="display:flex;align-items:center;gap:6px;"><span class="badge-fraud-score ${o.studentInfo.fraudRisk === 'HIGH' ? 'high' : (o.studentInfo.fraudRisk === 'MEDIUM' ? 'medium' : 'low')}">${o.studentInfo.fraudRisk === 'HIGH' ? '🔴 Risiko Tinggi' : (o.studentInfo.fraudRisk === 'MEDIUM' ? '🟡 Risiko Sedang' : '🟢 Aman')} • ${o.studentInfo.fraudScore || 0}%</span>${vStatus === 'AUTOMATICALLY_VERIFIED' ? '<span class="badge-verify-approved">🤖 AI Sah</span>' : (vStatus === 'VERIFIED' ? '<span class="badge-verify-approved">✅ Sah</span>' : (vStatus === 'REJECTED' ? '<span class="badge-verify-rejected">⚠️ Ditolak</span>' : '<span class="badge-verify-pending">⏳ Cek KTM</span>'))}${o.totalSavings ? `<span class="badge-role-student">Hemat ${money(o.totalSavings)}</span>` : ''}</div></div><div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;font-size:12px;margin-bottom:10px;"><div><span style="color:#666;">Nama Mahasiswa:</span> <b style="display:block;">${esc(o.studentInfo?.studentName || '-')}</b></div><div><span style="color:#666;">Asal Kampus / Sekolah:</span> <b style="display:block;">${esc(o.studentInfo?.campus || '-')}</b></div><div><span style="color:#666;">NIM / NIS:</span> <b style="display:inline-block;">${esc(o.studentInfo?.studentId || '-')}</b></div><div><span style="color:#666;">Email Institusi:</span> <b style="display:inline-block;">${esc(o.studentInfo?.email || '-')}</b></div>${o.studentInfo?.rejectionReason ? `<div style="grid-column:1/-1;"><span style="color:#e03131;">Alasan Tolak:</span> <b style="color:#c92a2a;display:inline-block;">${esc(o.studentInfo.rejectionReason)}</b></div>` : ''}</div><button type="button" class="btn btn-soft btn-small btn-wide" id="btnInspectDetailPhoto">🔍 Lihat Foto Selfie bersama KTM & Radar AI</button></div>` : ''}<div class="admin-items-box">${o.items.map(i => `<div class="admin-order-item"><img src="${esc(i.imageUrl || '/assets/iced-latte.jpg')}" alt=""><div><b>${i.quantity}x ${esc(i.productName)}</b><span>${esc(optionSummary(i))}</span>${i.note ? `<small>Catatan: ${esc(i.note)}</small>` : ''}${i.savings ? `<small style="color:#2c8b5b;display:block;font-weight:700;">Hemat Kampus: ${money(i.savings)}</small>` : ''}</div><strong>${money(i.lineTotal)}</strong></div>`).join('')}</div><div class="detail-bill"><div><span>Subtotal</span><b>${money(o.subtotal)}</b></div>${o.totalSavings ? `<div style="color:#2c8b5b;"><span>Total Subsidi Pelajar</span><b>- ${money(o.totalSavings)}</b></div>` : ''}${o.serviceFee ? `<div><span>Biaya Layanan</span><b>${money(o.serviceFee)}</b></div>` : ''}${o.tax ? `<div><span>Pajak</span><b>${money(o.tax)}</b></div>` : ''}<div><span>Total</span><strong>${money(o.total)}</strong></div></div></div><div class="detail-side"><h3>Riwayat Status</h3><div class="history-list">${o.history.map(h => `<div><i></i><div><b>${esc(h.label || h.status)}</b><small>${formatTime(h.at)}</small></div></div>`).join('')}</div></div></div><div class="modal-actions">${o.payment.status === 'PENDING' && o.payment.method === 'CASH' ? `<button class="btn btn-green" id="confirmCash">Konfirmasi Kasir (Lunas)</button>` : ''}${o.status === 'NEW' && o.payment.status === 'PAID' ? `<button class="btn btn-blue" id="toProcess">Mulai Proses Barista</button>` : ''}${o.status === 'PROCESSING' ? `<button class="btn btn-primary" id="toReady">🔔 Pesanan Siap Diambil</button>` : ''}${o.status === 'READY' ? `<button class="btn btn-dark" id="toComplete">Pesanan Selesai (Diambil)</button>` : ''}${o.status === 'NEW' && o.payment.status === 'PENDING' ? `<button class="btn btn-danger" id="toCancel">Batalkan Pesanan</button>` : ''}</div>`, 'wide-modal');
-  $('#btnPrintReceiptModal', d).onclick = () => printReceiptModal(o);
+  const d = modal(`<div class="modal-heading"><div><span>DETAIL PESANAN</span><h2>#${esc(o.orderNumber)} (${esc(o.tableName)})</h2></div><div style="display:flex;align-items:center;gap:8px;">
+    <div class="print-btn-group">
+      <button class="btn btn-small btn-soft" id="btnPrintCustomer">🧾 Struk Customer</button>
+      <button class="btn btn-small btn-soft" id="btnPrintDrink" style="color:#1a6fb5;">☕ Dapur Minuman</button>
+      <button class="btn btn-small btn-soft" id="btnPrintFood" style="color:#c0522a;">🍽️ Dapur Makanan</button>
+    </div>
+    ${statusBadge(o.status)}</div></div><div class="order-detail-grid"><div><div class="detail-meta"><div><span>WAKTU PESAN</span><b>${formatTime(o.createdAt)}</b></div><div><span>TIPE CUSTOMER</span><b>${isStud ? '🎓 Pelajar / Mahasiswa' : '☕ Pelanggan Umum'}</b></div><div><span>METODE</span><b>${o.payment.method === 'QRIS_DEMO' ? 'QRIS' : 'Tunai di Kasir'}</b></div><div><span>STATUS BAYAR</span><b>${o.payment.status === 'PAID' ? 'Lunas' : 'Belum Bayar'}</b></div></div>${o.studentInfo ? `<div class="student-form-card" style="margin-bottom:14px;padding:12px 16px;"><div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;"><h4 style="margin:0;color:#1b633a;font-size:13px;display:flex;align-items:center;gap:5px;">🎓 Verifikasi Pelajar & Anti-Fraud</h4><div style="display:flex;align-items:center;gap:6px;"><span class="badge-fraud-score ${o.studentInfo.fraudRisk === 'HIGH' ? 'high' : (o.studentInfo.fraudRisk === 'MEDIUM' ? 'medium' : 'low')}">${o.studentInfo.fraudRisk === 'HIGH' ? '🔴 Risiko Tinggi' : (o.studentInfo.fraudRisk === 'MEDIUM' ? '🟡 Risiko Sedang' : '🟢 Aman')} • ${o.studentInfo.fraudScore || 0}%</span>${vStatus === 'AUTOMATICALLY_VERIFIED' ? '<span class="badge-verify-approved">🤖 AI Sah</span>' : (vStatus === 'VERIFIED' ? '<span class="badge-verify-approved">✅ Sah</span>' : (vStatus === 'REJECTED' ? '<span class="badge-verify-rejected">⚠️ Ditolak</span>' : '<span class="badge-verify-pending">⏳ Cek KTM</span>'))}${o.totalSavings ? `<span class="badge-role-student">Hemat ${money(o.totalSavings)}</span>` : ''}</div></div><div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;font-size:12px;margin-bottom:10px;"><div><span style="color:#666;">Nama Mahasiswa:</span> <b style="display:block;">${esc(o.studentInfo?.studentName || '-')}</b></div><div><span style="color:#666;">Asal Kampus / Sekolah:</span> <b style="display:block;">${esc(o.studentInfo?.campus || '-')}</b></div><div><span style="color:#666;">NIM / NIS:</span> <b style="display:inline-block;">${esc(o.studentInfo?.studentId || '-')}</b></div><div><span style="color:#666;">Email Institusi:</span> <b style="display:inline-block;">${esc(o.studentInfo?.email || '-')}</b></div>${o.studentInfo?.rejectionReason ? `<div style="grid-column:1/-1;"><span style="color:#e03131;">Alasan Tolak:</span> <b style="color:#c92a2a;display:inline-block;">${esc(o.studentInfo.rejectionReason)}</b></div>` : ''}</div><button type="button" class="btn btn-soft btn-small btn-wide" id="btnInspectDetailPhoto">🔍 Lihat Foto Selfie bersama KTM & Radar AI</button></div>` : ''}<div class="admin-items-box">${o.items.map(i => `<div class="admin-order-item"><img src="${esc(i.imageUrl || '/assets/iced-latte.jpg')}" alt=""><div><b>${i.quantity}x ${esc(i.productName)}</b><span>${esc(optionSummary(i))}</span>${i.note ? `<small>Catatan: ${esc(i.note)}</small>` : ''}${i.savings ? `<small style="color:#2c8b5b;display:block;font-weight:700;">Hemat Kampus: ${money(i.savings)}</small>` : ''}</div><strong>${money(i.lineTotal)}</strong></div>`).join('')}</div><div class="detail-bill"><div><span>Subtotal</span><b>${money(o.subtotal)}</b></div>${o.totalSavings ? `<div style="color:#2c8b5b;"><span>Total Subsidi Pelajar</span><b>- ${money(o.totalSavings)}</b></div>` : ''}${o.serviceFee ? `<div><span>Biaya Layanan</span><b>${money(o.serviceFee)}</b></div>` : ''}${o.tax ? `<div><span>Pajak</span><b>${money(o.tax)}</b></div>` : ''}<div><span>Total</span><strong>${money(o.total)}</strong></div></div></div><div class="detail-side"><h3>Riwayat Status</h3><div class="history-list">${o.history.map(h => `<div><i></i><div><b>${esc(h.label || h.status)}</b><small>${formatTime(h.at)}</small></div></div>`).join('')}</div></div></div><div class="modal-actions">${o.payment.status === 'PENDING' && o.payment.method === 'CASH' ? `<button class="btn btn-green" id="confirmCash">Konfirmasi Kasir (Lunas)</button>` : ''}${o.status === 'NEW' && o.payment.status === 'PAID' ? `<button class="btn btn-blue" id="toProcess">Mulai Proses Barista</button>` : ''}${o.status === 'PROCESSING' ? `<button class="btn btn-primary" id="toReady">🔔 Pesanan Siap Diambil</button>` : ''}${o.status === 'READY' ? `<button class="btn btn-dark" id="toComplete">Pesanan Selesai (Diambil)</button>` : ''}${o.status === 'NEW' && o.payment.status === 'PENDING' ? `<button class="btn btn-danger" id="toCancel">Batalkan Pesanan</button>` : ''}</div>`, 'wide-modal');
+  // Print buttons — fetch receipt data sekali, lalu cetak sesuai tipe
+  const fetchAndPrint = async (type) => {
+    try {
+      const receipt = await api('/admin/orders/' + encodeURIComponent(o.orderNumber) + '/receipt');
+      printKitchenReceipt(receipt, type);
+    } catch(e) { toast('Gagal memuat data struk: ' + e.message, true); }
+  };
+  $('#btnPrintCustomer', d).onclick = () => fetchAndPrint('CUSTOMER');
+  $('#btnPrintDrink', d).onclick   = () => fetchAndPrint('DRINK');
+  $('#btnPrintFood', d).onclick    = () => fetchAndPrint('FOOD');
   const inspectBtn = $('#btnInspectDetailPhoto', d); if (inspectBtn) inspectBtn.onclick = () => { d.remove(); viewStudentPhotoModal(o.orderNumber, onUpdate); };
   const cash = $('#confirmCash', d); if (cash) cash.onclick = async () => { cash.disabled = true; try { await api('/admin/orders/' + encodeURIComponent(o.orderNumber) + '/payment', { method: 'PATCH', body: '{}' }); toast('Pembayaran kasir dikonfirmasi LUNAS'); d.remove(); onUpdate(); } catch (e) { toast(e.message, true); cash.disabled = false; } };
   const toProc = $('#toProcess', d); if (toProc) toProc.onclick = async () => { try { await api('/admin/orders/' + encodeURIComponent(o.orderNumber) + '/status', { method: 'PATCH', body: JSON.stringify({ status: 'PROCESSING' }) }); toast('Status diubah ke SEDANG DIPROSES'); d.remove(); onUpdate(); } catch (e) { toast(e.message, true); } };
   const toRdy = $('#toReady', d); if (toRdy) toRdy.onclick = async () => { try { await api('/admin/orders/' + encodeURIComponent(o.orderNumber) + '/status', { method: 'PATCH', body: JSON.stringify({ status: 'READY' }) }); toast('Pesanan dinyatakan SIAP! Notifikasi terkirim ke customer.'); d.remove(); onUpdate(); } catch (e) { toast(e.message, true); } };
   const toComp = $('#toComplete', d); if (toComp) toComp.onclick = async () => { try { await api('/admin/orders/' + encodeURIComponent(o.orderNumber) + '/status', { method: 'PATCH', body: JSON.stringify({ status: 'COMPLETED' }) }); toast('Pesanan SELESAI'); d.remove(); onUpdate(); } catch (e) { toast(e.message, true); } };
   const toCanc = $('#toCancel', d); if (toCanc) toCanc.onclick = async () => { if (!(await confirmDialog({ title: 'Batalkan Pesanan?', message: 'Pesanan yang belum dibayar ini akan dibatalkan.', danger: true, ok: 'Batalkan' }))) return; try { await api('/admin/orders/' + encodeURIComponent(o.orderNumber) + '/status', { method: 'PATCH', body: JSON.stringify({ status: 'CANCELLED' }) }); toast('Pesanan dibatalkan'); d.remove(); onUpdate(); } catch (e) { toast(e.message, true); } };
+}
+
+// ==========================================
+// KITCHEN PRINT RECEIPT ENGINE
+// Cetak struk untuk 3 tujuan berbeda:
+//   'CUSTOMER' → struk lengkap untuk pelanggan
+//   'DRINK'    → tiket dapur minuman
+//   'FOOD'     → tiket dapur makanan
+// ==========================================
+function printKitchenReceipt(r, type) {
+  const isCustomer = type === 'CUSTOMER';
+  const isDrink    = type === 'DRINK';
+  const isFood     = type === 'FOOD';
+
+  // Pilih items sesuai tipe
+  const items = isCustomer ? r.items : (isDrink ? r.drinkItems : r.foodItems);
+  if (!isCustomer && items.length === 0) {
+    toast(`Tidak ada item ${isDrink ? 'minuman' : 'makanan'} di pesanan ini.`, true);
+    return;
+  }
+
+  const now = new Date();
+  const printTime = now.toLocaleString('id-ID', { day:'2-digit', month:'short', year:'numeric', hour:'2-digit', minute:'2-digit' });
+  const methodLabel = r.paymentMethod === 'QRIS_DEMO' ? 'QRIS' : 'Tunai';
+  const paidLabel = r.paymentStatus === 'PAID' ? 'LUNAS' : 'BELUM BAYAR';
+
+  const itemRows = items.map(i => {
+    const opts = Object.entries(i.options || {}).filter(([,v]) => v).map(([k,v]) => `${k}: ${v}`).join(', ');
+    return `<tr>
+      <td class="qty">${i.quantity}x</td>
+      <td class="name">${i.productName}${opts ? `<br><span class="mod">${opts}</span>` : ''}${i.note ? `<br><span class="note">📝 ${i.note}</span>` : ''}</td>
+      ${isCustomer ? `<td class="price">${money(i.lineTotal)}</td>` : ''}
+    </tr>`;
+  }).join('');
+
+  // Header berbeda per tipe struk
+  let header = '';
+  if (isCustomer) {
+    header = `
+      <div class="cafe-name">${r.cafeName}</div>
+      ${r.cafeAddress ? `<div class="cafe-addr">${r.cafeAddress}</div>` : ''}
+      ${r.cafePhone ? `<div class="cafe-addr">📞 ${r.cafePhone}</div>` : ''}
+      <div class="divider">================================</div>
+      <div class="receipt-type">STRUK PELANGGAN</div>`;
+  } else if (isDrink) {
+    header = `<div class="kitchen-header drink-header">☕ DAPUR MINUMAN</div>`;
+  } else {
+    header = `<div class="kitchen-header food-header">🍽️ DAPUR MAKANAN</div>`;
+  }
+
+  const html = `<!DOCTYPE html><html lang="id"><head>
+    <meta charset="utf-8">
+    <title>Struk #${r.orderNumber}</title>
+    <style>
+      * { margin:0; padding:0; box-sizing:border-box; }
+      body { font-family: 'Courier New', Courier, monospace; font-size: 12px; width: 80mm; padding: 6px 8px; color: #000; }
+      .cafe-name { font-size: 16px; font-weight: bold; text-align: center; margin-bottom: 2px; }
+      .cafe-addr { font-size: 10px; text-align: center; color: #333; }
+      .kitchen-header { font-size: 20px; font-weight: bold; text-align: center; padding: 8px 0 4px; letter-spacing: 1px; }
+      .drink-header { border-bottom: 3px solid #1a6fb5; color: #1a6fb5; margin-bottom: 6px; }
+      .food-header  { border-bottom: 3px solid #c0522a; color: #c0522a; margin-bottom: 6px; }
+      .divider { text-align:center; letter-spacing: 0; margin: 4px 0; font-size: 11px; color: #555; }
+      .receipt-type { font-size: 11px; text-align: center; letter-spacing: 2px; text-transform: uppercase; margin-bottom: 4px; }
+      .order-info { margin: 6px 0; }
+      .order-info table { width: 100%; }
+      .order-info td { padding: 1px 0; font-size: 11px; vertical-align: top; }
+      .order-info td:last-child { text-align: right; font-weight: bold; }
+      .section-title { font-size: 10px; text-transform: uppercase; letter-spacing: 1px; border-top: 1px dashed #000; padding-top: 4px; margin-top: 6px; margin-bottom: 4px; }
+      table.items { width: 100%; border-collapse: collapse; }
+      table.items td { padding: 3px 2px; vertical-align: top; font-size: 12px; }
+      td.qty  { width: 22px; font-weight: bold; white-space: nowrap; }
+      td.name { width: auto; }
+      td.price { text-align: right; white-space: nowrap; font-weight: bold; }
+      .mod  { font-size: 10px; color: #444; }
+      .note { font-size: 10px; color: #b84a00; font-style: italic; }
+      .total-section { border-top: 1px dashed #000; margin-top: 6px; padding-top: 4px; }
+      .total-section table { width: 100%; }
+      .total-section td { padding: 1px 0; font-size: 11px; }
+      .total-section td:last-child { text-align: right; }
+      .grand-total td { font-size: 14px; font-weight: bold; }
+      .footer { text-align: center; margin-top: 10px; font-size: 10px; color: #555; }
+      .badge-paid { display:inline-block; background:#2c8b5b; color:#fff; padding:1px 6px; border-radius:3px; font-size:10px; font-weight:bold; }
+      .badge-unpaid { display:inline-block; background:#c0522a; color:#fff; padding:1px 6px; border-radius:3px; font-size:10px; font-weight:bold; }
+      .kitchen-order-num { font-size: 36px; font-weight: bold; text-align: center; margin: 8px 0 4px; }
+      .kitchen-table { font-size: 16px; text-align: center; margin-bottom: 6px; font-weight: bold; }
+      @media print { body { width: 80mm; } }
+    </style>
+  </head><body>
+    ${header}
+    <div class="order-info">
+      <table>${!isCustomer ? `<tr><td>No. Pesanan</td><td class="kitchen-order-num">#${r.orderNumber.replace('CC-','')}</td></tr>` : `<tr><td>No. Pesanan</td><td>${r.orderNumber}</td></tr>`}
+        <tr><td>Meja</td><td>${isCustomer ? r.tableName : `<div class="kitchen-table">${r.tableName}</div>`}</td></tr>
+        ${isCustomer ? `<tr><td>Waktu</td><td>${printTime}</td></tr>` : `<tr><td>Waktu Print</td><td>${printTime}</td></tr>`}
+        ${isCustomer ? `<tr><td>Pembayaran</td><td>${methodLabel} <span class="${r.paymentStatus === 'PAID' ? 'badge-paid' : 'badge-unpaid'}">${paidLabel}</span></td></tr>` : ''}
+        ${isCustomer && r.customerType === 'STUDENT' && r.studentName ? `<tr><td>Pelajar</td><td>${r.studentName}</td></tr>` : ''}
+      </table>
+    </div>
+    <div class="section-title">${isCustomer ? 'Item Pesanan' : (isDrink ? '☕ Menu Minuman' : '🍽️ Menu Makanan')}</div>
+    <table class="items">${itemRows}</table>
+    ${isCustomer ? `
+    <div class="total-section">
+      <table>
+        <tr><td>Subtotal</td><td>${money(r.subtotal)}</td></tr>
+        ${r.serviceFee ? `<tr><td>Biaya Layanan</td><td>${money(r.serviceFee)}</td></tr>` : ''}
+        ${r.tax ? `<tr><td>Pajak</td><td>${money(r.tax)}</td></tr>` : ''}
+        <tr class="grand-total"><td>TOTAL</td><td>${money(r.total)}</td></tr>
+      </table>
+    </div>` : ''}
+    ${r.note ? `<div class="divider">- - - - - - - - - - - - - - - - -</div><div style="font-size:11px;">📝 Catatan: <b>${r.note}</b></div>` : ''}
+    <div class="footer">
+      ${isCustomer ? `<div>Terima kasih sudah mampir! ☕</div><div>${r.cafeName} &bull; Cetak: ${printTime}</div>` : `<div>Pesanan masuk: ${printTime}</div><div style="margin-top:4px;font-size:9px;">Struk ${isDrink ? 'Dapur Minuman' : 'Dapur Makanan'} — ${r.cafeName}</div>`}
+    </div>
+  </body></html>`;
+
+  const w = window.open('', '_blank', 'width=400,height=600');
+  if (!w) { toast('Pop-up diblokir browser. Izinkan pop-up untuk mencetak struk.', true); return; }
+  w.document.write(html);
+  w.document.close();
+  w.onload = () => { w.focus(); w.print(); };
 }
 
 async function menuAdminPage(user) {
@@ -1280,16 +1414,42 @@ function productFormModal(p, cats, onDone) {
 async function categoriesPage(user) {
   const cats = await api('/admin/categories');
   document.body.className = 'admin-body';
-  document.body.innerHTML = adminShell(`${adminTop('Kelola Kategori', 'Atur grup menu agar mudah ditemukan customer.', `<button class="btn btn-primary" id="addCat">${icon('plus', 16)} Tambah Kategori</button>`)}<section class="admin-panel"><div class="category-list">${cats.map(c => `<div class="category-row ${!c.active ? 'archived' : ''}"><span class="category-grab">${icon('categories', 18)}</span><div><b>${esc(c.name)}</b><small class="muted">${c.active ? 'Aktif' : 'Diarsipkan'}</small></div><div class="row-actions"><button class="btn btn-small btn-soft" data-edit-cat="${c.id}">Edit</button><button class="btn btn-small btn-danger-soft" data-del-cat="${c.id}">Hapus</button></div></div>`).join('')}</div></section>`, 'categories', user);
+  const kitchenLabel = k => k === 'FOOD' ? '<span style="font-size:11px;background:#fff3ee;color:#c0522a;border-radius:4px;padding:1px 7px;font-weight:700;">🍽️ Dapur Makanan</span>' : '<span style="font-size:11px;background:#eef4ff;color:#1a6fb5;border-radius:4px;padding:1px 7px;font-weight:700;">☕ Dapur Minuman</span>';
+  document.body.innerHTML = adminShell(`${adminTop('Kelola Kategori', 'Atur grup menu & penentuan struk dapur (Minuman / Makanan) untuk masing-masing printer.', `<button class="btn btn-primary" id="addCat">${icon('plus', 16)} Tambah Kategori</button>`)}<section class="admin-panel"><div class="category-list">${cats.map(c => `<div class="category-row ${!c.active ? 'archived' : ''}"><span class="category-grab">${icon('categories', 18)}</span><div><b>${esc(c.name)}</b><div style="display:flex;align-items:center;gap:6px;margin-top:3px;">${kitchenLabel(c.kitchenType)}<small class="muted">${c.active ? 'Aktif' : 'Diarsipkan'}</small></div></div><div class="row-actions"><button class="btn btn-small btn-soft" data-edit-cat="${c.id}">Edit</button><button class="btn btn-small btn-danger-soft" data-del-cat="${c.id}">Hapus</button></div></div>`).join('')}</div></section>`, 'categories', user);
   bindAdminChrome('categories');
   $$('[data-del-cat]').forEach(b => b.onclick = async () => { const c = cats.find(x => x.id === b.dataset.delCat); if (!c) return; if (!(await confirmDialog({ title: 'Hapus Kategori?', message: `Kategori "${c.name}" akan dihapus permanen. Kategori yang masih dipakai menu tidak bisa dihapus (nonaktifkan saja lewat Edit).`, ok: 'Hapus', danger: true }))) return; try { await api('/admin/categories/' + c.id, { method: 'DELETE' }); toast('Kategori dihapus'); categoriesPage(user); } catch (e) { toast(e.message, true); } });
   $('#addCat').onclick = () => categoryModal(null, () => categoriesPage(user));   $$('[data-edit-cat]').forEach(b => b.onclick = () => categoryModal(cats.find(c => c.id === b.dataset.editCat), () => categoriesPage(user)));
 }
 
 function categoryModal(c, onDone) {
-  const d = modal(`<div class="dialog"><h3>${c ? 'Edit' : 'Tambah'} Kategori</h3><label class="field-label">Nama Kategori</label><input class="input" id="catName" value="${esc(c?.name || '')}" placeholder="Contoh: Seasonal Special">${c ? `<label class="switch-setting"><span><b>Status Aktif</b><small>Nonaktifkan jika tidak ingin ditampilkan di menu.</small></span><button type="button" class="switch ${c.active ? 'on' : ''}" id="catActive"><i></i></button></label>` : ''}<div class="dialog-actions"><button class="btn btn-soft" data-modal-close>Batal</button><button class="btn btn-primary" id="saveCat">Simpan</button></div></div>`, 'dialog-card');
+  const d = modal(`<div class="dialog"><h3>${c ? 'Edit' : 'Tambah'} Kategori</h3><label class="field-label">Nama Kategori</label><input class="input" id="catName" value="${esc(c?.name || '')}" placeholder="Contoh: Seasonal Special">
+    <label class="field-label" style="margin-top:12px;">Arahkan ke Printer Dapur</label>
+    <div class="kitchen-type-selector">
+      <label class="kitchen-type-option ${(c?.kitchenType || 'DRINK') === 'DRINK' ? 'selected' : ''}" id="kitchenDrink">
+        <input type="radio" name="kitchenType" value="DRINK" ${(c?.kitchenType || 'DRINK') === 'DRINK' ? 'checked' : ''}>
+        <span>☕</span><div><b>Dapur Minuman</b><small>Kopi, teh, jus, dll</small></div>
+      </label>
+      <label class="kitchen-type-option ${c?.kitchenType === 'FOOD' ? 'selected' : ''}" id="kitchenFood">
+        <input type="radio" name="kitchenType" value="FOOD" ${c?.kitchenType === 'FOOD' ? 'checked' : ''}>
+        <span>🍽️</span><div><b>Dapur Makanan</b><small>Makanan, snack, dessert</small></div>
+      </label>
+    </div>
+    ${c ? `<label class="switch-setting" style="margin-top:12px;"><span><b>Status Aktif</b><small>Nonaktifkan jika tidak ingin ditampilkan di menu.</small></span><button type="button" class="switch ${c.active ? 'on' : ''}" id="catActive"><i></i></button></label>` : ''}<div class="dialog-actions"><button class="btn btn-soft" data-modal-close>Batal</button><button class="btn btn-primary" id="saveCat">Simpan</button></div></div>`, 'dialog-card');
+  // Interactive radio selection styling
+  $$('input[name="kitchenType"]', d).forEach(r => r.onchange = () => {
+    $$('.kitchen-type-option', d).forEach(l => l.classList.toggle('selected', l.querySelector('input').checked));
+  });
   let active = c?.active ?? true; const sw = $('#catActive', d); if (sw) sw.onclick = () => { active = !active; sw.classList.toggle('on', active) };
-  $('#saveCat', d).onclick = async () => { try { const name = $('#catName', d).value.trim(); if (!name) return toast('Nama kategori wajib diisi.', true); if (c) await api('/admin/categories/' + c.id, { method: 'PATCH', body: JSON.stringify({ name, active }) }); else await api('/admin/categories', { method: 'POST', body: JSON.stringify({ name }) }); d.remove(); toast('Kategori disimpan'); onDone(); } catch (e) { toast(e.message, true); } };
+  $('#saveCat', d).onclick = async () => {
+    try {
+      const name = $('#catName', d).value.trim();
+      if (!name) return toast('Nama kategori wajib diisi.', true);
+      const kitchenType = d.querySelector('input[name="kitchenType"]:checked')?.value || 'DRINK';
+      if (c) await api('/admin/categories/' + c.id, { method: 'PATCH', body: JSON.stringify({ name, active, kitchenType }) });
+      else await api('/admin/categories', { method: 'POST', body: JSON.stringify({ name }) });
+      d.remove(); toast('Kategori disimpan'); onDone();
+    } catch (e) { toast(e.message, true); }
+  };
 }
 
 async function tablesPage(user) {

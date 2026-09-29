@@ -1,7 +1,5 @@
 import { spawn } from 'node:child_process';
 import assert from 'node:assert/strict';
-import { rmSync } from 'node:fs';
-rmSync(new URL('./data/state.json', import.meta.url),{force:true});
 const PORT=4188, host=`http://127.0.0.1:${PORT}`, base=`${host}/api`;
 const child=spawn(process.execPath,['server.mjs'],{cwd:new URL('.',import.meta.url),env:{...process.env,PORT:String(PORT),HOST:'127.0.0.1'},stdio:['ignore','pipe','pipe']});
 let cookie='';

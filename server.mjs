@@ -1,5 +1,7 @@
 import express from 'express';
 import cors from 'cors';
+import helmet from 'helmet';
+import rateLimit from 'express-rate-limit';
 import path from 'path';
 import fs from 'fs';
 import crypto from 'crypto';
@@ -8,13 +10,19 @@ import jwt from 'jsonwebtoken';
 import bcrypt from 'bcryptjs';
 import pool from './config/db.mjs';
 import midtransClient from 'midtrans-client';
+import QRCode from 'qrcode';
+import os from 'os';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 const app = express();
 const PORT = process.env.PORT || 4176;
-const JWT_SECRET = process.env.JWT_SECRET || 'rahasia_cafe_campus_super_aman_123';
+const JWT_SECRET = process.env.JWT_SECRET;
+if (!JWT_SECRET || JWT_SECRET.length < 32) {
+    console.error('❌ FATAL: JWT_SECRET tidak diset atau terlalu lemah. Set JWT_SECRET di .env (min 32 karakter).');
+    process.exit(1);
+}
 // Batas pesanan berharga pelajar per NIM/email per hari (bisa diubah lewat .env: STUDENT_DAILY_LIMIT)
 const STUDENT_DAILY_LIMIT = Number(process.env.STUDENT_DAILY_LIMIT) || 3;
 // Pesanan QRIS yang belum dibayar lewat dari sekian menit akan otomatis dibatalkan (bisa diubah lewat .env: QRIS_EXPIRY_MINUTES)
@@ -26,10 +34,74 @@ const snap = new midtransClient.Snap({
     clientKey: process.env.MIDTRANS_CLIENT_KEY || ''
 });
 
-app.use(cors());
+// ==========================================
+// SECURITY MIDDLEWARE
+// ==========================================
+app.use(helmet({
+    contentSecurityPolicy: {
+        directives: {
+            defaultSrc: ["'self'"],
+            scriptSrc: ["'self'", "'unsafe-inline'"],
+            styleSrc: ["'self'", "'unsafe-inline'", 'https://fonts.googleapis.com'],
+            fontSrc: ["'self'", 'https://fonts.gstatic.com'],
+            imgSrc: ["'self'", 'data:', 'blob:', 'https://api.qrserver.com'],
+            connectSrc: ["'self'"],
+            frameSrc: ["'none'"],
+            objectSrc: ["'none'"],
+            upgradeInsecureRequests: null, // Jangan paksa upgrade HTTPS agar bisa diakses via HTTP dari HP/LAN
+        },
+    },
+    hsts: false, // Jangan kirim HSTS agar browser HP tidak otomatis memaksa HTTPS di port HTTP
+    crossOriginEmbedderPolicy: false,
+}));
+
+// CORS: hanya izinkan same-origin (browser client yang di-serve dari server ini)
+const allowedOrigins = (process.env.ALLOWED_ORIGINS || '')
+    .split(',').map(o => o.trim()).filter(Boolean);
+app.use(cors({
+    origin: (origin, cb) => {
+        // Izinkan request tanpa origin (curl, mobile apps, Postman) hanya di mode non-production
+        if (!origin) return cb(null, process.env.NODE_ENV === 'production' ? false : true);
+        if (allowedOrigins.length === 0 || allowedOrigins.includes(origin)) return cb(null, true);
+        cb(new Error('CORS: origin tidak diizinkan'));
+    },
+    credentials: true,
+}));
+
+// Rate Limiters
+const loginLimiter = rateLimit({
+    windowMs: 15 * 60 * 1000,  // 15 menit
+    max: 15,
+    message: { message: 'Terlalu banyak percobaan login. Coba lagi setelah 15 menit.' },
+    standardHeaders: true, legacyHeaders: false,
+});
+const otpLimiter = rateLimit({
+    windowMs: 10 * 60 * 1000,  // 10 menit
+    max: 8,
+    message: { message: 'Terlalu banyak permintaan OTP. Coba lagi setelah 10 menit.' },
+    standardHeaders: true, legacyHeaders: false,
+});
+const otpVerifyLimiter = rateLimit({
+    windowMs: 10 * 60 * 1000,
+    max: 20,
+    message: { message: 'Terlalu banyak percobaan OTP. Coba lagi setelah 10 menit.' },
+    standardHeaders: true, legacyHeaders: false,
+});
+const orderLimiter = rateLimit({
+    windowMs: 60 * 1000,  // 1 menit
+    max: 20,
+    message: { message: 'Terlalu banyak permintaan. Tunggu sebentar dan coba lagi.' },
+    standardHeaders: true, legacyHeaders: false,
+});
+
 app.use(express.json({ limit: '10mb' }));
 app.use(express.static(path.join(__dirname, 'public')));
 app.use('/uploads', express.static(path.join(__dirname, 'public', 'uploads')));
+
+// Health Check Endpoint
+app.get(['/health', '/api/health'], (req, res) => {
+    res.json({ ok: true, status: 'healthy', timestamp: new Date().toISOString() });
+});
 
 const getCookies = (req) => {
     const cookies = {};
@@ -42,13 +114,20 @@ const getCookies = (req) => {
     return cookies;
 };
 
+// MIME type whitelist untuk upload gambar
+const ALLOWED_IMAGE_TYPES = { 'jpeg': 'jpg', 'jpg': 'jpg', 'png': 'png', 'webp': 'webp', 'gif': 'gif' };
+const MAX_IMAGE_BYTES = 4 * 1024 * 1024; // 4MB per gambar
+
 const saveBase64Image = (base64Str, subfolder) => {
     if (!base64Str || !base64Str.startsWith('data:image')) return null;
     try {
-        const matches = base64Str.match(/^data:image\/([A-Za-z-+\/]+);base64,(.+)$/);
-        if (matches.length !== 3) return null;
-        const ext = matches[1] === 'jpeg' ? 'jpg' : matches[1];
+        const matches = base64Str.match(/^data:image\/([A-Za-z0-9-+]+);base64,(.+)$/);
+        if (!matches || matches.length !== 3) return null;
+        const rawType = matches[1].toLowerCase();
+        const ext = ALLOWED_IMAGE_TYPES[rawType];
+        if (!ext) { console.warn(`Upload ditolak: tipe gambar '${rawType}' tidak diizinkan.`); return null; }
         const buffer = Buffer.from(matches[2], 'base64');
+        if (buffer.byteLength > MAX_IMAGE_BYTES) { console.warn('Upload ditolak: ukuran gambar melebihi 4MB.'); return null; }
         const fileName = `${crypto.randomUUID()}.${ext}`;
         const dirPath = path.join(__dirname, 'public', 'uploads', subfolder);
         if (!fs.existsSync(dirPath)) fs.mkdirSync(dirPath, { recursive: true });
@@ -110,14 +189,14 @@ app.get('/api/public/settings', async (req, res) => {
             operatingHours: rows[0]?.operating_hours, serviceFee: Number(rows[0]?.service_fee), taxPercent: Number(rows[0]?.tax_percent),
             qrisEnabled: Boolean(rows[0]?.qris_enabled), cashEnabled: Boolean(rows[0]?.cash_enabled), soundEnabled: Boolean(rows[0]?.sound_enabled)
         });
-    } catch(e) { res.status(500).json({message: e.message}); }
+    } catch(e) { console.error(e); res.status(500).json({message: 'Terjadi kesalahan server.'}); }
 });
 
 app.get('/api/public/tables', async (req, res) => {
     try {
         const [rows] = await pool.query('SELECT * FROM cafe_tables WHERE is_active = 1');
         res.json(rows.map(r => ({ id: r.id, tableNumber: r.table_number, name: r.name, publicToken: r.public_token })));
-    } catch(e) { res.status(500).json({message: e.message}); }
+    } catch(e) { console.error(e); res.status(500).json({message: 'Terjadi kesalahan server.'}); }
 });
 
 app.get('/api/public/tables/:token', async (req, res) => {
@@ -165,7 +244,7 @@ const otpStore = new Map();
 const OTP_TTL_MS = 5 * 60 * 1000; // kode berlaku 5 menit
 const CAMPUS_EMAIL_REGEX = /\.(ac\.id|edu)$/i; // hanya terima email domain kampus
 
-app.post('/api/public/student/send-otp', (req, res) => {
+app.post('/api/public/student/send-otp', otpLimiter, (req, res) => {
     const email = (req.body?.email || '').trim().toLowerCase();
     if (!email || !email.includes('@')) {
         return res.status(400).json({ message: 'Email tidak valid.' });
@@ -173,12 +252,15 @@ app.post('/api/public/student/send-otp', (req, res) => {
     if (!CAMPUS_EMAIL_REGEX.test(email)) {
         return res.status(400).json({ message: 'Email harus menggunakan domain kampus resmi (.ac.id atau .edu).' });
     }
-    const code = String(Math.floor(1000 + Math.random() * 9000)); // OTP 4 digit acak
+    // OTP 6 digit: lebih aman dari 4 digit (1 juta kombinasi vs 9.000)
+    const code = String(Math.floor(100000 + Math.random() * 900000));
     otpStore.set(email, { code, expiresAt: Date.now() + OTP_TTL_MS });
-    res.json({ ok: true, demoOtp: code });
+    // NOTE DEMO: kode dikirim balik di response karena tidak ada email server.
+    // Di production, kode harus dikirim via email/SMS dan TIDAK dikembalikan di response.
+    res.json({ ok: true, _demoOnly_otp: code });
 });
 
-app.post('/api/public/student/verify-otp', (req, res) => {
+app.post('/api/public/student/verify-otp', otpVerifyLimiter, (req, res) => {
     const email = (req.body?.email || '').trim().toLowerCase();
     const code = String(req.body?.code || '').trim();
     const entry = otpStore.get(email);
@@ -189,7 +271,12 @@ app.post('/api/public/student/verify-otp', (req, res) => {
         otpStore.delete(email);
         return res.status(400).json({ message: 'Kode OTP sudah kedaluwarsa, kirim ulang.' });
     }
-    if (entry.code !== code) {
+    // Gunakan timing-safe comparison untuk mencegah timing attacks
+    const isMatch = crypto.timingSafeEqual(
+        Buffer.from(entry.code.padEnd(10), 'utf8'),
+        Buffer.from(code.padEnd(10), 'utf8')
+    );
+    if (!isMatch) {
         return res.status(400).json({ message: 'Kode OTP salah.' });
     }
     otpStore.delete(email);
@@ -199,7 +286,7 @@ app.post('/api/public/student/verify-otp', (req, res) => {
 // ==========================================
 // ORDER CREATION & TRACKING
 // ==========================================
-app.post('/api/orders', async (req, res) => {
+app.post('/api/orders', orderLimiter, async (req, res) => {
     const b = req.body;
     // Idempotency Check
     if (b.idempotencyKey) {
@@ -438,36 +525,9 @@ app.get('/api/orders/:orderNum', async (req, res) => {
     } catch (err) { console.error(err); res.status(500).json({ message: "Server Error" }); }
 });
 
-app.post('/api/demo/payments/:orderNum/pay', async (req, res) => {
-    try {
-        await pool.query('UPDATE orders SET payment_status = "PAID", paid_at = NOW() WHERE order_number = ?', [req.params.orderNum]);
-        await notifyPaidOrder(req.params.orderNum);
-        res.json({ ok: true });
-    } catch(e) { res.status(500).json({message: e.message}); }
-});
-
 // ==========================================
-// ADMIN AUTH
+// ADMIN AUTH MIDDLEWARE (definisi di sini agar bisa dipakai sebelum deklarasi route auth)
 // ==========================================
-app.post('/api/admin/login', async (req, res) => {
-    const { email, password } = req.body;
-    try {
-        const [admins] = await pool.query('SELECT * FROM admins WHERE email = ?', [email]);
-        if (!admins.length) return res.status(401).json({ message: 'Email tidak ditemukan.' });
-        const admin = admins[0];
-        let isValid = await bcrypt.compare(password, admin.password_hash);
-        if (!isValid && password === 'admin123') {
-            isValid = true;
-            const newHash = await bcrypt.hash(password, 10);
-            await pool.query('UPDATE admins SET password_hash = ? WHERE id = ?', [newHash, admin.id]);
-        }
-        if (!isValid) return res.status(401).json({ message: 'Password salah.' });
-        const token = jwt.sign({ id: admin.id, role: admin.role }, JWT_SECRET, { expiresIn: '8h' });
-        res.cookie('cc_demo_admin', token, { httpOnly: true, maxAge: 28800000 });
-        res.json({ user: { name: admin.name, email: admin.email, role: admin.role } });
-    } catch (err) { res.status(500).json({ message: 'Server error' }); }
-});
-
 const authAdmin = (req, res, next) => {
     const token = getCookies(req).cc_demo_admin;
     if (!token) return res.status(401).json({ message: 'Unauthorized' });
@@ -476,6 +536,48 @@ const authAdmin = (req, res, next) => {
         req.user = user; next();
     });
 };
+
+// Endpoint simulasi pembayaran untuk mode DEMO — dilindungi authAdmin
+app.post('/api/demo/payments/:orderNum/pay', authAdmin, async (req, res) => {
+    try {
+        await pool.query('UPDATE orders SET payment_status = "PAID", paid_at = NOW() WHERE order_number = ?', [req.params.orderNum]);
+        await notifyPaidOrder(req.params.orderNum);
+        res.json({ ok: true });
+    } catch(e) { console.error(e); res.status(500).json({message: 'Terjadi kesalahan server.'}); }
+});
+
+// ==========================================
+// ADMIN AUTH
+// ==========================================
+app.post('/api/admin/login', loginLimiter, async (req, res) => {
+    const { email, password } = req.body;
+    if (!email || !password) return res.status(400).json({ message: 'Email dan password wajib diisi.' });
+    try {
+        const [admins] = await pool.query('SELECT * FROM admins WHERE email = ?', [email]);
+        // Selalu lakukan bcrypt.compare agar waktu respons konsisten (mencegah timing attack)
+        const dummyHash = '$2a$10$dummyhashtopreventtimingattacksonnonexistentuser00000000';
+        const hashToCompare = admins.length ? admins[0].password_hash : dummyHash;
+        let isValid = await bcrypt.compare(password, hashToCompare);
+
+        if (admins.length && !isValid && password === 'admin123') {
+            // ⚠️ FALLBACK DEMO ONLY — Hapus blok ini sebelum production!
+            isValid = true;
+            const newHash = await bcrypt.hash(password, 12);
+            await pool.query('UPDATE admins SET password_hash = ? WHERE id = ?', [newHash, admins[0].id]);
+        }
+        if (!admins.length || !isValid) return res.status(401).json({ message: 'Email atau password salah.' });
+        const admin = admins[0];
+        const token = jwt.sign({ id: admin.id, role: admin.role }, JWT_SECRET, { expiresIn: '8h' });
+        res.cookie('cc_demo_admin', token, {
+            httpOnly: true,
+            maxAge: 28800000,
+            sameSite: 'strict',
+            secure: process.env.NODE_ENV === 'production',
+        });
+        res.json({ user: { name: admin.name, email: admin.email, role: admin.role } });
+    } catch (err) { console.error(err); res.status(500).json({ message: 'Terjadi kesalahan server.' }); }
+});
+
 
 app.get('/api/admin/me', authAdmin, async (req, res) => {
     try {
@@ -564,12 +666,57 @@ app.get('/api/admin/orders', authAdmin, async (req, res) => {
     } catch (err) { res.status(500).json({ message: "Server Error" }); }
 });
 
+// Endpoint struk detail pesanan (untuk print customer & dapur)
+app.get('/api/admin/orders/:orderNum/receipt', authAdmin, async (req, res) => {
+    try {
+        const [orders] = await pool.query('SELECT * FROM orders WHERE order_number = ?', [req.params.orderNum]);
+        if (!orders.length) return res.status(404).json({ message: 'Pesanan tidak ditemukan' });
+        const o = orders[0];
+        const [items] = await pool.query(
+            `SELECT oi.*, p.category_id,
+                    c.name AS category_name, c.kitchen_type
+             FROM order_items oi
+             LEFT JOIN products p ON oi.product_id = p.id
+             LEFT JOIN categories c ON c.id = p.category_id
+             WHERE oi.order_id = ?`,
+            [o.id]
+        );
+        const [settings] = await pool.query('SELECT * FROM settings WHERE id = 1');
+        const s = settings[0] || {};
+        const mapItem = i => ({
+            productName: i.product_name, quantity: i.quantity,
+            lineTotal: Number(i.line_total), note: i.note || '',
+            options: typeof i.options_json === 'string' ? JSON.parse(i.options_json || '{}') : (i.options_json || {}),
+            kitchenType: i.kitchen_type || 'DRINK', categoryName: i.category_name || '',
+        });
+        res.json({
+            orderNumber: o.order_number, tableName: o.table_name,
+            customerType: o.customer_type, studentName: o.student_name || null,
+            createdAt: o.created_at, paidAt: o.paid_at || null,
+            paymentMethod: o.payment_method, paymentStatus: o.payment_status,
+            subtotal: Number(o.subtotal), serviceFee: Number(o.service_fee),
+            tax: Number(o.tax), total: Number(o.total),
+            note: o.note || '',
+            cafeName: s.cafe_name || 'Cafe Campus',
+            cafeAddress: s.cafe_address || '', cafePhone: s.cafe_phone || '',
+            items: items.map(mapItem),
+            drinkItems: items.filter(i => (i.kitchen_type || 'DRINK') === 'DRINK').map(mapItem),
+            foodItems: items.filter(i => i.kitchen_type === 'FOOD').map(mapItem),
+        });
+    } catch(e) { console.error(e); res.status(500).json({ message: 'Terjadi kesalahan server.' }); }
+});
+
+const VALID_ORDER_STATUSES = ['NEW', 'PROCESSING', 'PREPARING', 'READY', 'COMPLETED', 'CANCELLED'];
 app.patch('/api/admin/orders/:orderNumber/status', authAdmin, async (req, res) => {
     try {
-        await pool.query('UPDATE orders SET status = ? WHERE order_number = ?', [req.body.status, req.params.orderNumber]);
-        broadcast('order-update', { orderNumber: req.params.orderNumber, status: req.body.status });
+        const status = req.body.status;
+        if (!status || !VALID_ORDER_STATUSES.includes(status)) {
+            return res.status(400).json({ message: `Status tidak valid. Gunakan salah satu: ${VALID_ORDER_STATUSES.join(', ')}` });
+        }
+        await pool.query('UPDATE orders SET status = ? WHERE order_number = ?', [status, req.params.orderNumber]);
+        broadcast('order-update', { orderNumber: req.params.orderNumber, status });
         res.json({ ok: true });
-    } catch(e) { res.status(500).json({message: e.message}); }
+    } catch(e) { console.error(e); res.status(500).json({message: 'Terjadi kesalahan server.'}); }
 });
 
 app.patch('/api/admin/orders/:orderNumber/payment', authAdmin, async (req, res) => {
@@ -620,7 +767,7 @@ app.patch('/api/admin/tables/:id', authAdmin, async (req, res) => {
 app.get('/api/admin/categories', authAdmin, async (req, res) => {
     try {
         const [rows] = await pool.query('SELECT * FROM categories');
-        res.json(rows.map(c => ({ id: c.id, name: c.name, slug: c.slug, active: Boolean(c.is_active) })));
+        res.json(rows.map(c => ({ id: c.id, name: c.name, slug: c.slug, active: Boolean(c.is_active), kitchenType: c.kitchen_type || 'DRINK' })));
     } catch(e) { res.status(500).json({message: e.message}); }
 });
 
@@ -639,7 +786,9 @@ app.patch('/api/admin/categories/:id', authAdmin, async (req, res) => {
         const [rows] = await pool.query('SELECT * FROM categories WHERE id = ?', [req.params.id]);
         if (!rows.length) return res.status(404).json({ message: 'Kategori tidak ditemukan' });
         const old = rows[0]; const b = req.body || {};
-        await pool.query('UPDATE categories SET name=?, is_active=? WHERE id=?', [b.name ?? old.name, b.active !== undefined ? (b.active ? 1 : 0) : old.is_active, req.params.id]);
+        const validKitchenTypes = ['DRINK', 'FOOD'];
+        const kitchenType = validKitchenTypes.includes(b.kitchenType) ? b.kitchenType : (old.kitchen_type || 'DRINK');
+        await pool.query('UPDATE categories SET name=?, is_active=?, kitchen_type=? WHERE id=?', [b.name ?? old.name, b.active !== undefined ? (b.active ? 1 : 0) : old.is_active, kitchenType, req.params.id]);
         res.json({ ok: true });
     } catch (e) { res.status(500).json({ message: e.message }); }
 });
@@ -658,9 +807,18 @@ app.get('/api/admin/products', authAdmin, async (req, res) => {
 app.post('/api/admin/products', authAdmin, async (req, res) => {
     try {
         const { name, categoryId, price, studentPrice, isAvailable, description } = req.body;
-        await pool.query('INSERT INTO products (id, category_id, name, description, price, student_price, is_available, sort_order) VALUES (?, ?, ?, ?, ?, ?, ?, 99)', [crypto.randomUUID(), categoryId, name, description, price, studentPrice, isAvailable ? 1 : 0]);
+        // Validasi input wajib
+        if (!name || String(name).trim().length === 0) return res.status(400).json({ message: 'Nama produk wajib diisi.' });
+        if (!categoryId) return res.status(400).json({ message: 'Kategori wajib dipilih.' });
+        const parsedPrice = Number(price);
+        if (isNaN(parsedPrice) || parsedPrice < 0) return res.status(400).json({ message: 'Harga tidak valid.' });
+        const parsedStudentPrice = Number(studentPrice) || 0;
+        await pool.query(
+            'INSERT INTO products (id, category_id, name, description, price, student_price, is_available, sort_order) VALUES (?, ?, ?, ?, ?, ?, ?, 99)',
+            [crypto.randomUUID(), categoryId, String(name).trim(), description || '', parsedPrice, parsedStudentPrice, isAvailable ? 1 : 0]
+        );
         res.json({ ok: true });
-    } catch (e) { res.status(500).json({ message: e.message }); }
+    } catch (e) { console.error(e); res.status(500).json({ message: 'Terjadi kesalahan server.' }); }
 });
 
 app.patch('/api/admin/products/:id', authAdmin, async (req, res) => {
@@ -767,10 +925,69 @@ app.post('/api/admin/demo/reset', authAdmin, async (req,res)=>{
     } catch(e) { await conn.rollback(); res.status(500).json({message:e.message}); } finally { conn.release(); }
 });
 
-// Endpoint untuk Generate QR Code Meja (Bypass Frontend Image Render Issue)
-app.get('/qr/:token.svg', (req, res) => {
-    const url = `http://${req.get('host')}/order/${req.params.token}`;
-    res.redirect(`https://api.qrserver.com/v1/create-qr-code/?size=300x300&format=svg&data=${encodeURIComponent(url)}`);
+export function getLanIp() {
+    if (process.env.APP_URL) {
+        try {
+            return new URL(process.env.APP_URL).hostname;
+        } catch {
+            return process.env.APP_URL.replace(/^https?:\/\//, '').split(':')[0];
+        }
+    }
+    const nets = os.networkInterfaces();
+    // Prioritaskan adapter Wi-Fi / Ethernet
+    const priority = ['wi-fi', 'wifi', 'ethernet', 'wlan', 'en0', 'eth0'];
+    for (const p of priority) {
+        const found = Object.keys(nets).find(k => k.toLowerCase().includes(p));
+        if (found) {
+            for (const net of nets[found]) {
+                if (net.family === 'IPv4' && !net.internal) {
+                    return net.address;
+                }
+            }
+        }
+    }
+    for (const name of Object.keys(nets)) {
+        for (const net of nets[name]) {
+            if (net.family === 'IPv4' && !net.internal) {
+                return net.address;
+            }
+        }
+    }
+    return '127.0.0.1';
+}
+
+// Endpoint Generate QR Code Meja — menggunakan library lokal (tidak bergantung layanan eksternal)
+app.get('/qr/:token.svg', async (req, res) => {
+    try {
+        let fullBaseUrl = '';
+        if (process.env.APP_URL) {
+            fullBaseUrl = process.env.APP_URL.replace(/\/+$/, '');
+        } else {
+            const protocol = req.headers['x-forwarded-proto'] || req.protocol || 'http';
+            let host = req.get('host') || `127.0.0.1:${PORT}`;
+            if (host.startsWith('localhost') || host.startsWith('127.0.0.1')) {
+                const lanIp = getLanIp();
+                const p = host.split(':')[1] || PORT;
+                host = `${lanIp}:${p}`;
+            }
+            fullBaseUrl = `${protocol}://${host}`;
+        }
+        
+        const url = `${fullBaseUrl}/order/${encodeURIComponent(req.params.token)}`;
+        const svg = await QRCode.toString(url, {
+            type: 'svg',
+            margin: 2,
+            width: 300,
+            color: { dark: '#3c2415', light: '#faf6f0' },
+            errorCorrectionLevel: 'M',
+        });
+        res.setHeader('Content-Type', 'image/svg+xml');
+        res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
+        res.send(svg);
+    } catch (err) {
+        console.error('QR generation error:', err);
+        res.status(500).send('<svg xmlns="http://www.w3.org/2000/svg" width="300" height="300"><text y="150" x="50" fill="red">QR Error</text></svg>');
+    }
 });
 
 // ==========================================
@@ -798,16 +1015,30 @@ const expireStaleQrisOrders = async () => {
 };
 
 const ensureSchema = async () => {
+    // Kolom 1: parent_order_number (fitur tambah pesanan)
     const [cols] = await pool.query("SELECT COLUMN_NAME FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'orders' AND COLUMN_NAME = 'parent_order_number'");
     if (cols.length === 0) {
         await pool.query('ALTER TABLE orders ADD COLUMN parent_order_number VARCHAR(50) NULL DEFAULT NULL, ADD INDEX idx_orders_parent (parent_order_number)');
         console.log('🛠️  Migrasi: kolom orders.parent_order_number ditambahkan');
+    }
+    // Kolom 2: kitchen_type di tabel categories (fitur dual printer dapur)
+    const [kitchenCol] = await pool.query("SELECT COLUMN_NAME FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'categories' AND COLUMN_NAME = 'kitchen_type'");
+    if (kitchenCol.length === 0) {
+        await pool.query("ALTER TABLE categories ADD COLUMN kitchen_type ENUM('DRINK','FOOD') NOT NULL DEFAULT 'DRINK'");
+        // Set kategori makanan otomatis berdasarkan slug yang mengandung 'makanan', 'snack', 'food', 'dessert'
+        await pool.query("UPDATE categories SET kitchen_type = 'FOOD' WHERE slug REGEXP 'makanan|snack|food|dessert|pastry|cake'");
+        console.log('🛠️  Migrasi: kolom categories.kitchen_type ditambahkan (DRINK/FOOD)');
     }
 };
 await ensureSchema().catch(err => console.error('⚠️  Migrasi database gagal (cek koneksi MySQL):', err.message));
 await expireStaleQrisOrders();
 setInterval(expireStaleQrisOrders, 60 * 1000); // sapu ulang tiap 1 menit
 
-app.listen(PORT, () => {
-    console.log(`✅ Server (Express + MySQL) jalan di port ${PORT}`);
+app.listen(PORT, '0.0.0.0', () => {
+    const lanIp = getLanIp();
+    console.log(`\n======================================================`);
+    console.log(`☕ Cafe Campus Server siap & aktif!`);
+    console.log(`💻 Akses PC (Kasir/Admin): http://localhost:${PORT}/admin/login`);
+    console.log(`📱 Akses HP (Customer/Scan): http://${lanIp}:${PORT}`);
+    console.log(`======================================================\n`);
 });
