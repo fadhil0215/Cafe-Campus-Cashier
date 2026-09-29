@@ -1,6 +1,6 @@
 {
   "version": 2,
-  "seq": 47,
+  "seq": 49,
   "categories": [
     {
       "id": "7784c2e8-70f1-4466-b5f2-fef481566c41",
@@ -331,6 +331,118 @@
     }
   ],
   "orders": [
+    {
+      "id": "58c09f56-40c7-431f-8fa1-5132b7ce91e6",
+      "orderNumber": "CC-0048",
+      "tableId": "73aa6fdb-8fed-407f-94e1-9f497b827176",
+      "tableName": "Meja 10",
+      "tableNumber": "10",
+      "customerType": "REGULAR",
+      "studentInfo": null,
+      "accessToken": "s2hl6Ah1EEGg9bH0ekdE6plf",
+      "idempotencyKey": "84a97e70-620d-4eac-a293-d7de95d0534a",
+      "items": [
+        {
+          "id": "510c5aa1-9f5f-4fea-95d7-9249dee30f1a",
+          "productId": "eedc68a0-b83c-44f7-af19-e00ea1590c62",
+          "productName": "Iced Latte Gula Aren",
+          "basePrice": 28000,
+          "regularBasePrice": 28000,
+          "price": 28000,
+          "regularPrice": 28000,
+          "savings": 0,
+          "quantity": 1,
+          "note": "",
+          "options": {
+            "size": "Regular",
+            "sweetness": "Normal",
+            "ice": "Normal"
+          },
+          "lineTotal": 28000,
+          "emoji": "☕",
+          "imageUrl": "/assets/iced-latte.jpg"
+        }
+      ],
+      "subtotal": 28000,
+      "totalSavings": 0,
+      "serviceFee": 1400,
+      "tax": 3234,
+      "total": 32634,
+      "note": "",
+      "status": "NEW",
+      "estimatedMinutes": 10,
+      "payment": {
+        "method": "CASH",
+        "status": "PENDING",
+        "paidAt": null,
+        "reference": null
+      },
+      "history": [
+        {
+          "status": "NEW",
+          "at": "2026-09-15T03:53:11.949Z",
+          "label": "Pesanan dibuat"
+        }
+      ],
+      "createdAt": "2026-09-15T03:53:11.950Z",
+      "updatedAt": "2026-09-15T03:53:11.950Z"
+    },
+    {
+      "id": "dd1de81f-d214-4c21-8eec-8625d115e7bb",
+      "orderNumber": "CC-0047",
+      "tableId": "2e9209ad-7003-4c94-95b6-084341009671",
+      "tableName": "Meja 01",
+      "tableNumber": "01",
+      "customerType": "REGULAR",
+      "studentInfo": null,
+      "accessToken": "-AjhHpgIHGnZ_-aLbCGH1xJP",
+      "idempotencyKey": "ab8c5d80-4a1b-4833-87b0-08c1a153bb28",
+      "items": [
+        {
+          "id": "1f58e31e-0c7c-4f82-b7a9-ab4866c15b76",
+          "productId": "eedc68a0-b83c-44f7-af19-e00ea1590c62",
+          "productName": "Iced Latte Gula Aren",
+          "basePrice": 28000,
+          "regularBasePrice": 28000,
+          "price": 28000,
+          "regularPrice": 28000,
+          "savings": 0,
+          "quantity": 1,
+          "note": "",
+          "options": {
+            "size": "Regular",
+            "sweetness": "Normal",
+            "ice": "Normal"
+          },
+          "lineTotal": 28000,
+          "emoji": "☕",
+          "imageUrl": "/assets/iced-latte.jpg"
+        }
+      ],
+      "subtotal": 28000,
+      "totalSavings": 0,
+      "serviceFee": 1400,
+      "tax": 3234,
+      "total": 32634,
+      "note": "",
+      "status": "NEW",
+      "estimatedMinutes": 10,
+      "payment": {
+        "method": "QRIS_DEMO",
+        "status": "PENDING",
+        "paidAt": null,
+        "reference": "DEMO-1789440479156"
+      },
+      "history": [
+        {
+          "status": "NEW",
+          "at": "2026-09-15T02:47:59.156Z",
+          "label": "Pesanan dibuat"
+        }
+      ],
+      "createdAt": "2026-09-15T02:47:59.156Z",
+      "updatedAt": "2026-09-15T02:47:59.156Z"
+    },
     {
       "id": "e203c400-f46d-4eee-b711-c28d97d694c5",
       "orderNumber": "CC-0046",
@@ -806,6 +918,30 @@
     "dailyReportEnabled": true
   },
   "audit": [
+    {
+      "id": "f8adadfa-086a-41e7-84c9-1c60eb89df07",
+      "action": "ORDER_CREATED",
+      "meta": {
+        "orderNumber": "CC-0048",
+        "table": "Meja 10",
+        "customerType": "REGULAR",
+        "paymentMethod": "CASH",
+        "total": 32634
+      },
+      "at": "2026-09-15T03:53:11.950Z"
+    },
+    {
+      "id": "73ab2c3e-86f9-4149-a0cf-4133533add18",
+      "action": "ORDER_CREATED",
+      "meta": {
+        "orderNumber": "CC-0047",
+        "table": "Meja 01",
+        "customerType": "REGULAR",
+        "paymentMethod": "QRIS_DEMO",
+        "total": 32634
+      },
+      "at": "2026-09-15T02:47:59.156Z"
+    },
     {
       "id": "7156e74e-382a-40d2-9681-c2c3c8d26ecf",
       "action": "PAYMENT_PAID",

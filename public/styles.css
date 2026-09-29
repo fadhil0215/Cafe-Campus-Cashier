@@ -39,7 +39,7 @@ html {
   scroll-behavior: smooth;
   -webkit-text-size-adjust: 100%;
   width: 100%;
-  overflow-x: hidden;
+  overflow-x: clip;
   margin: 0;
   padding: 0;
 }
@@ -54,7 +54,7 @@ body {
   color: var(--ink);
   font-size: 14px;
   line-height: 1.45;
-  overflow-x: hidden;
+  overflow-x: clip;
   position: relative;
 }
 
@@ -948,6 +948,7 @@ img {
   line-height: 1.35;
   display: -webkit-box;
   -webkit-line-clamp: 2;
+  line-clamp: 2;
   -webkit-box-orient: vertical;
 }
 
@@ -5816,3 +5817,26 @@ button:active, .btn:active, .round-add:active, .option-pill:active, .category-ch
     display: none;
   }
 }
+
+/* ===== Tambah Pesanan & nonaktifkan/hapus data ===== */
+.addon-banner { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin: 0 0 14px; padding: 12px 14px; border-radius: var(--radius); background: var(--orange-soft); border: 1px solid #f3cfb3; }
+.addon-banner b { display: block; color: var(--orange-dark); font-size: 14px; }
+.addon-banner small { display: block; color: var(--ink-2); font-size: 12px; margin-top: 2px; }
+.addon-info-card { display: flex; flex-direction: column; gap: 2px; margin-bottom: 14px; padding: 14px 16px; border-radius: var(--radius); background: var(--orange-soft); border: 1px solid #f3cfb3; }
+.addon-info-card b { color: var(--orange-dark); }
+.addon-info-card small { color: var(--ink-2); }
+.track-addons { margin-top: 16px; padding: 18px; border-radius: var(--radius); background: var(--paper); border: 1px solid var(--line); box-shadow: var(--shadow-sm); display: flex; flex-direction: column; gap: 10px; }
+.track-addons h3 { margin: 0; font-size: 16px; }
+.track-addons p { margin: 0; }
+.addon-row { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 12px 14px; border-radius: var(--radius-sm); background: var(--paper-2); border: 1px solid var(--line); color: inherit; text-decoration: none; }
+.addon-row small { display: block; color: var(--muted); font-size: 12px; margin-top: 2px; }
+.addon-row-right { display: flex; flex-direction: column; align-items: flex-end; gap: 4px; }
+.addon-tag { display: block; margin-top: 3px; font-size: 11px; font-weight: 700; color: var(--orange-dark); }
+.inactive-pill { display: inline-block; margin-left: 6px; padding: 1px 8px; border-radius: 999px; background: var(--red-soft); color: var(--red); font-size: 11px; font-weight: 700; vertical-align: middle; }
+.admin-menu-row.archived { opacity: 0.55; }
+.btn-danger-soft { background: var(--red-soft); color: var(--red); }
+.btn-danger-soft:hover:not(:disabled) { background: #fbd5d5; }
+.icon-btn-danger { color: var(--red); }
+.blacklist-list { display: flex; flex-direction: column; gap: 8px; margin: 12px 0; max-height: 340px; overflow: auto; }
+.blacklist-row { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 10px 12px; border: 1px solid var(--line); border-radius: var(--radius-sm); }
+.blacklist-row small { display: block; color: var(--muted); font-size: 12px; }

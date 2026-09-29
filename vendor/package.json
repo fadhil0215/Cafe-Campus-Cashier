@@ -1,4 +1,35 @@
 {
-  "name": "cafe-campus-vendor",
-  "type": "commonjs"
+  "name": "cafe-campus",
+  "version": "1.0.0",
+  "description": "Sistem Pemesanan Menu & QR Meja Digital Cafe Campus",
+  "type": "module",
+  "main": "server.mjs",
+  "scripts": {
+    "start": "node server.mjs",
+    "dev": "node server.mjs",
+    "test": "node test-demo.mjs",
+    "smoke": "node smoke-check.mjs"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "keywords": [
+    "cafe",
+    "restaurant",
+    "qr-order",
+    "pos",
+    "food-ordering",
+    "indonesia"
+  ],
+  "author": "Cafe Campus Team",
+  "license": "ISC",
+  "dependencies": {
+    "bcryptjs": "^3.0.3",
+    "cors": "^2.8.6",
+    "dotenv": "^18.0.4",
+    "express": "^4.22.3",
+    "jsonwebtoken": "^9.0.3",
+    "midtrans-client": "^1.4.3",
+    "mysql2": "^3.24.4"
+  }
 }

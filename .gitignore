@@ -16,3 +16,9 @@ logs/
 .DS_Store
 Thumbs.db
 desktop.ini
+
+# User uploads
+public/uploads/
+
+# Temporary database scripts
+fix-pass.mjs

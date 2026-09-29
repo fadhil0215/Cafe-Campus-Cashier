@@ -4,7 +4,13 @@ FROM node:20-alpine
 # Set working directory
 WORKDIR /app
 
-# Salin seluruh kode proyek
+# Salin manifest dependency dulu supaya layer cache npm install efisien
+COPY package.json package-lock.json ./
+
+# Install dependency production saja (express, mysql2, midtrans-client, dll)
+RUN npm ci --omit=dev
+
+# Baru salin sisa kode proyek
 COPY . .
 
 # Buat folder data dan logs jika belum ada

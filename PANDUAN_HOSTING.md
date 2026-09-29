@@ -11,7 +11,7 @@ Website Cafe Campus dibangun menggunakan **Native Node.js ESM** tanpa dependensi
 4. Hubungkan repositori GitHub Cafe Campus Anda.
 5. Konfigurasi service:
    - **Environment**: `Node`
-   - **Build Command**: *(kosongkan)*
+   - **Build Command**: `npm install`
    - **Start Command**: `node server.mjs`
    - **Environment Variables**:
      - `PORT` = `10000` (atau biarkan default Render)
@@ -32,21 +32,21 @@ Website Cafe Campus dibangun menggunakan **Native Node.js ESM** tanpa dependensi
 ## Opsi 3: VPS Sendiri (Ubuntu / Debian dengan Nginx & PM2)
 Jika Anda memiliki server VPS (DigitalOcean, Biznet, IDCloudHost, Niagahoster):
 1. Install Node.js:
-   ```bash
+```bash
    curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash -
    sudo apt-get install -y nodejs
-   ```
+```
 2. Salin folder proyek ke server, misalnya di `/var/www/cafe-campus`.
 3. Install PM2 agar server otomatis hidup kembali saat reboot:
-   ```bash
+```bash
    sudo npm install -g pm2
    cd /var/www/cafe-campus
    pm2 start server.mjs --name "cafe-campus"
    pm2 startup
    pm2 save
-   ```
+```
 4. Pasang Nginx reverse proxy ke `http://127.0.0.1:4176` dengan SSL Certbot gratis:
-   ```nginx
+```nginx
    server {
        server_name cafecampus.com www.cafecampus.com;
        location / {
@@ -58,7 +58,7 @@ Jika Anda memiliki server VPS (DigitalOcean, Biznet, IDCloudHost, Niagahoster):
            proxy_cache_bypass $http_upgrade;
        }
    }
-   ```
+```
 5. Jalankan `sudo certbot --nginx -d cafecampus.com` untuk mengaktifkan HTTPS.
 
 ---

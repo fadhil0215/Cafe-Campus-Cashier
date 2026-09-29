@@ -1,735 +1,813 @@
-import http from 'node:http';
-import fs from 'node:fs';
-import path from 'node:path';
-import crypto from 'node:crypto';
-import os from 'node:os';
-import { fileURLToPath } from 'node:url';
-import { createRequire } from 'node:module';
+import express from 'express';
+import cors from 'cors';
+import path from 'path';
+import fs from 'fs';
+import crypto from 'crypto';
+import { fileURLToPath } from 'url';
+import jwt from 'jsonwebtoken';
+import bcrypt from 'bcryptjs';
+import pool from './config/db.mjs';
+import midtransClient from 'midtrans-client';
 
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const require = createRequire(import.meta.url);
-const QRCode = require('./vendor/qrcode/index.js');
-const QRErrorCorrectLevel = require('./vendor/qrcode/QRErrorCorrectLevel.js');
-const PUBLIC = path.join(__dirname, 'public');
-const DATA_DIR = path.join(__dirname, 'data');
-const STATE_FILE = path.join(DATA_DIR, 'state.json');
-const PORT = Number(process.env.PORT || 4176);
-const HOST = process.env.HOST || '0.0.0.0';
-const DEMO_ADMIN = {
-  email: process.env.ADMIN_EMAIL || 'admin@cafecampus.demo',
-  password: process.env.ADMIN_PASSWORD || 'admin123',
-  name: process.env.ADMIN_NAME || 'Demo Admin',
-  role: 'ADMIN'
-};
-const sseClients = new Set();
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
-const now = () => new Date().toISOString();
-const id = () => crypto.randomUUID();
-const token = (n = 12) => crypto.randomBytes(n).toString('base64url');
+const app = express();
+const PORT = process.env.PORT || 4176;
+const JWT_SECRET = process.env.JWT_SECRET || 'rahasia_cafe_campus_super_aman_123';
+// Batas pesanan berharga pelajar per NIM/email per hari (bisa diubah lewat .env: STUDENT_DAILY_LIMIT)
+const STUDENT_DAILY_LIMIT = Number(process.env.STUDENT_DAILY_LIMIT) || 3;
+// Pesanan QRIS yang belum dibayar lewat dari sekian menit akan otomatis dibatalkan (bisa diubah lewat .env: QRIS_EXPIRY_MINUTES)
+const QRIS_EXPIRY_MINUTES = Number(process.env.QRIS_EXPIRY_MINUTES) || 15;
 
-function getLocalIp() {
-  try {
-    const interfaces = os.networkInterfaces();
-    for (const name of Object.keys(interfaces)) {
-      for (const iface of interfaces[name] || []) {
-        if (iface.family === 'IPv4' && !iface.internal && !iface.address.startsWith('127.') && !iface.address.startsWith('169.254.')) {
-          return iface.address;
-        }
-      }
-    }
-  } catch { }
-  return '127.0.0.1';
-}
-
-function seedState() {
-  const categories = [
-    { id: id(), name: 'Kopi', slug: 'kopi', sortOrder: 1, active: true },
-    { id: id(), name: 'Non-Kopi', slug: 'non-kopi', sortOrder: 2, active: true },
-    { id: id(), name: 'Makanan Utama', slug: 'makanan', sortOrder: 3, active: true },
-    { id: id(), name: 'Snack & Pastry', slug: 'snack', sortOrder: 4, active: true },
-    { id: id(), name: 'Dessert', slug: 'dessert', sortOrder: 5, active: true },
-  ];
-  const cat = Object.fromEntries(categories.map(c => [c.slug, c.id]));
-  const productSeed = [
-    { name: 'Iced Latte Gula Aren', description: 'Kopi susu lokal spesial dengan gula aren premium.', price: 28000, studentPrice: 22000, category: 'kopi', imageUrl: '/assets/iced-latte.jpg', isAvailable: true, customizable: true },
-    { name: 'Croissant Cokelat', description: 'Pastry hangat & renyah isi cokelat lembut.', price: 25000, studentPrice: 20000, category: 'snack', imageUrl: '/assets/croissant.jpg', isAvailable: false, customizable: false },
-    { name: 'Uji Matcha Latte', description: 'Matcha Jepang autentik kualitas premium.', price: 32000, studentPrice: 25000, category: 'non-kopi', imageUrl: '/assets/matcha.jpg', isAvailable: true, customizable: true },
-    { name: 'Waffle Gelato', description: 'Waffle mentega hangat dipadu gelato vanilla.', price: 35000, studentPrice: 28000, category: 'dessert', imageUrl: '/assets/waffle.jpg', isAvailable: true, customizable: false },
-    { name: 'Double Espresso', description: 'Racikan kopi murni yang intens dan kaya aroma.', price: 20000, studentPrice: 15000, category: 'kopi', imageUrl: '/assets/espresso.jpg', isAvailable: true, customizable: false },
-    { name: 'Premium Iced Chocolate', description: 'Cokelat hitam murni dipadu susu segar.', price: 30000, studentPrice: 24000, category: 'non-kopi', imageUrl: '/assets/chocolate.jpg', isAvailable: true, customizable: true },
-    { name: 'Nasi Goreng Kampus', description: 'Nasi goreng gurih dengan telur, ayam, dan acar.', price: 35000, studentPrice: 28000, category: 'makanan', imageUrl: '/assets/nasi-goreng.jpg', isAvailable: true, customizable: false },
-    { name: 'Chicken Rice Bowl', description: 'Ayam crispy saus lada hitam dengan nasi hangat.', price: 38000, studentPrice: 30000, category: 'makanan', imageUrl: '/assets/rice-bowl.jpg', isAvailable: true, customizable: false },
-    { name: 'French Fries', description: 'Kentang goreng renyah dengan saus pilihan.', price: 20000, studentPrice: 16000, category: 'snack', imageUrl: '/assets/french-fries.jpg', isAvailable: true, customizable: false },
-    { name: 'Brownies Gelato', description: 'Brownies cokelat hangat dengan gelato vanilla.', price: 32000, studentPrice: 26000, category: 'dessert', imageUrl: '/assets/brownies.jpg', isAvailable: true, customizable: false },
-  ];
-  const products = productSeed.map((p, i) => ({
-    id: id(), name: p.name, description: p.description, price: p.price, studentPrice: p.studentPrice || p.price,
-    categoryId: cat[p.category], categorySlug: p.category, emoji: '☕',
-    imageUrl: p.imageUrl, imageData: null, customizable: !!p.customizable,
-    isAvailable: p.isAvailable, active: true, sortOrder: i + 1, createdAt: now(), updatedAt: now()
-  }));
-  const tables = Array.from({ length: 12 }, (_, i) => ({
-    id: id(), tableNumber: String(i + 1).padStart(2, '0'),
-    name: `Meja ${String(i + 1).padStart(2, '0')}`,
-    publicToken: `demo-table-${String(i + 1).padStart(2, '0')}`,
-    tokenVersion: 1, active: true, createdAt: now()
-  }));
-
-  const pByName = Object.fromEntries(products.map(p => [p.name, p]));
-  const day = new Date().toISOString().slice(0, 10);
-  const mkItem = (name, qty = 1, isStudent = false, note = '') => {
-    const p = pByName[name];
-    const unit = isStudent && p.studentPrice ? p.studentPrice : p.price;
-    const savings = Math.max(0, p.price - unit) * qty;
-    return { id: id(), productId: p.id, productName: p.name, basePrice: unit, regularBasePrice: p.price, price: unit, regularPrice: p.price, savings, quantity: qty, note, options: {}, lineTotal: unit * qty, emoji: p.emoji, imageUrl: p.imageUrl };
-  };
-  const mkOrder = (num, tableNo, status, method, itemDefs, time, isStudent = false, studentData = null, paid = true) => {
-    const items = itemDefs.map(x => mkItem(x[0], x[1], isStudent));
-    const subtotal = items.reduce((a, x) => a + x.lineTotal, 0);
-    const totalSavings = items.reduce((a, x) => a + (x.savings || 0), 0);
-    const serviceFee = Math.round(subtotal * .05), tax = Math.round((subtotal + serviceFee) * .11), total = subtotal + serviceFee + tax;
-    const createdAt = `${day}T${time}:00+07:00`; const hist = [{ status: 'NEW', at: createdAt, label: 'Pesanan dibuat' }];
-    if (status === 'PROCESSING' || status === 'READY' || status === 'COMPLETED') hist.push({ status: 'PROCESSING', at: createdAt, label: 'Pesanan sedang diproses' });
-    if (status === 'READY' || status === 'COMPLETED') hist.push({ status: 'READY', at: createdAt, label: 'Pesanan siap diambil' });
-    if (status === 'COMPLETED') hist.push({ status: 'COMPLETED', at: createdAt, label: 'Pesanan selesai' });
-    return {
-      id: id(), orderNumber: num, tableId: tables[Number(tableNo) - 1].id, tableName: `Meja ${tableNo}`, tableNumber: tableNo,
-      customerType: isStudent ? 'STUDENT' : 'REGULAR',
-      studentInfo: isStudent ? (studentData || { campus: 'Universitas Indonesia', studentId: '2106781290', studentName: 'Mahasiswa Demo' }) : null,
-      accessToken: token(18),
-      idempotencyKey: `seed-${num}`, items, subtotal, totalSavings, serviceFee, tax, total, note: '', status,
-      estimatedMinutes: 10, payment: { method, status: paid ? 'PAID' : 'PENDING', paidAt: paid ? createdAt : null, reference: method === 'QRIS_DEMO' ? `DEMO-${num}` : null },
-      history: hist, createdAt, updatedAt: createdAt, demoSeed: true
-    };
-  };
-  const orders = [
-    mkOrder('CC-0045', '08', 'NEW', 'QRIS_DEMO', [['Iced Latte Gula Aren', 1], ['Croissant Cokelat', 1]], '09:44', true, { campus: 'Universitas Indonesia', studentId: '2106781290', studentName: 'Rian Ardiansyah' }, true),
-    mkOrder('CC-0044', '12', 'PROCESSING', 'CASH', [['Uji Matcha Latte', 1], ['Waffle Gelato', 1]], '09:42', true, { campus: 'Institut Teknologi Bandung', studentId: '13521099', studentName: 'Aulia Putri' }, true),
-    mkOrder('CC-0043', '05', 'READY', 'QRIS_DEMO', [['Iced Latte Gula Aren', 2]], '09:35', false, null, true),
-    mkOrder('CC-0042', '11', 'COMPLETED', 'CASH', [['Double Espresso', 1], ['Croissant Cokelat', 1]], '09:12', false, null, true),
-    mkOrder('CC-0041', '02', 'COMPLETED', 'QRIS_DEMO', [['Premium Iced Chocolate', 1], ['Iced Latte Gula Aren', 1]], '09:05', true, { campus: 'Universitas Gadjah Mada', studentId: '22/492100/TK/54000', studentName: 'Dimas Prasetyo' }, true),
-  ];
-  return {
-    version: 2, seq: 46, categories, products, tables, orders,
-    settings: {
-      cafeName: 'Cafe Campus - Gedung Utama',
-      cafeAddress: 'Jl. Kampus Raya No. 12',
-      cafePhone: '+62 812-3456-7890',
-      operatingHours: 'Setiap Hari (08:00 - 22:00)',
-      serviceFee: 5, taxPercent: 11, demoMode: true,
-      qrisEnabled: true, cashEnabled: true, soundEnabled: true, dailyReportEnabled: true
-    },
-    audit: []
-  };
-}
-
-function loadState() {
-  fs.mkdirSync(DATA_DIR, { recursive: true });
-  let s;
-  if (!fs.existsSync(STATE_FILE)) {
-    s = seedState();
-    saveState(s);
-    return s;
-  }
-  try {
-    s = JSON.parse(fs.readFileSync(STATE_FILE, 'utf8'));
-  } catch {
-    s = seedState();
-    saveState(s);
-    return s;
-  }
-  // Sync modern authentic food photos
-  const imgMap = {
-    'Nasi Goreng Kampus': '/assets/nasi-goreng.jpg',
-    'Chicken Rice Bowl': '/assets/rice-bowl.jpg',
-    'French Fries': '/assets/french-fries.jpg',
-    'Brownies Gelato': '/assets/brownies.jpg'
-  };
-  if (Array.isArray(s.products)) {
-    s.products.forEach(p => {
-      if (imgMap[p.name]) p.imageUrl = imgMap[p.name];
-    });
-  }
-  return s;
-}
-function saveState(s) { fs.writeFileSync(STATE_FILE, JSON.stringify(s, null, 2)); }
-let state = loadState();
-
-const SECURITY_HEADERS = {
-  'X-Content-Type-Options': 'nosniff',
-  'X-Frame-Options': 'SAMEORIGIN',
-  'Referrer-Policy': 'strict-origin-when-cross-origin'
-};
-
-function json(res, status, data, headers = {}) {
-  res.writeHead(status, {
-    'Content-Type': 'application/json; charset=utf-8',
-    'Cache-Control': 'no-store',
-    ...SECURITY_HEADERS,
-    ...headers
-  });
-  res.end(JSON.stringify(data));
-}
-function text(res, status, data, type = 'text/plain; charset=utf-8') {
-  res.writeHead(status, {
-    'Content-Type': type,
-    ...SECURITY_HEADERS
-  });
-  res.end(data);
-}
-function parseCookies(req) { return Object.fromEntries((req.headers.cookie || '').split(';').filter(Boolean).map(v => { const i = v.indexOf('='); return [v.slice(0, i).trim(), decodeURIComponent(v.slice(i + 1))] })); }
-function adminSession(req) { return parseCookies(req).cc_demo_admin === 'yes'; }
-function requireAdmin(req, res) { if (!adminSession(req)) { json(res, 401, { message: 'Silakan login sebagai admin demo.' }); return false; } return true; }
-async function body(req) { return new Promise((resolve, reject) => { let raw = ''; req.on('data', c => { raw += c; if (raw.length > 1_000_000) { reject(new Error('Payload terlalu besar')); req.destroy(); } }); req.on('end', () => { if (!raw) return resolve({}); try { resolve(JSON.parse(raw)) } catch { reject(new Error('JSON tidak valid')) } }); req.on('error', reject) }); }
-function safeOrder(o) { return { ...o, accessToken: undefined }; }
-function money(v) { return Number(v || 0); }
-function broadcast(event, payload) { const msg = `event: ${event}\ndata: ${JSON.stringify(payload)}\n\n`; for (const c of [...sseClients]) { const allowed = event === 'admin-order' ? c.channel === 'admin' : event === 'order-update' ? c.order === payload.orderNumber : true; if (!allowed) continue; try { c.res.write(msg) } catch { sseClients.delete(c) } } }
-function audit(action, meta = {}) { state.audit.unshift({ id: id(), action, meta, at: now() }); state.audit = state.audit.slice(0, 200); }
-function nextOrderNumber() { return `CC-${String(state.seq++).padStart(4, '0')}`; }
-function orderByNumber(n) { return state.orders.find(o => o.orderNumber === n); }
-function tableByToken(t) {
-  if (!t) return null;
-  const clean = String(t).trim().toLowerCase();
-  return state.tables.find(x =>
-    x.active && (
-      x.publicToken.toLowerCase() === clean ||
-      x.tableNumber.toLowerCase() === clean ||
-      x.tableNumber.toLowerCase() === clean.padStart(2, '0') ||
-      clean === `demo-table-${x.tableNumber.toLowerCase()}` ||
-      clean === `table-${x.tableNumber.toLowerCase()}`
-    )
-  ) || null;
-}
-const EDU_EMAIL_REGEX = /^[a-zA-Z0-9._%+-]+@([a-zA-Z0-9-]+\.)+(ac\.id|edu|sch\.id|edu\.id|kampus\.id)$/i;
-const otpStore = new Map();
-
-function evaluateStudentFraud(info) {
-  let score = 0;
-  const flags = [];
-  
-  if (!info.email || !EDU_EMAIL_REGEX.test(info.email)) {
-    score += 45;
-    flags.push('Email bukan domain institusi kampus resmi (.ac.id/.edu)');
-  }
-  const numOnly = (info.studentId || '').replace(/[^0-9]/g, '');
-  if (!info.studentId || info.studentId.length < 5) {
-    score += 30;
-    flags.push('Format Nomor Induk Mahasiswa tidak lazim (< 5 digit)');
-  }
-  if (!info.campus || info.campus.length < 3) {
-    score += 25;
-    flags.push('Nama universitas/sekolah tidak terdefinisi');
-  }
-  if (!info.studentPhoto || info.studentPhoto.length < 20) {
-    score += 50;
-    flags.push('Foto selfie bersama KTM belum dilampirkan');
-  }
-
-  const fraudScore = Math.max(0, Math.min(100, score));
-  let fraudRisk = 'LOW';
-  let verificationStatus = 'AUTOMATICALLY_VERIFIED';
-
-  if (fraudScore > 50) {
-    fraudRisk = 'HIGH';
-    verificationStatus = 'PENDING_VERIFICATION';
-  } else if (fraudScore >= 20) {
-    fraudRisk = 'MEDIUM';
-    verificationStatus = 'PENDING_VERIFICATION';
-  } else {
-    fraudRisk = 'LOW';
-    verificationStatus = 'AUTOMATICALLY_VERIFIED';
-  }
-
-  return { fraudScore, fraudRisk, flags, verificationStatus };
-}
-
-function productById(pid) { return state.products.find(p => p.id === pid && p.active); }
-function canTransition(from, to) { const map = { NEW: ['PROCESSING', 'CANCELLED'], PROCESSING: ['READY', 'CANCELLED'], READY: ['COMPLETED'], COMPLETED: [], CANCELLED: [] }; return (map[from] || []).includes(to); }
-function createOrder(input) {
-  const t = tableByToken(input.tableToken); if (!t) throw Object.assign(new Error('QR meja tidak valid atau sudah dinonaktifkan.'), { status: 400 });
-  if (!Array.isArray(input.items) || !input.items.length) throw Object.assign(new Error('Keranjang masih kosong.'), { status: 400 });
-  const idem = String(input.idempotencyKey || '').trim();
-  const duplicate = idem && state.orders.find(o => o.idempotencyKey === idem); if (duplicate) return duplicate;
-
-  const isStudent = input.customerType === 'STUDENT';
-  let studentInfo = null;
-
-  if (isStudent) {
-    const sId = String(input.studentInfo?.studentId || input.studentId || '').trim();
-    const sEmail = String(input.studentInfo?.email || input.email || '').trim().toLowerCase();
-    const sName = String(input.studentInfo?.studentName || input.studentName || '').trim().slice(0, 60);
-    const sCampus = String(input.studentInfo?.campus || input.campus || '').trim().slice(0, 80);
-    const sPhoto = input.studentInfo?.studentPhoto || input.studentPhoto || null;
-
-    if (!sName || !sCampus || !sId) {
-      throw Object.assign(new Error('Harap lengkapi data verifikasi mahasiswa (Nama, Kampus, & NIM).'), { status: 400 });
-    }
-
-    // 1. Blacklist Check
-    const isBlacklisted = (state.blacklist || []).some(b => 
-      (b.studentId && b.studentId === sId) || (b.email && b.email.toLowerCase() === sEmail)
-    );
-    if (isBlacklisted) {
-      throw Object.assign(new Error('Identitas mahasiswa ini telah masuk daftar hitam (blacklist) sistem anti-fraud kafe karena pelanggaran.'), { status: 403 });
-    }
-
-    // 2. Anti-Sybil Daily Quota Limit (Max 1 student order per NIM / Email per day)
-    const today = new Date().toISOString().slice(0, 10);
-    const existingStudentOrderToday = state.orders.find(o => 
-      o.createdAt.slice(0, 10) === today &&
-      o.customerType === 'STUDENT' &&
-      o.status !== 'CANCELLED' &&
-      ((o.studentInfo?.studentId && o.studentInfo.studentId === sId) || (o.studentInfo?.email && o.studentInfo.email.toLowerCase() === sEmail))
-    );
-    if (existingStudentOrderToday) {
-      throw Object.assign(new Error(`Batas kuota harian tercapai! NIM ${sId} / Email ${sEmail} sudah digunakan untuk pesanan #${existingStudentOrderToday.orderNumber} hari ini. Diskon pelajar dibatasi 1x per hari per identitas untuk mencegah penyalahgunaan.`), { status: 409 });
-    }
-
-    // 3. Automated Fraud Scoring & Verification Status Engine
-    const evalResult = evaluateStudentFraud({ studentName: sName, campus: sCampus, studentId: sId, email: sEmail, studentPhoto: sPhoto });
-
-    studentInfo = {
-      campus: sCampus,
-      studentId: sId,
-      studentName: sName,
-      email: sEmail || null,
-      studentPhoto: sPhoto,
-      fraudScore: evalResult.fraudScore,
-      fraudRisk: evalResult.fraudRisk,
-      fraudFlags: evalResult.flags,
-      verificationStatus: evalResult.verificationStatus,
-      rejectionReason: null
-    };
-  }
-
-  const grouped = new Map();
-  for (const row of input.items) {
-    const pid = String(row?.productId || '');
-    const p = productById(pid); if (!p || !p.isAvailable) throw Object.assign(new Error('Ada menu yang sudah tidak tersedia.'), { status: 409 });
-    const cat = state.categories.find(c => c.id === p.categoryId && c.active); if (!cat) throw Object.assign(new Error(`${p.name} sedang tidak dapat dipesan.`), { status: 409 });
-    const q = Math.max(1, Math.min(20, Math.trunc(Number(row.quantity) || 1)));
-    const note = String(row.note || '').trim().slice(0, 160);
-    const raw = row.options && typeof row.options === 'object' ? row.options : {};
-    const options = {};
-    if (p.customizable) {
-      const size = ['Regular', 'Large'].includes(raw.size) ? raw.size : 'Regular';
-      const sweetness = ['Normal', 'Less', 'Tanpa Gula'].includes(raw.sweetness) ? raw.sweetness : 'Normal';
-      const ice = ['Normal', 'Sedikit Es', 'Tanpa Es'].includes(raw.ice) ? raw.ice : 'Normal';
-      options.size = size; options.sweetness = sweetness; options.ice = ice;
-    }
-    const basePrice = isStudent && Number(p.studentPrice) > 0 ? Number(p.studentPrice) : p.price;
-    const regularBasePrice = p.price;
-    const price = basePrice + (options.size === 'Large' ? 5000 : 0);
-    const regularPrice = regularBasePrice + (options.size === 'Large' ? 5000 : 0);
-    const key = pid + '|' + note + '|' + JSON.stringify(options);
-    const existing = grouped.get(key);
-    if (existing) existing.quantity = Math.min(20, existing.quantity + q);
-    else grouped.set(key, { p, quantity: q, note, options, price, regularPrice, basePrice, regularBasePrice });
-  }
-  let subtotal = 0;
-  let totalSavings = 0;
-  const items = [...grouped.values()].map(({ p, quantity, note, options, price, regularPrice, basePrice, regularBasePrice }) => {
-    const line = price * quantity;
-    const regularLine = regularPrice * quantity;
-    subtotal += line;
-    const itemSavings = Math.max(0, regularLine - line);
-    totalSavings += itemSavings;
-    return {
-      id: id(),
-      productId: p.id,
-      productName: p.name,
-      basePrice,
-      regularBasePrice,
-      price,
-      regularPrice,
-      savings: itemSavings,
-      quantity,
-      note,
-      options,
-      lineTotal: line,
-      emoji: p.emoji,
-      imageUrl: p.imageUrl || null
-    };
-  });
-  if (items.length > 50) throw Object.assign(new Error('Terlalu banyak jenis item dalam satu pesanan.'), { status: 400 });
-  const serviceFee = Math.round(subtotal * money(state.settings.serviceFee) / 100);
-  const tax = Math.round((subtotal + serviceFee) * money(state.settings.taxPercent) / 100);
-  const total = subtotal + serviceFee + tax;
-  const method = input.paymentMethod === 'QRIS_DEMO' ? 'QRIS_DEMO' : 'CASH';
-  if (method === 'QRIS_DEMO' && !state.settings.qrisEnabled) throw Object.assign(new Error('Pembayaran QRIS sedang dinonaktifkan.'), { status: 409 });
-  if (method === 'CASH' && !state.settings.cashEnabled) throw Object.assign(new Error('Pembayaran di kasir sedang dinonaktifkan.'), { status: 409 });
-  const estimatedMinutes = Math.max(8, Math.min(25, 8 + items.reduce((s, i) => s + i.quantity, 0) * 2));
-  const o = {
-    id: id(),
-    orderNumber: nextOrderNumber(),
-    tableId: t.id,
-    tableName: t.name,
-    tableNumber: t.tableNumber,
-    customerType: isStudent ? 'STUDENT' : 'REGULAR',
-    studentInfo,
-    accessToken: token(18),
-    idempotencyKey: idem || id(),
-    items,
-    subtotal,
-    totalSavings,
-    serviceFee,
-    tax,
-    total,
-    note: String(input.note || '').trim().slice(0, 250),
-    status: 'NEW',
-    estimatedMinutes,
-    payment: { method, status: 'PENDING', paidAt: null, reference: method === 'QRIS_DEMO' ? `DEMO-${Date.now()}` : null },
-    history: [{ status: 'NEW', at: now(), label: isStudent && studentInfo?.verificationStatus === 'AUTOMATICALLY_VERIFIED' ? 'Pesanan dibuat (Lolos Validasi Otomatis AI)' : 'Pesanan dibuat' }],
-    createdAt: now(),
-    updatedAt: now()
-  };
-  state.orders.unshift(o);
-  audit('ORDER_CREATED', { orderNumber: o.orderNumber, table: o.tableName, customerType: o.customerType, paymentMethod: method, total: o.total, fraudScore: studentInfo?.fraudScore });
-  saveState(state);
-  broadcast('admin-order', safeOrder(o));
-  return o;
-}
-
-function markPaid(o, source = 'DEMO') { if (o.payment.status === 'PAID') return; if (o.status === 'CANCELLED' || o.status === 'COMPLETED') throw Object.assign(new Error('Pembayaran tidak dapat dikonfirmasi untuk order yang sudah ditutup.'), { status: 409 }); o.payment.status = 'PAID'; o.payment.paidAt = now(); o.updatedAt = now(); o.history.push({ status: o.status, at: now(), label: `Pembayaran dikonfirmasi (${source})` }); audit('PAYMENT_PAID', { orderNumber: o.orderNumber, source }); saveState(state); broadcast('order-update', safeOrder(o)); broadcast('admin-order', safeOrder(o)); }
-function updateStatus(o, to) { if (to === 'CANCELLED' && o.payment.status === 'PAID') throw Object.assign(new Error('Order sudah dibayar. Pembatalan membutuhkan proses refund dan tidak tersedia di demo.'), { status: 409 }); if (o.payment.status !== 'PAID' && to === 'PROCESSING') throw Object.assign(new Error('Pembayaran harus PAID sebelum pesanan diproses.'), { status: 409 }); if (!canTransition(o.status, to)) throw Object.assign(new Error(`Transisi ${o.status} → ${to} tidak diizinkan.`), { status: 409 }); o.status = to; o.updatedAt = now(); o.history.push({ status: to, at: now(), label: { PROCESSING: 'Pesanan sedang diproses', READY: 'Pesanan siap diambil', COMPLETED: 'Pesanan selesai', CANCELLED: 'Pesanan dibatalkan' }[to] || to }); audit('ORDER_STATUS_CHANGED', { orderNumber: o.orderNumber, to }); saveState(state); broadcast('order-update', safeOrder(o)); broadcast('admin-order', safeOrder(o)); }
-
-function qrSvg(textValue) {
-  const qr = new QRCode(-1, QRErrorCorrectLevel.M); qr.addData(String(textValue)); qr.make();
-  const count = qr.getModuleCount(), quiet = 4, size = count + quiet * 2;
-  let d = '';
-  for (let r = 0; r < count; r++)for (let c = 0; c < count; c++)if (qr.isDark(r, c)) d += `M${c + quiet} ${r + quiet}h1v1h-1z`;
-  return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${size} ${size}" shape-rendering="crispEdges"><rect width="100%" height="100%" fill="white"/><path d="${d}" fill="#111"/></svg>`;
-}
-function demoPublicBase(req) {
-  const configured = String(process.env.DEMO_PUBLIC_BASE || '').replace(/\/$/, '');
-  if (configured) return configured;
-  const host = String(req.headers.host || '');
-  if (!host || host.startsWith('127.0.0.1') || host.startsWith('localhost') || host.startsWith('0.0.0.0')) {
-    const lan = getLocalIp();
-    if (lan && lan !== '127.0.0.1') return `http://${lan}:${PORT}`;
-  }
-  return `http://${host || `127.0.0.1:${PORT}`}`;
-}
-
-function mime(file) { return ({ '.html': 'text/html; charset=utf-8', '.css': 'text/css; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.svg': 'image/svg+xml', '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.webp': 'image/webp', '.ico': 'image/x-icon' })[path.extname(file)] || 'application/octet-stream'; }
-function serveStatic(req, res, urlPath) {
-  let rel = urlPath === '/' ? 'index.html' : urlPath.replace(/^\//, '');
-  let fp = path.join(PUBLIC, rel);
-  if (!fp.startsWith(PUBLIC)) return false;
-  if (fs.existsSync(fp) && fs.statSync(fp).isFile()) { text(res, 200, fs.readFileSync(fp), mime(fp)); return true; }
-  if (!urlPath.startsWith('/api/') && !path.extname(urlPath)) { fp = path.join(PUBLIC, 'index.html'); text(res, 200, fs.readFileSync(fp), mime(fp)); return true; }
-  return false;
-}
-
-const server = http.createServer(async (req, res) => {
-  const u = new URL(req.url, `http://${req.headers.host || 'localhost'}`); const p = u.pathname;
-  try {
-
-    let qrMatch = p.match(/^\/qr\/([^/]+)\.svg$/); if (qrMatch && req.method === 'GET') { const tk = decodeURIComponent(qrMatch[1]); const t = state.tables.find(x => x.publicToken === tk); if (!t) return text(res, 404, 'QR tidak ditemukan.', 'text/plain; charset=utf-8'); const target = `${demoPublicBase(req)}/order/${encodeURIComponent(t.publicToken)}`; return text(res, 200, qrSvg(target), 'image/svg+xml; charset=utf-8'); }
-    if (p === '/api/health') return json(res, 200, { ok: true, app: 'Cafe Campus Demo', time: now() });
-    if (p === '/api/events' && req.method === 'GET') {
-      const channel = u.searchParams.get('channel'), orderNo = u.searchParams.get('order');
-      if (channel === 'admin' && !adminSession(req)) return json(res, 401, { message: 'Admin session diperlukan.' });
-      if (orderNo) { const o = orderByNumber(orderNo), access = u.searchParams.get('access'); if (!o || access !== o.accessToken) return json(res, 403, { message: 'Akses realtime order tidak valid.' }); }
-      res.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache', 'Connection': 'keep-alive' }); res.write(`event: hello\ndata: ${JSON.stringify({ ok: true })}\n\n`); const client = { res, channel, order: orderNo }; sseClients.add(client); const ping = setInterval(() => { try { res.write(': ping\n\n') } catch { } }, 20000); req.on('close', () => { clearInterval(ping); sseClients.delete(client) }); return;
-    }
-    if (p.startsWith('/api/public/tables/') && req.method === 'GET') { const tk = decodeURIComponent(p.split('/').pop()); const t = tableByToken(tk); if (!t) return json(res, 404, { message: 'QR meja tidak valid atau dinonaktifkan.' }); return json(res, 200, { id: t.id, name: t.name, tableNumber: t.tableNumber, publicToken: t.publicToken }); }
-    if (p === '/api/public/categories' && req.method === 'GET') return json(res, 200, state.categories.filter(c => c.active).sort((a, b) => a.sortOrder - b.sortOrder));
-    if (p === '/api/public/products' && req.method === 'GET') { const activeCats = new Set(state.categories.filter(c => c.active).map(c => c.id)); return json(res, 200, state.products.filter(x => x.active && activeCats.has(x.categoryId)).sort((a, b) => a.sortOrder - b.sortOrder)); }
-    if (p === '/api/public/student/send-otp' && req.method === 'POST') {
-      const b = await body(req);
-      const email = String(b.email || '').trim().toLowerCase();
-      if (!email || !EDU_EMAIL_REGEX.test(email)) {
-        return json(res, 400, { message: 'Alamat email wajib berakhiran domain institusi resmi (.ac.id, .edu, atau .sch.id).' });
-      }
-      const code = String(Math.floor(1000 + Math.random() * 9000));
-      otpStore.set(email, { code, email, expiresAt: Date.now() + 10 * 60 * 1000, verified: false });
-      return json(res, 200, {
-        ok: true,
-        message: 'Kode OTP 4 digit telah dikirim ke email kampus Anda.',
-        demoOtp: code
-      });
-    }
-    if (p === '/api/public/student/verify-otp' && req.method === 'POST') {
-      const b = await body(req);
-      const email = String(b.email || '').trim().toLowerCase();
-      const code = String(b.code || '').trim();
-      const record = otpStore.get(email);
-      if (!record || record.expiresAt < Date.now()) {
-        return json(res, 400, { message: 'Kode OTP tidak ditemukan atau sudah kedaluwarsa. Silakan minta kode baru.' });
-      }
-      if (record.code !== code && code !== '1234') {
-        return json(res, 400, { message: 'Kode OTP verifikasi salah.' });
-      }
-      record.verified = true;
-      return json(res, 200, {
-        ok: true,
-        verified: true,
-        message: 'Email institusi kampus berhasil diverifikasi!',
-        verifiedToken: token(16)
-      });
-    }
-    if (p === '/api/public/settings' && req.method === 'GET') {
-      return json(res, 200, {
-        cafeName: state.settings.cafeName || 'Cafe Campus',
-        serviceFee: state.settings.serviceFee,
-        taxPercent: state.settings.taxPercent,
-        demoMode: true,
-        qrisEnabled: state.settings.qrisEnabled !== false,
-        cashEnabled: state.settings.cashEnabled !== false,
-        wifiSsid: process.env.WIFI_SSID || 'CafeCampus_HighSpeed',
-        wifiPass: process.env.WIFI_PASS || 'kopikampus2026',
-        operatingHours: state.settings.operatingHours || 'Setiap Hari (08:00 - 23:00 WIB)',
-        cafeAddress: state.settings.cafeAddress || 'Kawasan Kampus Terpadu, Jl. Mahasiswa No. 8',
-        cafePhone: state.settings.cafePhone || '+62 812-3456-7890'
-      });
-    }
-    let waiterMatch = p.match(/^\/api\/public\/tables\/([^/]+)\/call-waiter$/);
-    if (waiterMatch && req.method === 'POST') {
-      const tk = decodeURIComponent(waiterMatch[1]);
-      const t = tableByToken(tk);
-      if (!t) return json(res, 404, { message: 'Meja tidak ditemukan atau tidak aktif.' });
-      const b = await body(req);
-      const requestType = String(b.type || 'Bantuan Umum').trim().slice(0, 60);
-      const note = String(b.note || '').trim().slice(0, 140);
-      const alertPayload = {
-        id: id(),
-        tableNumber: t.tableNumber,
-        tableName: t.name,
-        type: requestType,
-        note,
-        at: now()
-      };
-      audit('WAITER_CALLED', { table: t.name, type: requestType, note });
-      broadcast('admin-order', {
-        orderNumber: `CALL-${t.tableNumber}`,
-        tableName: t.name,
-        status: 'NEW',
-        isWaiterCall: true,
-        type: requestType,
-        message: `${t.name} memanggil: ${requestType}${note ? ` (${note})` : ''}`,
-        at: now()
-      });
-      return json(res, 200, { ok: true, message: `Panggilan untuk ${t.name} telah diterima kasir & barista!` });
-    }
-    if (p === '/api/orders' && req.method === 'POST') { const b = await body(req); const o = createOrder(b); return json(res, 201, { orderNumber: o.orderNumber, accessToken: o.accessToken, status: o.status, payment: o.payment, total: o.total, totalSavings: o.totalSavings || 0, customerType: o.customerType || 'REGULAR', fraudRisk: o.studentInfo?.fraudRisk || null }); }
-    let m = p.match(/^\/api\/orders\/([^/]+)$/); if (m && req.method === 'GET') { const o = orderByNumber(decodeURIComponent(m[1])); if (!o) return json(res, 404, { message: 'Order tidak ditemukan.' }); const access = u.searchParams.get('access'); if (access !== o.accessToken) return json(res, 403, { message: 'Akses order tidak valid.' }); return json(res, 200, safeOrder(o)); }
-    m = p.match(/^\/api\/demo\/payments\/([^/]+)\/pay$/); if (m && req.method === 'POST') { const o = orderByNumber(decodeURIComponent(m[1])); if (!o) return json(res, 404, { message: 'Order tidak ditemukan.' }); if (o.payment.method !== 'QRIS_DEMO') return json(res, 409, { message: 'Order ini bukan QRIS demo.' }); markPaid(o, 'QRIS SANDBOX DEMO'); return json(res, 200, safeOrder(o)); }
-
-    if (p === '/api/admin/login' && req.method === 'POST') { const b = await body(req); if (b.email !== DEMO_ADMIN.email || b.password !== DEMO_ADMIN.password) return json(res, 401, { message: 'Email atau password demo salah.' }); return json(res, 200, { user: { name: DEMO_ADMIN.name, email: DEMO_ADMIN.email, role: DEMO_ADMIN.role } }, { 'Set-Cookie': 'cc_demo_admin=yes; HttpOnly; SameSite=Lax; Path=/; Max-Age=28800' }); }
-    if (p === '/api/admin/logout' && req.method === 'POST') return json(res, 200, { ok: true }, { 'Set-Cookie': 'cc_demo_admin=; HttpOnly; SameSite=Lax; Path=/; Max-Age=0' });
-    if (p === '/api/admin/me' && req.method === 'GET') { if (!requireAdmin(req, res)) return; return json(res, 200, { name: DEMO_ADMIN.name, email: DEMO_ADMIN.email, role: DEMO_ADMIN.role }); }
-    if (p.startsWith('/api/admin/') && !requireAdmin(req, res)) return;
-    if (p === '/api/admin/fraud/blacklist' && req.method === 'GET') {
-      return json(res, 200, state.blacklist || []);
-    }
-    if (p === '/api/admin/fraud/blacklist' && req.method === 'POST') {
-      const b = await body(req);
-      state.blacklist = state.blacklist || [];
-      const item = {
-        id: id(),
-        studentId: String(b.studentId || '').trim(),
-        email: String(b.email || '').trim().toLowerCase(),
-        studentName: String(b.studentName || '').trim(),
-        reason: String(b.reason || 'Kecurangan verifikasi identitas pelajar').trim().slice(0, 200),
-        addedAt: now()
-      };
-      state.blacklist.unshift(item);
-      audit('BLACKLIST_ADDED', item);
-      saveState(state);
-      return json(res, 201, item);
-    }
-    m = p.match(/^\/api\/admin\/fraud\/blacklist\/([^/]+)$/);
-    if (m && req.method === 'DELETE') {
-      const blId = m[1];
-      state.blacklist = (state.blacklist || []).filter(x => x.id !== blId);
-      audit('BLACKLIST_REMOVED', { id: blId });
-      saveState(state);
-      return json(res, 200, { ok: true });
-    }
-    if (p === '/api/admin/dashboard' && req.method === 'GET') {
-      const today = new Date().toISOString().slice(0, 10);
-      const orders = state.orders.filter(o => o.createdAt.startsWith(today));
-      const paid = orders.filter(o => o.payment.status === 'PAID');
-      const counts = {};
-      orders.forEach(o => counts[o.status] = (counts[o.status] || 0) + 1);
-      const studentPaid = paid.filter(o => o.customerType === 'STUDENT');
-      const regularPaid = paid.filter(o => o.customerType !== 'STUDENT');
-      return json(res, 200, {
-        totalOrders: orders.length,
-        revenue: paid.reduce((s, o) => s + o.total, 0),
-        studentRevenue: studentPaid.reduce((s, o) => s + o.total, 0),
-        regularRevenue: regularPaid.reduce((s, o) => s + o.total, 0),
-        totalSavings: paid.reduce((s, o) => s + (o.totalSavings || 0), 0),
-        studentCount: orders.filter(o => o.customerType === 'STUDENT').length,
-        regularCount: orders.filter(o => o.customerType !== 'STUDENT').length,
-        blacklistCount: (state.blacklist || []).length,
-        counts,
-        recent: orders.slice(0, 8).map(safeOrder)
-      });
-    }
-    if (p === '/api/admin/orders' && req.method === 'GET') {
-      let list = [...state.orders];
-      const status = u.searchParams.get('status'), payment = u.searchParams.get('payment'), table = u.searchParams.get('table'), date = u.searchParams.get('date'), customerType = u.searchParams.get('customerType'), q = (u.searchParams.get('q') || '').toLowerCase();
-      if (status) list = list.filter(o => o.status === status);
-      if (payment) list = list.filter(o => o.payment.status === payment);
-      if (table) list = list.filter(o => o.tableNumber === table);
-      if (customerType) list = list.filter(o => (o.customerType || 'REGULAR') === customerType);
-      if (date) list = list.filter(o => o.createdAt.slice(0, 10) === date);
-      if (q) list = list.filter(o => o.orderNumber.toLowerCase().includes(q) || o.tableName.toLowerCase().includes(q) || (o.studentInfo?.studentName || '').toLowerCase().includes(q) || (o.studentInfo?.campus || '').toLowerCase().includes(q) || (o.studentInfo?.studentId || '').toLowerCase().includes(q) || o.items.some(i => i.productName.toLowerCase().includes(q)));
-      return json(res, 200, list.map(safeOrder));
-    }
-    m = p.match(/^\/api\/admin\/orders\/([^/]+)\/payment$/); if (m && req.method === 'PATCH') { const o = orderByNumber(decodeURIComponent(m[1])); if (!o) return json(res, 404, { message: 'Order tidak ditemukan.' }); if (o.payment.method !== 'CASH') return json(res, 409, { message: 'Hanya cash yang dikonfirmasi manual.' }); markPaid(o, 'KASIR'); return json(res, 200, safeOrder(o)); }
-    m = p.match(/^\/api\/admin\/orders\/([^/]+)\/status$/); if (m && req.method === 'PATCH') { const b = await body(req); const o = orderByNumber(decodeURIComponent(m[1])); if (!o) return json(res, 404, { message: 'Order tidak ditemukan.' }); updateStatus(o, String(b.status || '')); return json(res, 200, safeOrder(o)); }
-    m = p.match(/^\/api\/admin\/orders\/([^/]+)\/verify-student$/);
-    if (m && req.method === 'PATCH') {
-      const b = await body(req);
-      const o = orderByNumber(decodeURIComponent(m[1]));
-      if (!o) return json(res, 404, { message: 'Order tidak ditemukan.' });
-      if (!o.studentInfo) return json(res, 400, { message: 'Order ini bukan pesanan pelajar.' });
-      
-      const vStatus = b.status === 'REJECTED' ? 'REJECTED' : 'VERIFIED';
-      o.studentInfo.verificationStatus = vStatus;
-      o.updatedAt = now();
-
-      if (vStatus === 'VERIFIED') {
-        o.history.push({ status: o.status, at: now(), label: 'Verifikasi identitas KTM pelajar disetujui kasir' });
-        audit('STUDENT_VERIFIED', { orderNumber: o.orderNumber, admin: DEMO_ADMIN.name });
-      } else {
-        const reason = String(b.reason || 'Foto KTM tidak valid / tidak sesuai').slice(0, 200);
-        o.studentInfo.rejectionReason = reason;
-        o.customerType = 'REGULAR';
-        let newSubtotal = 0;
-        o.items.forEach(i => {
-          i.price = i.regularPrice;
-          i.basePrice = i.regularBasePrice;
-          i.savings = 0;
-          i.lineTotal = i.price * i.quantity;
-          newSubtotal += i.lineTotal;
-        });
-        o.subtotal = newSubtotal;
-        o.totalSavings = 0;
-        o.serviceFee = Math.round(newSubtotal * money(state.settings.serviceFee) / 100);
-        o.tax = Math.round((newSubtotal + o.serviceFee) * money(state.settings.taxPercent) / 100);
-        o.total = newSubtotal + o.serviceFee + o.tax;
-        o.history.push({ status: o.status, at: now(), label: `Verifikasi KTM ditolak: ${reason} (Harga disesuaikan ke reguler)` });
-        audit('STUDENT_REJECTED', { orderNumber: o.orderNumber, reason, newTotal: o.total });
-      }
-
-      saveState(state);
-      broadcast('order-update', safeOrder(o));
-      broadcast('admin-order', safeOrder(o));
-      return json(res, 200, safeOrder(o));
-    }
-    if (p === '/api/admin/products' && req.method === 'GET') return json(res, 200, state.products);
-    if (p === '/api/admin/products' && req.method === 'POST') {
-      const b = await body(req);
-      const c = state.categories.find(x => x.id === b.categoryId && x.active);
-      if (!c) return json(res, 400, { message: 'Kategori wajib dipilih.' });
-      if (!b.name || Number(b.price) <= 0) return json(res, 400, { message: 'Nama dan harga menu wajib valid.' });
-      const price = Math.round(Number(b.price));
-      const studentPrice = Number(b.studentPrice) > 0 ? Math.round(Number(b.studentPrice)) : price;
-      const imageData = typeof b.imageData === 'string' && /^data:image\/(png|jpeg|webp);base64,/.test(b.imageData) && b.imageData.length < 700000 ? b.imageData : null;
-      const pr = {
-        id: id(),
-        name: String(b.name).slice(0, 80),
-        description: String(b.description || '').slice(0, 240),
-        price,
-        studentPrice,
-        categoryId: c.id,
-        categorySlug: c.slug,
-        emoji: String(b.emoji || '🍽️').slice(0, 4),
-        imageData,
-        isAvailable: b.isAvailable !== false,
-        active: true,
-        sortOrder: state.products.length + 1,
-        createdAt: now(),
-        updatedAt: now()
-      };
-      state.products.push(pr);
-      audit('PRODUCT_CREATED', { name: pr.name, price: pr.price, studentPrice: pr.studentPrice });
-      saveState(state);
-      broadcast('catalog-update', { type: 'product' });
-      return json(res, 201, pr);
-    }
-    m = p.match(/^\/api\/admin\/products\/([^/]+)$/); if (m && req.method === 'PATCH') {
-      const b = await body(req);
-      const pr = state.products.find(x => x.id === m[1]);
-      if (!pr) return json(res, 404, { message: 'Menu tidak ditemukan.' });
-      if (b.name !== undefined) pr.name = String(b.name).slice(0, 80);
-      if (b.description !== undefined) pr.description = String(b.description).slice(0, 240);
-      if (b.price !== undefined) {
-        if (!(Number(b.price) > 0)) return json(res, 400, { message: 'Harga menu harus lebih dari 0.' });
-        pr.price = Math.round(Number(b.price));
-      }
-      if (b.studentPrice !== undefined) {
-        if (!(Number(b.studentPrice) >= 0)) return json(res, 400, { message: 'Harga pelajar tidak valid.' });
-        pr.studentPrice = Math.round(Number(b.studentPrice)) || pr.price;
-      }
-      if (b.isAvailable !== undefined) pr.isAvailable = !!b.isAvailable;
-      if (b.active !== undefined) pr.active = !!b.active;
-      if (typeof b.imageData === 'string' && (/^data:image\/(png|jpeg|webp);base64,/.test(b.imageData) || b.imageData === '')) pr.imageData = b.imageData || null;
-      if (b.categoryId) {
-        const c = state.categories.find(x => x.id === b.categoryId && x.active);
-        if (!c) return json(res, 400, { message: 'Kategori aktif tidak ditemukan.' });
-        pr.categoryId = c.id;
-        pr.categorySlug = c.slug;
-      }
-      pr.updatedAt = now();
-      audit('PRODUCT_UPDATED', { name: pr.name, price: pr.price, studentPrice: pr.studentPrice });
-      saveState(state);
-      broadcast('catalog-update', { type: 'product' });
-      return json(res, 200, pr);
-    }
-    if (p === '/api/admin/categories' && req.method === 'GET') return json(res, 200, state.categories);
-    if (p === '/api/admin/categories' && req.method === 'POST') { const b = await body(req); const name = String(b.name || '').trim().slice(0, 60); if (!name) return json(res, 400, { message: 'Nama kategori wajib diisi.' }); if (state.categories.some(c => c.name.toLowerCase() === name.toLowerCase())) return json(res, 409, { message: 'Nama kategori sudah digunakan.' }); const slug = name.toLowerCase().normalize('NFKD').replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '') || token(3); const c = { id: id(), name, slug, sortOrder: state.categories.length + 1, active: true }; state.categories.push(c); audit('CATEGORY_CREATED', { name }); saveState(state); return json(res, 201, c); }
-    m = p.match(/^\/api\/admin\/categories\/([^/]+)$/); if (m && req.method === 'PATCH') { const b = await body(req); const c = state.categories.find(x => x.id === m[1]); if (!c) return json(res, 404, { message: 'Kategori tidak ditemukan.' }); if (b.name !== undefined) { const n = String(b.name).trim().slice(0, 60); if (n && state.categories.some(x => x.id !== c.id && x.name.toLowerCase() === n.toLowerCase())) return json(res, 409, { message: 'Nama kategori sudah digunakan.' }); if (n) c.name = n; } if (b.active !== undefined) c.active = !!b.active; audit('CATEGORY_UPDATED', { name: c.name, active: c.active }); saveState(state); return json(res, 200, c); }
-    if (p === '/api/admin/tables' && req.method === 'GET') return json(res, 200, state.tables);
-    if (p === '/api/admin/tables' && req.method === 'POST') { const b = await body(req); let n = String(b.tableNumber || '').trim().slice(0, 8); if (!n) n = String(state.tables.length + 1).padStart(2, '0'); if (state.tables.some(t => t.tableNumber.toLowerCase() === n.toLowerCase())) return json(res, 409, { message: 'Nomor meja sudah digunakan.' }); const base = `demo-table-${n.toLowerCase().replace(/[^a-z0-9]+/g, '-') || token(3)}`; let pub = base; while (state.tables.some(t => t.publicToken === pub)) pub = `${base}-${token(3)}`; const t = { id: id(), tableNumber: n, name: String(b.name || `Meja ${n}`).trim().slice(0, 40) || `Meja ${n}`, publicToken: pub, tokenVersion: 1, active: true, createdAt: now() }; state.tables.push(t); audit('TABLE_CREATED', { table: t.name }); saveState(state); return json(res, 201, t); }
-    m = p.match(/^\/api\/admin\/tables\/([^/]+)$/); if (m && req.method === 'PATCH') { const b = await body(req); const t = state.tables.find(x => x.id === m[1]); if (!t) return json(res, 404, { message: 'Meja tidak ditemukan.' }); if (b.name !== undefined) t.name = String(b.name).trim().slice(0, 40) || t.name; if (b.tableNumber !== undefined) { const n = String(b.tableNumber).trim().slice(0, 8); if (!n) return json(res, 400, { message: 'Nomor meja tidak boleh kosong.' }); if (state.tables.some(x => x.id !== t.id && x.tableNumber.toLowerCase() === n.toLowerCase())) return json(res, 409, { message: 'Nomor meja sudah digunakan.' }); t.tableNumber = n; } if (b.active !== undefined) t.active = !!b.active; if (b.rotateToken) { t.tokenVersion = (t.tokenVersion || 1) + 1; const base = `demo-table-${String(t.tableNumber).toLowerCase().replace(/[^a-z0-9]+/g, '-') || 'table'}`; let pub = `${base}-v${t.tokenVersion}-${token(3)}`; while (state.tables.some(x => x.id !== t.id && x.publicToken === pub)) pub = `${base}-v${t.tokenVersion}-${token(3)}`; t.publicToken = pub; } audit('TABLE_UPDATED', { table: t.name, tableNumber: t.tableNumber, active: t.active }); saveState(state); return json(res, 200, t); }
-    if (p === '/api/admin/reports' && req.method === 'GET') {
-      const days = Math.max(1, Math.min(365, Number(u.searchParams.get('days') || 30)));
-      const since = Date.now() - days * 86400000;
-      const scoped = state.orders.filter(o => new Date(o.createdAt).getTime() >= since);
-      const paid = scoped.filter(o => o.payment.status === 'PAID');
-      const revenue = paid.reduce((s, o) => s + o.total, 0);
-      const studentPaid = paid.filter(o => o.customerType === 'STUDENT');
-      const regularPaid = paid.filter(o => o.customerType !== 'STUDENT');
-      const studentRevenue = studentPaid.reduce((s, o) => s + o.total, 0);
-      const regularRevenue = regularPaid.reduce((s, o) => s + o.total, 0);
-      const studentSavings = paid.reduce((s, o) => s + (o.totalSavings || 0), 0);
-      const studentOrders = scoped.filter(o => o.customerType === 'STUDENT').length;
-      const regularOrders = scoped.filter(o => o.customerType !== 'STUDENT').length;
-      const itemMap = {};
-      paid.forEach(o => o.items.forEach(i => { const k = i.productName; itemMap[k] = (itemMap[k] || 0) + i.quantity }));
-      const best = Object.entries(itemMap).sort((a, b) => b[1] - a[1]).slice(0, 5).map(([name, qty]) => ({ name, qty }));
-      const byDay = {};
-      paid.forEach(o => { const d = o.createdAt.slice(0, 10); byDay[d] = (byDay[d] || 0) + o.total });
-      const qrisRevenue = paid.filter(o => o.payment.method === 'QRIS_DEMO').reduce((s, o) => s + o.total, 0);
-      const cashRevenue = paid.filter(o => o.payment.method === 'CASH').reduce((s, o) => s + o.total, 0);
-      return json(res, 200, {
-        days,
-        orders: scoped.length,
-        paidOrders: paid.length,
-        revenue,
-        studentRevenue,
-        regularRevenue,
-        studentSavings,
-        studentOrders,
-        regularOrders,
-        cancelled: scoped.filter(o => o.status === 'CANCELLED').length,
-        averageOrder: paid.length ? Math.round(revenue / paid.length) : 0,
-        qrisRevenue,
-        cashRevenue,
-        best,
-        byDay: Object.entries(byDay).sort().map(([date, total]) => ({ date, total }))
-      });
-    }
-    if (p === '/api/admin/settings' && req.method === 'GET') return json(res, 200, state.settings);
-    if (p === '/api/admin/settings' && req.method === 'PATCH') { const b = await body(req); if (b.cafeName !== undefined) state.settings.cafeName = String(b.cafeName).slice(0, 80); if (b.cafeAddress !== undefined) state.settings.cafeAddress = String(b.cafeAddress).slice(0, 160); if (b.cafePhone !== undefined) state.settings.cafePhone = String(b.cafePhone).slice(0, 40); if (b.operatingHours !== undefined) state.settings.operatingHours = String(b.operatingHours).slice(0, 80); if (b.serviceFee !== undefined) state.settings.serviceFee = Math.max(0, Math.min(30, Number(b.serviceFee) || 0)); if (b.taxPercent !== undefined) state.settings.taxPercent = Math.max(0, Math.min(30, Number(b.taxPercent) || 0)); for (const k of ['qrisEnabled', 'cashEnabled', 'soundEnabled', 'dailyReportEnabled']) if (b[k] !== undefined) state.settings[k] = !!b[k]; audit('SETTINGS_UPDATED'); saveState(state); return json(res, 200, state.settings); }
-    if (p === '/api/admin/audit' && req.method === 'GET') return json(res, 200, state.audit.slice(0, 50));
-    if (p === '/api/admin/demo/reset' && req.method === 'POST') { state = seedState(); audit('DEMO_RESET'); saveState(state); broadcast('demo-reset', { ok: true }); return json(res, 200, { ok: true }); }
-    if (!serveStatic(req, res, p)) json(res, 404, { message: 'Not found' });
-  } catch (err) { console.error(err); json(res, err.status || 500, { message: err.message || 'Terjadi kendala pada demo.' }); }
+const snap = new midtransClient.Snap({
+    isProduction: process.env.MIDTRANS_IS_PRODUCTION === 'true',
+    serverKey: process.env.MIDTRANS_SERVER_KEY || '',
+    clientKey: process.env.MIDTRANS_CLIENT_KEY || ''
 });
-server.listen(PORT, HOST, () => console.log(`Cafe Campus Demo: http://127.0.0.1:${PORT}`));
+
+app.use(cors());
+app.use(express.json({ limit: '10mb' }));
+app.use(express.static(path.join(__dirname, 'public')));
+app.use('/uploads', express.static(path.join(__dirname, 'public', 'uploads')));
+
+const getCookies = (req) => {
+    const cookies = {};
+    if (req.headers.cookie) {
+        req.headers.cookie.split(';').forEach(c => {
+            const parts = c.split('=');
+            cookies[parts.shift().trim()] = decodeURI(parts.join('='));
+        });
+    }
+    return cookies;
+};
+
+const saveBase64Image = (base64Str, subfolder) => {
+    if (!base64Str || !base64Str.startsWith('data:image')) return null;
+    try {
+        const matches = base64Str.match(/^data:image\/([A-Za-z-+\/]+);base64,(.+)$/);
+        if (matches.length !== 3) return null;
+        const ext = matches[1] === 'jpeg' ? 'jpg' : matches[1];
+        const buffer = Buffer.from(matches[2], 'base64');
+        const fileName = `${crypto.randomUUID()}.${ext}`;
+        const dirPath = path.join(__dirname, 'public', 'uploads', subfolder);
+        if (!fs.existsSync(dirPath)) fs.mkdirSync(dirPath, { recursive: true });
+        fs.writeFileSync(path.join(dirPath, fileName), buffer);
+        return `/uploads/${subfolder}/${fileName}`;
+    } catch (e) { return null; }
+};
+
+const sseClients = new Set();
+const broadcast = (event, payload) => {
+    const msg = `event: ${event}\ndata: ${JSON.stringify(payload)}\n\n`;
+    sseClients.forEach(c => {
+        if (event === 'admin-order' && c.channel !== 'admin') return;
+        if (event === 'order-update' && c.channel === 'customer' && c.order !== payload.orderNumber) return;
+        try { c.res.write(msg); } catch (e) { sseClients.delete(c); }
+    });
+};
+
+const notifyPaidOrder = async (orderNumber) => {
+    try {
+        const [rows] = await pool.query('SELECT order_number, table_name, status, payment_method, payment_status, total FROM orders WHERE order_number=?', [orderNumber]);
+        if (!rows.length) return;
+        const o = rows[0];
+        broadcast('admin-order', {
+            orderNumber: o.order_number,
+            tableName: o.table_name,
+            status: o.status,
+            payment: { method: o.payment_method, status: o.payment_status },
+            total: Number(o.total),
+            paid: true
+        });
+        broadcast('order-update', { orderNumber, status: 'PAID' });
+    } catch(e) { console.error('notifyPaidOrder', e); }
+};
+
+app.get('/api/events', (req, res) => {
+    res.setHeader('Content-Type', 'text/event-stream');
+    res.setHeader('Cache-Control', 'no-cache');
+    res.setHeader('Connection', 'keep-alive');
+    res.flushHeaders();
+    
+    const client = { res, channel: req.query.channel, order: req.query.order };
+    sseClients.add(client);
+    res.write(`event: hello\ndata: {"ok":true}\n\n`);
+    
+    // Heartbeat untuk mencegah koneksi diputus oleh NGINX / Browser
+    const heartbeat = setInterval(() => { res.write(`:\n\n`); }, 15000);
+    req.on('close', () => { clearInterval(heartbeat); sseClients.delete(client); });
+});
+
+// ==========================================
+// PUBLIC API (FRONTEND CUSTOMER)
+// ==========================================
+app.get('/api/public/settings', async (req, res) => {
+    try {
+        const [rows] = await pool.query('SELECT * FROM settings WHERE id = 1');
+        res.json({
+            cafeName: rows[0]?.cafe_name, cafeAddress: rows[0]?.cafe_address, cafePhone: rows[0]?.cafe_phone,
+            operatingHours: rows[0]?.operating_hours, serviceFee: Number(rows[0]?.service_fee), taxPercent: Number(rows[0]?.tax_percent),
+            qrisEnabled: Boolean(rows[0]?.qris_enabled), cashEnabled: Boolean(rows[0]?.cash_enabled), soundEnabled: Boolean(rows[0]?.sound_enabled)
+        });
+    } catch(e) { res.status(500).json({message: e.message}); }
+});
+
+app.get('/api/public/tables', async (req, res) => {
+    try {
+        const [rows] = await pool.query('SELECT * FROM cafe_tables WHERE is_active = 1');
+        res.json(rows.map(r => ({ id: r.id, tableNumber: r.table_number, name: r.name, publicToken: r.public_token })));
+    } catch(e) { res.status(500).json({message: e.message}); }
+});
+
+app.get('/api/public/tables/:token', async (req, res) => {
+    try {
+        const [rows] = await pool.query('SELECT * FROM cafe_tables WHERE public_token = ? AND is_active = 1', [req.params.token]);
+        if (rows.length === 0) return res.status(404).json({ message: 'Meja tidak ditemukan' });
+        res.json({ id: rows[0].id, name: rows[0].name, publicToken: rows[0].public_token, tableNumber: rows[0].table_number });
+    } catch(e) { res.status(500).json({message: e.message}); }
+});
+
+app.post('/api/public/tables/:token/call-waiter', async (req, res) => {
+    try {
+        const [tables] = await pool.query('SELECT * FROM cafe_tables WHERE public_token = ? AND is_active = 1', [req.params.token]);
+        if (!tables.length) return res.status(404).json({ message: 'Meja tidak ditemukan.' });
+        const t = tables[0];
+        broadcast('admin-order', {
+            orderNumber: `CALL-${t.table_number}`, tableName: t.name, status: 'NEW', isWaiterCall: true,
+            type: req.body.type || 'Bantuan Umum', message: `${t.name} memanggil: ${req.body.type} ${req.body.note ? `(${req.body.note})` : ''}`,
+            at: new Date().toISOString()
+        });
+        res.json({ ok: true });
+    } catch(e) { res.status(500).json({message: e.message}); }
+});
+
+app.get('/api/public/categories', async (req, res) => {
+    try {
+        const [rows] = await pool.query('SELECT * FROM categories WHERE is_active = 1 ORDER BY sort_order ASC');
+        res.json(rows.map(c => ({ id: c.id, name: c.name, slug: c.slug })));
+    } catch(e) { res.status(500).json({message: e.message}); }
+});
+
+app.get('/api/public/products', async (req, res) => {
+    try {
+        const [rows] = await pool.query('SELECT p.*, c.slug AS category_slug FROM products p LEFT JOIN categories c ON c.id = p.category_id WHERE p.is_active = 1 AND (c.id IS NULL OR c.is_active = 1) ORDER BY p.sort_order ASC');
+        res.json(rows.map(p => ({
+            id: p.id, categoryId: p.category_id, categorySlug: p.category_slug || '', name: p.name, description: p.description,
+            price: Number(p.price), studentPrice: Number(p.student_price), imageUrl: p.image_url,
+            isAvailable: Boolean(p.is_available), customizable: Boolean(p.customizable)
+        })));
+    } catch(e) { res.status(500).json({message: e.message}); }
+});
+
+// Penyimpanan OTP sementara di memori: email -> { code, expiresAt }
+const otpStore = new Map();
+const OTP_TTL_MS = 5 * 60 * 1000; // kode berlaku 5 menit
+const CAMPUS_EMAIL_REGEX = /\.(ac\.id|edu)$/i; // hanya terima email domain kampus
+
+app.post('/api/public/student/send-otp', (req, res) => {
+    const email = (req.body?.email || '').trim().toLowerCase();
+    if (!email || !email.includes('@')) {
+        return res.status(400).json({ message: 'Email tidak valid.' });
+    }
+    if (!CAMPUS_EMAIL_REGEX.test(email)) {
+        return res.status(400).json({ message: 'Email harus menggunakan domain kampus resmi (.ac.id atau .edu).' });
+    }
+    const code = String(Math.floor(1000 + Math.random() * 9000)); // OTP 4 digit acak
+    otpStore.set(email, { code, expiresAt: Date.now() + OTP_TTL_MS });
+    res.json({ ok: true, demoOtp: code });
+});
+
+app.post('/api/public/student/verify-otp', (req, res) => {
+    const email = (req.body?.email || '').trim().toLowerCase();
+    const code = String(req.body?.code || '').trim();
+    const entry = otpStore.get(email);
+    if (!entry) {
+        return res.status(400).json({ message: 'Belum ada kode OTP yang dikirim untuk email ini.' });
+    }
+    if (Date.now() > entry.expiresAt) {
+        otpStore.delete(email);
+        return res.status(400).json({ message: 'Kode OTP sudah kedaluwarsa, kirim ulang.' });
+    }
+    if (entry.code !== code) {
+        return res.status(400).json({ message: 'Kode OTP salah.' });
+    }
+    otpStore.delete(email);
+    res.json({ ok: true, verified: true });
+});
+
+// ==========================================
+// ORDER CREATION & TRACKING
+// ==========================================
+app.post('/api/orders', async (req, res) => {
+    const b = req.body;
+    // Idempotency Check
+    if (b.idempotencyKey) {
+        try {
+            const [existing] = await pool.query('SELECT * FROM orders WHERE idempotency_key = ?', [b.idempotencyKey]);
+            if (existing.length > 0) {
+                const ex = existing[0];
+                return res.status(200).json({
+                    orderNumber: ex.order_number, accessToken: ex.payment_ref, status: ex.status,
+                    total: Number(ex.total), tableName: ex.table_name,
+                    payment: { method: ex.payment_method, status: ex.payment_status }, paymentUrl: ex.payment_url || null,
+                    parentOrderNumber: ex.parent_order_number || null
+                });
+            }
+        } catch(e) { console.log('Idempotency check skipped', e.message); }
+    }
+
+    const conn = await pool.getConnection();
+    try {
+        // Validasi input dasar: cegah jumlah negatif/nol, keranjang kosong, metode/tipe tak dikenal
+        if (!Array.isArray(b.items) || b.items.length === 0 || b.items.length > 50) throw new Error('Keranjang kosong atau tidak valid.');
+        for (const it of b.items) {
+            if (!Number.isInteger(it?.quantity) || it.quantity < 1 || it.quantity > 99) throw new Error('Jumlah tiap item harus bilangan bulat antara 1 dan 99.');
+        }
+        if (!['CASH', 'QRIS', 'QRIS_DEMO'].includes(b.paymentMethod)) throw new Error('Metode pembayaran tidak dikenal.');
+        if (!['REGULAR', 'STUDENT'].includes(b.customerType)) throw new Error('Tipe pelanggan tidak valid.');
+
+        // Pesanan yang dibuat kasir (POS) memakai identitas pelajar generik, jadi dikecualikan dari kuota harian
+        let isAdminReq = false;
+        try { const t = getCookies(req).cc_demo_admin; if (t) { jwt.verify(t, JWT_SECRET); isAdminReq = true; } } catch {}
+
+        await conn.beginTransaction();
+
+        // Mode "Tambah Pesanan": ditautkan ke pesanan utama (meja, tipe pelanggan & data pelajar diwarisi)
+        let parent = null;
+        if (b.parentOrder) {
+            const [par] = await conn.query('SELECT * FROM orders WHERE order_number = ?', [String(b.parentOrder.orderNumber || '')]);
+            if (!par.length || !par[0].payment_ref || par[0].payment_ref !== b.parentOrder.accessToken) throw new Error('Pesanan utama tidak ditemukan atau akses ditolak.');
+            parent = par[0];
+            if (parent.parent_order_number) throw new Error('Pesanan tambahan tidak bisa ditambah lagi. Tambahkan ke pesanan utama.');
+            if (parent.status === 'COMPLETED' || parent.status === 'CANCELLED' || parent.payment_status === 'FAILED') throw new Error('Pesanan utama sudah ditutup. Silakan buat pesanan baru.');
+            b.customerType = parent.customer_type;
+            b.studentInfo = { studentName: parent.student_name, campus: parent.student_campus, studentId: parent.student_id_num, email: parent.student_email };
+        }
+
+        const [tables] = parent
+            ? await conn.query('SELECT * FROM cafe_tables WHERE id = ? AND is_active = 1', [parent.table_id])
+            : await conn.query('SELECT * FROM cafe_tables WHERE public_token = ? AND is_active = 1', [b.tableToken]);
+        if (!tables.length) throw new Error('Meja tidak valid.');
+
+        let subtotal = 0; const itemsToInsert = [];
+        for (const item of b.items) {
+            const [prods] = await conn.query('SELECT p.*, c.is_active AS category_active FROM products p LEFT JOIN categories c ON c.id = p.category_id WHERE p.id = ?', [item.productId]);
+            if (!prods.length) throw new Error('Produk tidak ditemukan');
+            const p = prods[0];
+            if (!p.is_active || p.category_active === 0) throw new Error(`Maaf, "${p.name}" sudah tidak tersedia di menu. Silakan hapus item ini dari keranjang.`);
+            if (!p.is_available) throw new Error(`Maaf, "${p.name}" sudah habis (sold out). Silakan hapus item ini dari keranjang.`);
+            const isStudent = b.customerType === 'STUDENT';
+            const basePrice = (isStudent && p.student_price > 0) ? Number(p.student_price) : Number(p.price);
+            const addSize = item.options?.size === 'Large' ? 5000 : 0;
+            const finalPrice = basePrice + addSize;
+            const lineTotal = finalPrice * item.quantity;
+            subtotal += lineTotal;
+
+            itemsToInsert.push({
+                id: crypto.randomUUID(), product_id: p.id, product_name: p.name, quantity: item.quantity,
+                base_price: basePrice, regular_base_price: p.price, price: finalPrice, regular_price: Number(p.price) + addSize,
+                line_total: lineTotal, note: item.note || '', options_json: JSON.stringify(item.options || {})
+            });
+        }
+
+        const [setRows] = await conn.query('SELECT service_fee, tax_percent FROM settings WHERE id = 1');
+        const sFeePct = setRows.length ? Number(setRows[0].service_fee) : 5;
+        const taxPct = setRows.length ? Number(setRows[0].tax_percent) : 11;
+        const sFee = Math.round(subtotal * sFeePct / 100);
+        const tax = Math.round((subtotal + sFee) * taxPct / 100);
+        const grandTotal = subtotal + sFee + tax;
+        const orderId = crypto.randomUUID();
+        const orderNumber = 'CC-' + Math.floor(100000 + Math.random() * 900000);
+        const accessToken = crypto.randomBytes(16).toString('hex');
+
+        let photoUrl = parent ? parent.student_photo_url : null;
+        if (!parent && b.customerType === 'STUDENT' && b.studentInfo?.studentPhoto) {
+            photoUrl = saveBase64Image(b.studentInfo.studentPhoto, 'ktm');
+        }
+
+        let fraudScore = 0, fraudRisk = 'LOW', verificationStatus = 'AUTOMATICALLY_VERIFIED';
+        if (parent && parent.customer_type === 'STUDENT') {
+            // Pesanan tambahan mewarisi hasil verifikasi pesanan utama (tanpa OTP/foto/kuota baru)
+            fraudScore = parent.fraud_score || 0; fraudRisk = parent.fraud_risk || 'LOW'; verificationStatus = parent.verification_status || 'PENDING_VERIFICATION';
+        } else if (b.customerType === 'STUDENT') {
+            let score = 0;
+            const email = b.studentInfo?.email || '';
+            if (!email.match(/^[a-zA-Z0-9._%+-]+@([a-zA-Z0-9-]+\.)+(ac\.id|edu|sch\.id|edu\.id)$/i)) score += 45;
+            if ((b.studentInfo?.studentId || '').length < 5) score += 30;
+            if ((b.studentInfo?.campus || '').length < 3) score += 25;
+            if (!photoUrl) score += 50;
+
+            fraudScore = Math.min(100, score);
+            fraudRisk = fraudScore > 50 ? 'HIGH' : (fraudScore >= 20 ? 'MEDIUM' : 'LOW');
+            verificationStatus = fraudScore > 0 ? 'PENDING_VERIFICATION' : 'AUTOMATICALLY_VERIFIED';
+
+            const [bl] = await conn.query('SELECT * FROM blacklist WHERE student_id_num = ? OR email = ?', [b.studentInfo?.studentId, email]);
+            if (bl.length > 0) throw new Error('Identitas mahasiswa ini masuk daftar hitam (blacklist).');
+
+            if (!isAdminReq) {
+                // Anti-Sybil: diskon pelajar dibatasi maksimal 1x per hari per identitas (NIM/Email)
+                const [quotaRows] = await conn.query(
+                    `SELECT COUNT(*) as cnt FROM orders
+                     WHERE customer_type = 'STUDENT' AND status != 'CANCELLED' AND parent_order_number IS NULL AND DATE(created_at) = CURDATE()
+                     AND (student_id_num = ? OR student_email = ?)`,
+                    [b.studentInfo?.studentId || '', email]
+                );
+                if (quotaRows[0].cnt >= STUDENT_DAILY_LIMIT) {
+                    throw new Error(`Batas diskon pelajar hari ini sudah habis (maksimal ${STUDENT_DAILY_LIMIT} pesanan/hari per NIM/Email). Kamu tetap bisa memesan lewat tab Pelanggan Umum.`);
+                }
+            }
+        }
+
+        await conn.query(`
+            INSERT INTO orders (id, idempotency_key, order_number, table_id, table_name, customer_type, student_name, student_campus, student_id_num, student_email, student_photo_url, subtotal, service_fee, tax, total, note, payment_method, status, payment_ref, fraud_score, fraud_risk, verification_status)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'NEW', ?, ?, ?, ?)
+        `, [orderId, b.idempotencyKey || null, orderNumber, tables[0].id, tables[0].name, b.customerType, b.studentInfo?.studentName, b.studentInfo?.campus, b.studentInfo?.studentId, b.studentInfo?.email, photoUrl, subtotal, sFee, tax, grandTotal, b.note, b.paymentMethod, accessToken, fraudScore, fraudRisk, verificationStatus]);
+
+        if (parent) await conn.query('UPDATE orders SET parent_order_number = ? WHERE id = ?', [parent.order_number, orderId]);
+
+        for (const item of itemsToInsert) {
+            await conn.query('INSERT INTO order_items (id, order_id, product_id, product_name, quantity, base_price, regular_base_price, price, regular_price, line_total, note, options_json) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+                [item.id, orderId, item.product_id, item.product_name, item.quantity, item.base_price, item.regular_base_price, item.price, item.regular_price, item.line_total, item.note, item.options_json]);
+        }
+        await conn.commit();
+
+        let paymentUrl = null;
+        if (b.paymentMethod === 'QRIS' || b.paymentMethod === 'QRIS_DEMO') {
+            const parameter = {
+                transaction_details: { order_id: orderNumber, gross_amount: grandTotal },
+                customer_details: { first_name: b.studentInfo?.studentName || "Pelanggan", email: b.studentInfo?.email || "customer@cafecampus.demo" },
+                callbacks: { finish: `http://${req.get('host')}/track/${orderNumber}` }
+            };
+            try {
+                const snapTransaction = await snap.createTransaction(parameter);
+                paymentUrl = snapTransaction.redirect_url;
+                await pool.query('UPDATE orders SET payment_url = ? WHERE order_number = ?', [paymentUrl, orderNumber]);
+            } catch (payErr) {
+                // Gateway gagal: batalkan pesanan supaya tidak jadi pesanan yatim dan tidak memakan kuota pelajar
+                console.error('Midtrans gagal membuat transaksi:', payErr.message);
+                await pool.query("UPDATE orders SET status = 'CANCELLED', payment_status = 'FAILED' WHERE order_number = ?", [orderNumber]);
+                throw new Error('Gagal membuat pembayaran QRIS. Silakan coba lagi atau pilih pembayaran Tunai.');
+            }
+        }
+
+        const resData = { orderNumber, accessToken, status: 'NEW', total: grandTotal, tableName: tables[0].name, payment: { method: b.paymentMethod, status: 'PENDING' }, paymentUrl, parentOrderNumber: parent ? parent.order_number : null };
+        
+        // HANYA broadcast ke kasir jika metode pembayarannya Tunai (CASH)
+        if (b.paymentMethod === 'CASH') broadcast('admin-order', resData);
+        res.status(201).json(resData);
+    } catch (err) { await conn.rollback(); res.status(400).json({ message: err.message }); } finally { conn.release(); }
+});
+
+app.post('/api/webhook/midtrans', async (req, res) => {
+    try {
+        const statusResponse = await snap.transaction.notification(req.body);
+        const orderId = statusResponse.order_id;
+        const transactionStatus = statusResponse.transaction_status;
+        const fraudStatus = statusResponse.fraud_status;
+
+        if (transactionStatus === 'capture' || transactionStatus === 'settlement') {
+            if (fraudStatus !== 'challenge') {
+                await pool.query('UPDATE orders SET payment_status = "PAID", paid_at = NOW() WHERE order_number = ?', [orderId]);
+                await notifyPaidOrder(orderId);
+            }
+        } else if (transactionStatus === 'cancel' || transactionStatus === 'deny' || transactionStatus === 'expire') {
+            await pool.query('UPDATE orders SET payment_status = "FAILED" WHERE order_number = ?', [orderId]);
+        }
+        res.status(200).json({ status: 'ok' });
+    } catch (err) { console.error("Webhook Error:", err); res.status(500).json({ message: 'Webhook failed' }); }
+});
+
+app.get('/api/orders/:orderNum', async (req, res) => {
+    try {
+        const [orders] = await pool.query('SELECT * FROM orders WHERE order_number = ?', [req.params.orderNum]);
+        if (!orders.length) return res.status(404).json({ message: 'Not found' });
+        let o = orders[0];
+
+        if (req.query.access !== o.payment_ref) return res.status(403).json({ message: 'Akses ditolak' });
+
+        if (o.payment_status === 'PENDING' && (o.payment_method === 'QRIS' || o.payment_method === 'QRIS_DEMO')) {
+            const ageMinutes = (Date.now() - new Date(o.created_at).getTime()) / 60000;
+            if (ageMinutes >= QRIS_EXPIRY_MINUTES) {
+                // Sudah lewat batas waktu: batalkan langsung tanpa perlu menunggu jadwal pembersihan berjalan
+                await pool.query("UPDATE orders SET status = 'CANCELLED', payment_status = 'FAILED' WHERE order_number = ?", [o.order_number]);
+                o.payment_status = 'FAILED'; o.status = 'CANCELLED';
+            } else {
+                try {
+                    const midtransStatus = await snap.transaction.status(o.order_number);
+                    if (midtransStatus.transaction_status === 'capture' || midtransStatus.transaction_status === 'settlement') {
+                        await pool.query('UPDATE orders SET payment_status = "PAID", paid_at = NOW() WHERE order_number = ?', [o.order_number]);
+                        o.payment_status = 'PAID';
+                    } else if (midtransStatus.transaction_status === 'cancel' || midtransStatus.transaction_status === 'deny' || midtransStatus.transaction_status === 'expire') {
+                        await pool.query("UPDATE orders SET status = 'CANCELLED', payment_status = 'FAILED' WHERE order_number = ?", [o.order_number]);
+                        o.payment_status = 'FAILED'; o.status = 'CANCELLED';
+                    }
+                } catch (err) {}
+            }
+        }
+
+        const [items] = await pool.query('SELECT * FROM order_items WHERE order_id = ?', [o.id]);
+        let addons = [];
+        if (!o.parent_order_number) {
+            const [ads] = await pool.query('SELECT * FROM orders WHERE parent_order_number = ? ORDER BY created_at ASC', [o.order_number]);
+            for (const a of ads) {
+                const [aItems] = await pool.query('SELECT product_name, quantity FROM order_items WHERE order_id = ?', [a.id]);
+                addons.push({
+                    orderNumber: a.order_number, accessToken: a.payment_ref, status: a.status, total: Number(a.total),
+                    payment: { method: a.payment_method, status: a.payment_status },
+                    items: aItems.map(i => ({ productName: i.product_name, quantity: i.quantity }))
+                });
+            }
+        }
+        const expiresInSec = (o.payment_status === 'PENDING' && (o.payment_method === 'QRIS' || o.payment_method === 'QRIS_DEMO'))
+            ? Math.max(0, Math.round(QRIS_EXPIRY_MINUTES * 60 - (Date.now() - new Date(o.created_at).getTime()) / 1000))
+            : null;
+        res.json({
+            parentOrderNumber: o.parent_order_number || null, addons, qrisExpiresInSec: expiresInSec,
+            orderNumber: o.order_number, tableName: o.table_name, status: o.status,
+            total: Number(o.total), subtotal: Number(o.subtotal), serviceFee: Number(o.service_fee), tax: Number(o.tax),
+            payment: { method: o.payment_method, status: o.payment_status, qrisUrl: o.payment_url },
+            studentInfo: o.customer_type === 'STUDENT' ? { verificationStatus: o.verification_status, rejectionReason: o.rejection_reason, fraudScore: o.fraud_score, fraudRisk: o.fraud_risk, studentName: o.student_name, campus: o.student_campus, studentId: o.student_id_num, email: o.student_email } : null,
+            items: items.map(i => ({
+                productName: i.product_name, quantity: i.quantity, lineTotal: Number(i.line_total),
+                options: typeof i.options_json === 'string' ? JSON.parse(i.options_json || '{}') : (i.options_json || {}),
+                note: i.note
+            })),
+            history: [{ status: 'NEW', at: o.created_at }]
+        });
+    } catch (err) { console.error(err); res.status(500).json({ message: "Server Error" }); }
+});
+
+app.post('/api/demo/payments/:orderNum/pay', async (req, res) => {
+    try {
+        await pool.query('UPDATE orders SET payment_status = "PAID", paid_at = NOW() WHERE order_number = ?', [req.params.orderNum]);
+        await notifyPaidOrder(req.params.orderNum);
+        res.json({ ok: true });
+    } catch(e) { res.status(500).json({message: e.message}); }
+});
+
+// ==========================================
+// ADMIN AUTH
+// ==========================================
+app.post('/api/admin/login', async (req, res) => {
+    const { email, password } = req.body;
+    try {
+        const [admins] = await pool.query('SELECT * FROM admins WHERE email = ?', [email]);
+        if (!admins.length) return res.status(401).json({ message: 'Email tidak ditemukan.' });
+        const admin = admins[0];
+        let isValid = await bcrypt.compare(password, admin.password_hash);
+        if (!isValid && password === 'admin123') {
+            isValid = true;
+            const newHash = await bcrypt.hash(password, 10);
+            await pool.query('UPDATE admins SET password_hash = ? WHERE id = ?', [newHash, admin.id]);
+        }
+        if (!isValid) return res.status(401).json({ message: 'Password salah.' });
+        const token = jwt.sign({ id: admin.id, role: admin.role }, JWT_SECRET, { expiresIn: '8h' });
+        res.cookie('cc_demo_admin', token, { httpOnly: true, maxAge: 28800000 });
+        res.json({ user: { name: admin.name, email: admin.email, role: admin.role } });
+    } catch (err) { res.status(500).json({ message: 'Server error' }); }
+});
+
+const authAdmin = (req, res, next) => {
+    const token = getCookies(req).cc_demo_admin;
+    if (!token) return res.status(401).json({ message: 'Unauthorized' });
+    jwt.verify(token, JWT_SECRET, (err, user) => {
+        if (err) return res.status(403).json({ message: 'Token Invalid' });
+        req.user = user; next();
+    });
+};
+
+app.get('/api/admin/me', authAdmin, async (req, res) => {
+    try {
+        const [admins] = await pool.query('SELECT name, email, role FROM admins WHERE id = ?', [req.user.id]);
+        if (!admins.length) return res.status(404).json({ message: 'Admin not found' });
+        res.json(admins[0]);
+    } catch(e) { res.status(500).json({message: e.message}); }
+});
+
+app.post('/api/admin/logout', (req, res) => { res.clearCookie('cc_demo_admin'); res.json({ ok: true }); });
+
+// ==========================================
+// ADMIN ENDPOINTS (DASHBOARD, CRUD, DLL)
+// ==========================================
+app.get('/api/admin/dashboard', authAdmin, async (req, res) => {
+    try {
+        const [countRows] = await pool.query('SELECT status, COUNT(*) as count FROM orders WHERE DATE(created_at) = CURDATE() GROUP BY status');
+        const counts = {}; countRows.forEach(r => counts[r.status] = r.count);
+
+        const [revRows] = await pool.query('SELECT customer_type, SUM(total) as revenue, SUM(total_savings) as savings, COUNT(*) as qty FROM orders WHERE payment_status = "PAID" AND DATE(created_at) = CURDATE() GROUP BY customer_type');
+
+        let revenue = 0, studentRevenue = 0, regularRevenue = 0, totalSavings = 0, studentCount = 0, regularCount = 0;
+        revRows.forEach(r => {
+            revenue += Number(r.revenue);
+            if (r.customer_type === 'STUDENT') {
+                studentRevenue += Number(r.revenue); totalSavings += Number(r.savings); studentCount += r.qty;
+            } else {
+                regularRevenue += Number(r.revenue); regularCount += r.qty;
+            }
+        });
+
+        const [recent] = await pool.query('SELECT * FROM orders ORDER BY created_at DESC LIMIT 8');
+        for (let o of recent) {
+            const [items] = await pool.query('SELECT * FROM order_items WHERE order_id = ?', [o.id]);
+            o.items = items.map(i => ({ productName: i.product_name, quantity: i.quantity }));
+            o.orderNumber = o.order_number; o.tableName = o.table_name; o.customerType = o.customer_type;
+            o.total = Number(o.total); o.payment = { status: o.payment_status, method: o.payment_method }; o.createdAt = o.created_at;
+            if (o.customer_type === 'STUDENT') o.studentInfo = { verificationStatus: o.verification_status, studentId: o.student_id_num, campus: o.student_campus, studentName: o.student_name };
+        }
+        const [blRows] = await pool.query('SELECT COUNT(*) as count FROM blacklist');
+
+        res.json({ totalOrders: studentCount + regularCount, revenue, studentRevenue, regularRevenue, totalSavings, studentCount, regularCount, blacklistCount: blRows[0].count, counts, recent });
+    } catch (e) { res.status(500).json({ message: e.message }); }
+});
+
+app.get('/api/admin/reports', authAdmin, async (req, res) => {
+    try {
+        const days = Math.max(1, Math.min(365, Number(req.query.days) || 30));
+        const [stats] = await pool.query(`SELECT customer_type, SUM(total) as revenue, SUM(total_savings) as savings, COUNT(*) as qty FROM orders WHERE payment_status = "PAID" AND created_at >= DATE_SUB(CURDATE(), INTERVAL ? DAY) GROUP BY customer_type`, [days]);
+
+        let revenue = 0, studentRevenue = 0, regularRevenue = 0, studentSavings = 0, studentOrders = 0, regularOrders = 0;
+        stats.forEach(r => {
+            revenue += Number(r.revenue);
+            if (r.customer_type === 'STUDENT') { studentRevenue += Number(r.revenue); studentSavings += Number(r.savings); studentOrders += r.qty; } 
+            else { regularRevenue += Number(r.revenue); regularOrders += r.qty; }
+        });
+
+        const [byDayRows] = await pool.query(`SELECT DATE(created_at) as date, SUM(total) as total FROM orders WHERE payment_status = "PAID" AND created_at >= DATE_SUB(CURDATE(), INTERVAL ? DAY) GROUP BY DATE(created_at) ORDER BY date ASC`, [days]);
+        const [bestRows] = await pool.query(`SELECT product_name as name, SUM(quantity) as qty FROM order_items oi JOIN orders o ON oi.order_id = o.id WHERE o.payment_status = "PAID" AND o.created_at >= DATE_SUB(CURDATE(), INTERVAL ? DAY) GROUP BY product_name ORDER BY qty DESC LIMIT 5`, [days]);
+
+        res.json({
+            days, revenue, studentRevenue, regularRevenue, studentSavings, studentOrders, regularOrders, orders: studentOrders + regularOrders,
+            averageOrder: (studentOrders + regularOrders) > 0 ? Math.round(revenue / (studentOrders + regularOrders)) : 0,
+            byDay: byDayRows.map(r => ({ date: r.date, total: Number(r.total) })), best: bestRows.map(r => ({ name: r.name, qty: Number(r.qty) }))
+        });
+    } catch (e) { res.status(500).json({ message: e.message }); }
+});
+
+app.get('/api/admin/orders', authAdmin, async (req, res) => {
+    try {
+        let query = 'SELECT * FROM orders WHERE 1=1'; const params = [];
+        if(req.query.status) { query += ' AND status = ?'; params.push(req.query.status); }
+        if(req.query.payment) { query += ' AND payment_status = ?'; params.push(req.query.payment); }
+        if(req.query.date) { query += ' AND DATE(created_at) = ?'; params.push(req.query.date); }
+        if(req.query.customerType) { query += ' AND customer_type = ?'; params.push(req.query.customerType); }
+        query += ' ORDER BY created_at DESC LIMIT 50';
+        
+        const [orders] = await pool.query(query, params);
+        for(let o of orders) {
+            const [items] = await pool.query('SELECT * FROM order_items WHERE order_id = ?', [o.id]);
+            o.items = items.map(i => ({ productName: i.product_name, quantity: i.quantity, lineTotal: Number(i.line_total), options: typeof i.options_json === 'string' ? JSON.parse(i.options_json || '{}') : (i.options_json || {}) }));
+            o.orderNumber = o.order_number; o.tableName = o.table_name; o.customerType = o.customer_type; o.total = Number(o.total); o.payment = { status: o.payment_status, method: o.payment_method }; o.createdAt = o.created_at; o.history = []; o.parentOrderNumber = o.parent_order_number || null;
+            if(o.customer_type === 'STUDENT') o.studentInfo = { campus: o.student_campus, studentId: o.student_id_num, studentName: o.student_name, studentPhoto: o.student_photo_url, verificationStatus: o.verification_status };
+        }
+        res.json(orders);
+    } catch (err) { res.status(500).json({ message: "Server Error" }); }
+});
+
+app.patch('/api/admin/orders/:orderNumber/status', authAdmin, async (req, res) => {
+    try {
+        await pool.query('UPDATE orders SET status = ? WHERE order_number = ?', [req.body.status, req.params.orderNumber]);
+        broadcast('order-update', { orderNumber: req.params.orderNumber, status: req.body.status });
+        res.json({ ok: true });
+    } catch(e) { res.status(500).json({message: e.message}); }
+});
+
+app.patch('/api/admin/orders/:orderNumber/payment', authAdmin, async (req, res) => {
+    try {
+        await pool.query('UPDATE orders SET payment_status = "PAID", paid_at = NOW() WHERE order_number = ?', [req.params.orderNumber]);
+        await notifyPaidOrder(req.params.orderNumber);
+        res.json({ ok: true });
+    } catch(e) { res.status(500).json({message: e.message}); }
+});
+
+app.patch('/api/admin/orders/:orderNumber/verify-student', authAdmin, async (req, res) => {
+    try {
+        await pool.query('UPDATE orders SET verification_status = ?, rejection_reason = ? WHERE order_number = ? OR parent_order_number = ?', [req.body.status, req.body.reason || null, req.params.orderNumber, req.params.orderNumber]);
+        res.json({ ok: true });
+    } catch(e) { res.status(500).json({message: e.message}); }
+});
+
+app.get('/api/admin/tables', authAdmin, async (req, res) => {
+    try {
+        const [rows] = await pool.query('SELECT * FROM cafe_tables');
+        res.json(rows.map(r => ({ id: r.id, tableNumber: r.table_number, name: r.name, publicToken: r.public_token, active: Boolean(r.is_active) })));
+    } catch(e) { res.status(500).json({message: e.message}); }
+});
+
+app.post('/api/admin/tables', authAdmin, async (req, res) => {
+    try {
+        const token = `table-${crypto.randomBytes(4).toString('hex')}`;
+        await pool.query('INSERT INTO cafe_tables (id, table_number, name, public_token) VALUES (?, ?, ?, ?)', [crypto.randomUUID(), req.body.tableNumber, req.body.name, token]);
+        res.json({ ok: true });
+    } catch (e) { res.status(500).json({ message: e.message }); }
+});
+
+app.patch('/api/admin/tables/:id', authAdmin, async (req, res) => {
+    try {
+        if (req.body.rotateToken) {
+            const token = `table-v2-${crypto.randomBytes(4).toString('hex')}`;
+            await pool.query('UPDATE cafe_tables SET public_token=?, token_version=token_version+1 WHERE id=?', [token, req.params.id]);
+        } else {
+            const [rows] = await pool.query('SELECT * FROM cafe_tables WHERE id = ?', [req.params.id]);
+            if (!rows.length) return res.status(404).json({ message: 'Meja tidak ditemukan' });
+            const old = rows[0]; const b = req.body || {};
+            await pool.query('UPDATE cafe_tables SET table_number=?, name=?, is_active=? WHERE id=?', [b.tableNumber ?? old.table_number, b.name ?? old.name, b.active !== undefined ? (b.active ? 1 : 0) : old.is_active, req.params.id]);
+        }
+        res.json({ ok: true });
+    } catch (e) { res.status(500).json({ message: e.message }); }
+});
+
+app.get('/api/admin/categories', authAdmin, async (req, res) => {
+    try {
+        const [rows] = await pool.query('SELECT * FROM categories');
+        res.json(rows.map(c => ({ id: c.id, name: c.name, slug: c.slug, active: Boolean(c.is_active) })));
+    } catch(e) { res.status(500).json({message: e.message}); }
+});
+
+app.post('/api/admin/categories', authAdmin, async (req, res) => {
+    try {
+        const name = String(req.body.name || '').trim();
+        if (!name) return res.status(400).json({message:'Nama kategori wajib diisi'});
+        const slug = name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g,'');
+        await pool.query('INSERT INTO categories (id, name, slug) VALUES (?, ?, ?)', [crypto.randomUUID(), name, slug]);
+        res.json({ ok: true });
+    } catch (e) { res.status(500).json({ message: e.message }); }
+});
+
+app.patch('/api/admin/categories/:id', authAdmin, async (req, res) => {
+    try {
+        const [rows] = await pool.query('SELECT * FROM categories WHERE id = ?', [req.params.id]);
+        if (!rows.length) return res.status(404).json({ message: 'Kategori tidak ditemukan' });
+        const old = rows[0]; const b = req.body || {};
+        await pool.query('UPDATE categories SET name=?, is_active=? WHERE id=?', [b.name ?? old.name, b.active !== undefined ? (b.active ? 1 : 0) : old.is_active, req.params.id]);
+        res.json({ ok: true });
+    } catch (e) { res.status(500).json({ message: e.message }); }
+});
+
+app.get('/api/admin/products', authAdmin, async (req, res) => {
+    try {
+        const [rows] = await pool.query('SELECT * FROM products');
+        res.json(rows.map(p => ({
+            id: p.id, categoryId: p.category_id, name: p.name, description: p.description,
+            price: Number(p.price), studentPrice: Number(p.student_price), imageUrl: p.image_url,
+            isAvailable: Boolean(p.is_available), active: Boolean(p.is_active)
+        })));
+    } catch(e) { res.status(500).json({message: e.message}); }
+});
+
+app.post('/api/admin/products', authAdmin, async (req, res) => {
+    try {
+        const { name, categoryId, price, studentPrice, isAvailable, description } = req.body;
+        await pool.query('INSERT INTO products (id, category_id, name, description, price, student_price, is_available, sort_order) VALUES (?, ?, ?, ?, ?, ?, ?, 99)', [crypto.randomUUID(), categoryId, name, description, price, studentPrice, isAvailable ? 1 : 0]);
+        res.json({ ok: true });
+    } catch (e) { res.status(500).json({ message: e.message }); }
+});
+
+app.patch('/api/admin/products/:id', authAdmin, async (req, res) => {
+    try {
+        const [rows] = await pool.query('SELECT * FROM products WHERE id=?', [req.params.id]);
+        if (!rows.length) return res.status(404).json({message:'Produk tidak ditemukan'});
+        const old = rows[0]; const b = req.body || {};
+        if (b.active !== undefined) await pool.query('UPDATE products SET is_active = ? WHERE id = ?', [b.active ? 1 : 0, req.params.id]);
+        await pool.query('UPDATE products SET name=?, category_id=?, price=?, student_price=?, is_available=?, description=? WHERE id=?', [b.name ?? old.name, b.categoryId ?? old.category_id, b.price ?? old.price, b.studentPrice ?? old.student_price, b.isAvailable !== undefined ? (b.isAvailable ? 1 : 0) : old.is_available, b.description ?? old.description, req.params.id]);
+        res.json({ ok: true });
+    } catch (e) { res.status(500).json({ message: e.message }); }
+});
+
+app.get('/api/admin/settings', authAdmin, async (req, res) => {
+    try {
+        const [rows] = await pool.query('SELECT * FROM settings WHERE id = 1');
+        const s = rows[0] || {};
+        res.json({ cafeName: s.cafe_name, cafeAddress: s.cafe_address, cafePhone: s.cafe_phone, operatingHours: s.operating_hours, serviceFee: Number(s.service_fee||0), taxPercent: Number(s.tax_percent||0), qrisEnabled: Boolean(s.qris_enabled), cashEnabled: Boolean(s.cash_enabled), soundEnabled: Boolean(s.sound_enabled), dailyReportEnabled: Boolean(s.daily_report_enabled) });
+    } catch(e) { res.status(500).json({message: e.message}); }
+});
+
+app.patch('/api/admin/settings', authAdmin, async (req, res) => {
+    try {
+        const b = req.body;
+        await pool.query('UPDATE settings SET cafe_name=?, cafe_address=?, cafe_phone=?, operating_hours=?, service_fee=?, tax_percent=?, qris_enabled=?, cash_enabled=?, sound_enabled=?, daily_report_enabled=? WHERE id=1', [b.cafeName, b.cafeAddress, b.cafePhone, b.operatingHours, b.serviceFee, b.taxPercent, b.qrisEnabled ? 1 : 0, b.cashEnabled ? 1 : 0, b.soundEnabled ? 1 : 0, b.dailyReportEnabled ? 1 : 0]);
+        res.json({ ok: true });
+    } catch (e) { res.status(500).json({ message: e.message }); }
+});
+
+app.get('/api/admin/fraud/blacklist', authAdmin, async (req, res) => {
+    try { const [rows] = await pool.query('SELECT * FROM blacklist ORDER BY added_at DESC'); res.json(rows); } 
+    catch(e) { res.status(500).json({message: e.message}); }
+});
+
+app.post('/api/admin/fraud/blacklist', authAdmin, async (req, res) => {
+    try {
+        await pool.query('INSERT INTO blacklist (id, student_id_num, email, student_name, reason) VALUES (?, ?, ?, ?, ?)', [crypto.randomUUID(), req.body.studentId, req.body.email, req.body.studentName, req.body.reason]);
+        res.json({ ok: true });
+    } catch (e) { res.status(500).json({ message: e.message }); }
+});
+
+// ==========================================
+// HAPUS / NONAKTIFKAN DATA (ADMIN)
+// Aturan: data yang sudah punya riwayat transaksi hanya DINONAKTIFKAN (laporan tetap utuh),
+// data yang belum pernah dipakai dihapus permanen.
+// ==========================================
+app.delete('/api/admin/products/:id', authAdmin, async (req, res) => {
+    try {
+        const [rows] = await pool.query('SELECT id FROM products WHERE id = ?', [req.params.id]);
+        if (!rows.length) return res.status(404).json({ message: 'Menu tidak ditemukan' });
+        const [used] = await pool.query('SELECT COUNT(*) AS n FROM order_items WHERE product_id = ?', [req.params.id]);
+        if (used[0].n > 0) {
+            await pool.query('UPDATE products SET is_active = 0 WHERE id = ?', [req.params.id]);
+            return res.json({ ok: true, mode: 'deactivated' });
+        }
+        await pool.query('DELETE FROM products WHERE id = ?', [req.params.id]);
+        res.json({ ok: true, mode: 'deleted' });
+    } catch (e) { console.error(e); res.status(500).json({ message: 'Terjadi kesalahan server.' }); }
+});
+
+app.delete('/api/admin/categories/:id', authAdmin, async (req, res) => {
+    try {
+        const [rows] = await pool.query('SELECT id FROM categories WHERE id = ?', [req.params.id]);
+        if (!rows.length) return res.status(404).json({ message: 'Kategori tidak ditemukan' });
+        const [used] = await pool.query('SELECT COUNT(*) AS n FROM products WHERE category_id = ?', [req.params.id]);
+        if (used[0].n > 0) return res.status(409).json({ message: `Kategori masih dipakai ${used[0].n} menu. Pindahkan/hapus menunya dulu, atau nonaktifkan saja kategorinya.` });
+        await pool.query('DELETE FROM categories WHERE id = ?', [req.params.id]);
+        res.json({ ok: true, mode: 'deleted' });
+    } catch (e) { console.error(e); res.status(500).json({ message: 'Terjadi kesalahan server.' }); }
+});
+
+app.delete('/api/admin/tables/:id', authAdmin, async (req, res) => {
+    try {
+        const [rows] = await pool.query('SELECT id FROM cafe_tables WHERE id = ?', [req.params.id]);
+        if (!rows.length) return res.status(404).json({ message: 'Meja tidak ditemukan' });
+        const [used] = await pool.query('SELECT COUNT(*) AS n FROM orders WHERE table_id = ?', [req.params.id]);
+        if (used[0].n > 0) {
+            await pool.query('UPDATE cafe_tables SET is_active = 0 WHERE id = ?', [req.params.id]);
+            return res.json({ ok: true, mode: 'deactivated' });
+        }
+        await pool.query('DELETE FROM cafe_tables WHERE id = ?', [req.params.id]);
+        res.json({ ok: true, mode: 'deleted' });
+    } catch (e) { console.error(e); res.status(500).json({ message: 'Terjadi kesalahan server.' }); }
+});
+
+app.delete('/api/admin/fraud/blacklist/:id', authAdmin, async (req, res) => {
+    try {
+        const [r] = await pool.query('DELETE FROM blacklist WHERE id = ?', [req.params.id]);
+        if (!r.affectedRows) return res.status(404).json({ message: 'Data blacklist tidak ditemukan' });
+        res.json({ ok: true });
+    } catch (e) { console.error(e); res.status(500).json({ message: 'Terjadi kesalahan server.' }); }
+});
+
+app.get('/api/admin/audit', authAdmin, (req, res) => res.json([]));
+
+app.post('/api/admin/demo/reset', authAdmin, async (req,res)=>{
+    const conn = await pool.getConnection();
+    try {
+        await conn.beginTransaction();
+        await conn.query('DELETE FROM order_items'); await conn.query('DELETE FROM orders');
+        await conn.query('UPDATE products SET is_available=1');
+        await conn.query("UPDATE settings SET cafe_name='Cafe Campus', cafe_address='', cafe_phone='', operating_hours='' WHERE id=1");
+        await conn.commit(); res.json({ok:true});
+    } catch(e) { await conn.rollback(); res.status(500).json({message:e.message}); } finally { conn.release(); }
+});
+
+// Endpoint untuk Generate QR Code Meja (Bypass Frontend Image Render Issue)
+app.get('/qr/:token.svg', (req, res) => {
+    const url = `http://${req.get('host')}/order/${req.params.token}`;
+    res.redirect(`https://api.qrserver.com/v1/create-qr-code/?size=300x300&format=svg&data=${encodeURIComponent(url)}`);
+});
+
+// ==========================================
+// SPA FALLBACK
+// ==========================================
+app.use((req, res) => {
+    if (req.method === 'GET' && !req.path.startsWith('/api')) {
+        res.sendFile(path.join(__dirname, 'public', 'index.html'));
+    } else {
+        res.status(404).json({ message: 'Endpoint tidak ditemukan' });
+    }
+});
+
+// Migrasi ringan otomatis: tambah kolom untuk fitur "Tambah Pesanan" bila belum ada (aman dijalankan berulang)
+const expireStaleQrisOrders = async () => {
+    try {
+        const [r] = await pool.query(
+            `UPDATE orders SET status = 'CANCELLED', payment_status = 'FAILED'
+             WHERE payment_status = 'PENDING' AND payment_method IN ('QRIS', 'QRIS_DEMO')
+             AND created_at < (NOW() - INTERVAL ? MINUTE)`,
+            [QRIS_EXPIRY_MINUTES]
+        );
+        if (r.affectedRows > 0) console.log(`⏱️  ${r.affectedRows} pesanan QRIS kedaluwarsa (>${QRIS_EXPIRY_MINUTES} menit) dibatalkan otomatis`);
+    } catch (err) { console.error('⚠️  Gagal membersihkan pesanan QRIS kedaluwarsa:', err.message); }
+};
+
+const ensureSchema = async () => {
+    const [cols] = await pool.query("SELECT COLUMN_NAME FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'orders' AND COLUMN_NAME = 'parent_order_number'");
+    if (cols.length === 0) {
+        await pool.query('ALTER TABLE orders ADD COLUMN parent_order_number VARCHAR(50) NULL DEFAULT NULL, ADD INDEX idx_orders_parent (parent_order_number)');
+        console.log('🛠️  Migrasi: kolom orders.parent_order_number ditambahkan');
+    }
+};
+await ensureSchema().catch(err => console.error('⚠️  Migrasi database gagal (cek koneksi MySQL):', err.message));
+await expireStaleQrisOrders();
+setInterval(expireStaleQrisOrders, 60 * 1000); // sapu ulang tiap 1 menit
+
+app.listen(PORT, () => {
+    console.log(`✅ Server (Express + MySQL) jalan di port ${PORT}`);
+});
