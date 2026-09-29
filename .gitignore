@@ -19,9 +19,3 @@ desktop.ini
 
 # User uploads
 public/uploads/
-
-# Temporary database scripts
-fix-pass.mjs
-
-# Generated / Minified build artifacts
-public/app.min.js

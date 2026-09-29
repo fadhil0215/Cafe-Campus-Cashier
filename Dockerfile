@@ -7,14 +7,17 @@ WORKDIR /app
 # Salin manifest dependency dulu supaya layer cache npm install efisien
 COPY package.json package-lock.json ./
 
-# Install dependency production saja (express, mysql2, midtrans-client, dll)
-RUN npm ci --omit=dev
+# Install semua dependency termasuk build tool (esbuild)
+RUN npm ci
 
 # Baru salin sisa kode proyek
 COPY . .
 
-# Buat folder data dan logs jika belum ada
-RUN mkdir -p data logs
+# Build frontend bundle
+RUN npm run build
+
+# Buat folder logs jika belum ada
+RUN mkdir -p logs
 
 # Expose port aplikasi (default: 4176)
 EXPOSE 4176

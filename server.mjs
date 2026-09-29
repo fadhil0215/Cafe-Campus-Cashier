@@ -98,8 +98,8 @@ app.use(express.json({ limit: '10mb' }));
 app.use(express.static(path.join(__dirname, 'public')));
 app.use('/uploads', express.static(path.join(__dirname, 'public', 'uploads')));
 
-// Health Check Endpoint
-app.get(['/health', '/api/health'], (req, res) => {
+// Health Check Endpoint (support /health, /api/health, and Render default /healthz)
+app.get(['/health', '/api/health', '/healthz'], (req, res) => {
     res.json({ ok: true, status: 'healthy', timestamp: new Date().toISOString() });
 });
 
