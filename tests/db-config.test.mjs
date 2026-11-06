@@ -47,6 +47,37 @@ describe('Database configuration', () => {
     assert.equal(config.database, 'cafe_campus_db');
   });
 
+  it('parses MYSQL_URL even with quotes, spaces, or raw host', () => {
+    const config = getDatabaseConfig({
+      MYSQL_URL: '"mysql://root:secret@mysql.railway.internal:3306/railway"',
+    });
+    assert.equal(config.host, 'mysql.railway.internal');
+    assert.equal(config.user, 'root');
+    assert.equal(config.password, 'secret');
+    assert.equal(config.database, 'railway');
+
+    const configHostOnly = getDatabaseConfig({
+      MYSQL_URL: 'mysql.railway.internal:3306',
+      MYSQLPASSWORD: 'secretpassword',
+    });
+    assert.equal(configHostOnly.host, 'mysql.railway.internal');
+    assert.equal(configHostOnly.password, 'secretpassword');
+  });
+
+  it('falls back to individual variables when MYSQL_URL contains an unresolved ${{ template', () => {
+    const config = getDatabaseConfig({
+      MYSQL_URL: '${{MySQL.MYSQL_URL}}',
+      MYSQLHOST: 'mysql.railway.internal',
+      MYSQLPORT: '3306',
+      MYSQLUSER: 'root',
+      MYSQLPASSWORD: 'resolved_secret',
+      MYSQLDATABASE: 'railway',
+    });
+    assert.equal(config.host, 'mysql.railway.internal');
+    assert.equal(config.password, 'resolved_secret');
+    assert.equal(config.database, 'railway');
+  });
+
   it('rejects PostgreSQL URLs with an actionable explanation', () => {
     assert.throws(
       () => getDatabaseConfig({ DATABASE_URL: 'postgresql://user:pass@host:5432/db' }),
