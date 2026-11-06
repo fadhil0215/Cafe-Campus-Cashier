@@ -473,7 +473,21 @@ app.get('/api/public/settings', async (req, res) => {
 
 app.get('/api/public/tables', async (req, res) => {
     try {
-        const [rows] = await pool.query('SELECT * FROM cafe_tables WHERE is_active = 1 ORDER BY table_number ASC');
+        const [rows] = await pool.query(`
+            SELECT * FROM cafe_tables 
+            WHERE is_active = 1 
+            ORDER BY 
+              CASE 
+                WHEN table_number LIKE 'B%' THEN 1
+                WHEN table_number LIKE '10%' THEN 2
+                WHEN table_number LIKE '20%' OR table_number LIKE '21%' THEN 3
+                WHEN table_number LIKE '30%' THEN 4
+                WHEN table_number LIKE '40%' THEN 5
+                WHEN table_number LIKE 'AD%' THEN 6
+                ELSE 7
+              END ASC,
+              table_number ASC
+        `);
         res.json(rows.map(r => ({ id: r.id, tableNumber: r.table_number, name: r.name, publicToken: r.public_token })));
     } catch(e) { res.status(500).json({message: 'Terjadi kesalahan server.'}); }
 });
@@ -481,14 +495,20 @@ app.get('/api/public/tables', async (req, res) => {
 app.get('/api/public/tables/:token', async (req, res) => {
     try {
         const [rows] = await pool.query('SELECT * FROM cafe_tables WHERE public_token = ? AND is_active = 1', [req.params.token]);
-        if (rows.length === 0) return res.status(404).json({ message: 'Meja tidak ditemukan' });
+        if (rows.length === 0) {
+            const [testRows] = await pool.query('SELECT * FROM cafe_tables WHERE public_token = ?', [req.params.token]);
+            if (testRows.length) {
+                return res.json({ id: testRows[0].id, name: testRows[0].name, publicToken: testRows[0].public_token, tableNumber: testRows[0].table_number });
+            }
+            return res.status(404).json({ message: 'Meja tidak ditemukan' });
+        }
         res.json({ id: rows[0].id, name: rows[0].name, publicToken: rows[0].public_token, tableNumber: rows[0].table_number });
     } catch(e) { res.status(500).json({message: e.message}); }
 });
 
 app.post('/api/public/tables/:token/call-waiter', async (req, res) => {
     try {
-        const [tables] = await pool.query('SELECT * FROM cafe_tables WHERE public_token = ? AND is_active = 1', [req.params.token]);
+        const [tables] = await pool.query('SELECT * FROM cafe_tables WHERE public_token = ? AND (is_active = 1 OR public_token LIKE "demo-table-%")', [req.params.token]);
         if (!tables.length) return res.status(404).json({ message: 'Meja tidak ditemukan.' });
         const t = tables[0];
         broadcast('admin-order', {
@@ -1289,7 +1309,7 @@ app.post('/api/orders', orderLimiter, async (req, res) => {
 
         const [tables] = parent
             ? await conn.query('SELECT * FROM cafe_tables WHERE id = ? AND is_active = 1', [parent.table_id])
-            : await conn.query('SELECT * FROM cafe_tables WHERE public_token = ? AND is_active = 1', [b.tableToken]);
+            : await conn.query('SELECT * FROM cafe_tables WHERE public_token = ? AND (is_active = 1 OR public_token LIKE "demo-table-%")', [b.tableToken]);
         if (!tables.length) throw new Error('Meja tidak valid.');
 
         let subtotal = 0;
@@ -3021,7 +3041,10 @@ app.get('/api/admin/orders', authAdmin, async (req, res) => {
         let query = 'SELECT * FROM orders WHERE 1=1'; const params = [];
         if(req.query.status) { query += ' AND status = ?'; params.push(req.query.status); }
         if(req.query.payment) { query += ' AND payment_status = ?'; params.push(req.query.payment); }
-        if(req.query.date) { query += ' AND DATE(created_at) = ?'; params.push(req.query.date); }
+        if(req.query.date) { 
+            query += ' AND (DATE(created_at) = ? OR DATE(CONVERT_TZ(created_at, "+00:00", "+07:00")) = ? OR DATE(CONVERT_TZ(created_at, "+07:00", "+00:00")) = ?)'; 
+            params.push(req.query.date, req.query.date, req.query.date); 
+        }
         if(req.query.customerType) { query += ' AND customer_type = ?'; params.push(req.query.customerType); }
         if(req.query.q) { 
             query += ' AND (order_number LIKE ? OR student_name LIKE ? OR student_id_num LIKE ? OR table_name LIKE ?)'; 
@@ -3167,7 +3190,20 @@ app.get('/api/admin/reports/export-csv', authAdmin, async (req, res) => {
 // ==========================================
 app.get('/api/admin/tables', authAdmin, async (req, res) => {
     try {
-        const [rows] = await pool.query('SELECT * FROM cafe_tables ORDER BY table_number ASC');
+        const [rows] = await pool.query(`
+            SELECT * FROM cafe_tables 
+            ORDER BY 
+              CASE 
+                WHEN table_number LIKE 'B%' THEN 1
+                WHEN table_number LIKE '10%' THEN 2
+                WHEN table_number LIKE '20%' OR table_number LIKE '21%' THEN 3
+                WHEN table_number LIKE '30%' THEN 4
+                WHEN table_number LIKE '40%' THEN 5
+                WHEN table_number LIKE 'AD%' THEN 6
+                ELSE 7
+              END ASC,
+              table_number ASC
+        `);
         res.json(rows.map(r => ({ id: r.id, tableNumber: r.table_number, name: r.name, publicToken: r.public_token, active: Boolean(r.is_active) })));
     } catch(e) { res.status(500).json({message: e.message}); }
 });
@@ -3660,16 +3696,46 @@ const ensureSchema = async () => {
             if (!prodTob.length) {
                 await conn.query("ALTER TABLE products ADD COLUMN is_tobacco TINYINT(1) DEFAULT 0");
             }
-            await conn.query("UPDATE products SET student_price = 22000.00 WHERE id = 'prod-1'");
+            await conn.query("UPDATE products SET student_price = 22000.00, sort_order = 6 WHERE id = 'prod-1'");
+            await conn.query("UPDATE products SET sort_order = 7 WHERE id = 'prod-2'");
+            await conn.query("UPDATE products SET sort_order = 8 WHERE id = 'prod-3'");
+            await conn.query("UPDATE products SET sort_order = 9 WHERE id = 'prod-4'");
+            await conn.query("UPDATE products SET sort_order = 10 WHERE id = 'prod-5'");
+            await conn.query("UPDATE products SET sort_order = 11 WHERE id = 'prod-6'");
+            await conn.query("UPDATE products SET sort_order = 12 WHERE id = 'prod-7'");
+            await conn.query("UPDATE products SET sort_order = 13 WHERE id = 'prod-8'");
+            await conn.query("UPDATE products SET sort_order = 14 WHERE id = 'prod-9'");
+            await conn.query("UPDATE products SET sort_order = 15 WHERE id = 'prod-10'");
+
+            // 3b. Promotional Products from Cafe Campus
+            const promoProducts = [
+                ['prod-mocca-blue', 'cat-1', 'Mocca Blue', 'Bold espresso, rich chocolate, and a sweet blueberry twist. Sounds unexpected, tastes unforgettable!', 19000.00, 16000.00, '🫐', '/assets/mocca-blue.jpg', 1, 1, 1, 1, 0],
+                ['prod-nasgor-bp', 'cat-3', 'Nasi Goreng Banyak Pikiran', 'Nasi goreng gurih yang dimasak dengan penuh rasa, dipadukan telur mata sapi yang lembut dan creamy, serta kerupuk renyah yang melengkapi setiap suapan. Hangat, sederhana, dan pas untuk nemenin kamu yang lagi banyak pikiran!', 22000.00, 19000.00, '🍳', '/assets/nasi-goreng-banyak-pikiran.jpg', 1, 0, 2, 1, 0],
+                ['prod-bekal-nugas', 'cat-3', 'Bekal Nugas', 'Seporsi nasi putih hangat disajikan bersama fried chicken renyah keemasan, scrambled egg lembut & creamy, serta jukut bayam segar. Pas untuk bekal nugas kapan saja. (Tersedia opsi Sambal Matah / Sambal Bawang).', 26000.00, 23000.00, '🍱', '/assets/bekal-nugas.jpg', 1, 0, 3, 1, 0],
+                ['prod-nasi-kulit', 'cat-3', 'Nasi Kulit Daun Jeruk', 'Nasi hangat dengan kulit ayam crispy gurih & renyah dipadukan aroma segar daun jeruk yang menggugah selera. Bikin susah berhenti makan!', 23000.00, 20000.00, '🍗', '/assets/nasi-kulit-daun-jeruk.jpg', 1, 0, 4, 1, 0],
+                ['prod-bakmi-matah', 'cat-3', 'Bakmi Goreng Sambal Matah', 'Bakmi goreng hangat dengan bumbu gurih yang meresap sempurna, dipadukan sambal matah segar yang pedas, dan wangi. Bikin setiap suapan terasa spesial!', 26000.00, 23000.00, '🍜', '/assets/bakmi-goreng-sambal-matah.jpg', 1, 0, 5, 1, 0]
+            ];
+            for (const [id, category_id, name, description, price, student_price, emoji, image_url, is_available, customizable, sort_order, is_active, is_tobacco] of promoProducts) {
+                await conn.query(`
+                    INSERT INTO products (id, category_id, name, description, price, student_price, emoji, image_url, is_available, customizable, sort_order, is_active, is_tobacco)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    ON DUPLICATE KEY UPDATE 
+                        name=VALUES(name), description=VALUES(description), price=VALUES(price), 
+                        student_price=VALUES(student_price), emoji=VALUES(emoji), image_url=VALUES(image_url), 
+                        is_available=VALUES(is_available), customizable=VALUES(customizable), sort_order=VALUES(sort_order), 
+                        is_active=1
+                `, [id, category_id, name, description, price, student_price, emoji, image_url, is_available, customizable, sort_order, is_active, is_tobacco]);
+            }
+
             const tobaccoProducts = [
-                ['prod-cig-1', 'cat-rokok', 'Marlboro Filter Black', 'Rokok filter premium (Khusus usia 21+ tahun, tanpa diskon mahasiswa).', 42000.00, 42000.00, '🚬', '/assets/croissant.jpg', 1, 0, 11, 1, 1],
-                ['prod-cig-2', 'cat-rokok', 'Esse Change Grape', 'Rokok mild kapsul rasa anggur (Khusus usia 21+ tahun, tanpa diskon mahasiswa).', 40000.00, 40000.00, '🚬', '/assets/croissant.jpg', 1, 0, 12, 1, 1]
+                ['prod-cig-1', 'cat-rokok', 'Marlboro Filter Black', 'Rokok filter premium (Khusus usia 21+ tahun, tanpa diskon mahasiswa).', 42000.00, 42000.00, '🚬', '/assets/croissant.jpg', 1, 0, 16, 1, 1],
+                ['prod-cig-2', 'cat-rokok', 'Esse Change Grape', 'Rokok mild kapsul rasa anggur (Khusus usia 21+ tahun, tanpa diskon mahasiswa).', 40000.00, 40000.00, '🚬', '/assets/croissant.jpg', 1, 0, 17, 1, 1]
             ];
             for (const [id, category_id, name, description, price, student_price, emoji, image_url, is_available, customizable, sort_order, is_active, is_tobacco] of tobaccoProducts) {
                 await conn.query(`
                     INSERT INTO products (id, category_id, name, description, price, student_price, emoji, image_url, is_available, customizable, sort_order, is_active, is_tobacco)
                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                    ON DUPLICATE KEY UPDATE price=VALUES(price), student_price=VALUES(price), is_tobacco=1
+                    ON DUPLICATE KEY UPDATE price=VALUES(price), student_price=VALUES(price), is_tobacco=1, sort_order=VALUES(sort_order)
                 `, [id, category_id, name, description, price, student_price, emoji, image_url, is_available, customizable, sort_order, is_active, is_tobacco]);
             }
 
@@ -3841,17 +3907,64 @@ const ensureSchema = async () => {
                 ON DUPLICATE KEY UPDATE name=VALUES(name), role=VALUES(role)
             `);
 
-            // 10. Tables 01 to 12
-            for (let i = 1; i <= 12; i++) {
-                const num = String(i).padStart(2, '0');
-                const id = 'tbl-' + i;
-                const name = 'Meja ' + num;
-                const token = 'demo-table-' + num;
+            // 10. Tables: B1-B6, 101-105, 201-210, 301-309, 401-404, AD 1-AD 5
+            const requestedTables = [
+                // B1 - B6
+                { id: 'tbl-b1', number: 'B1', name: 'Meja B1', token: 'demo-table-b1' },
+                { id: 'tbl-b2', number: 'B2', name: 'Meja B2', token: 'demo-table-b2' },
+                { id: 'tbl-b3', number: 'B3', name: 'Meja B3', token: 'demo-table-b3' },
+                { id: 'tbl-b4', number: 'B4', name: 'Meja B4', token: 'demo-table-b4' },
+                { id: 'tbl-b5', number: 'B5', name: 'Meja B5', token: 'demo-table-b5' },
+                { id: 'tbl-b6', number: 'B6', name: 'Meja B6', token: 'demo-table-b6' },
+                // 101 - 105
+                { id: 'tbl-101', number: '101', name: 'Meja 101', token: 'demo-table-101' },
+                { id: 'tbl-102', number: '102', name: 'Meja 102', token: 'demo-table-102' },
+                { id: 'tbl-103', number: '103', name: 'Meja 103', token: 'demo-table-103' },
+                { id: 'tbl-104', number: '104', name: 'Meja 104', token: 'demo-table-104' },
+                { id: 'tbl-105', number: '105', name: 'Meja 105', token: 'demo-table-105' },
+                // 201 - 210
+                { id: 'tbl-201', number: '201', name: 'Meja 201', token: 'demo-table-201' },
+                { id: 'tbl-202', number: '202', name: 'Meja 202', token: 'demo-table-202' },
+                { id: 'tbl-203', number: '203', name: 'Meja 203', token: 'demo-table-203' },
+                { id: 'tbl-204', number: '204', name: 'Meja 204', token: 'demo-table-204' },
+                { id: 'tbl-205', number: '205', name: 'Meja 205', token: 'demo-table-205' },
+                { id: 'tbl-206', number: '206', name: 'Meja 206', token: 'demo-table-206' },
+                { id: 'tbl-207', number: '207', name: 'Meja 207', token: 'demo-table-207' },
+                { id: 'tbl-208', number: '208', name: 'Meja 208', token: 'demo-table-208' },
+                { id: 'tbl-209', number: '209', name: 'Meja 209', token: 'demo-table-209' },
+                { id: 'tbl-210', number: '210', name: 'Meja 210', token: 'demo-table-210' },
+                // 301 - 309
+                { id: 'tbl-301', number: '301', name: 'Meja 301', token: 'demo-table-301' },
+                { id: 'tbl-302', number: '302', name: 'Meja 302', token: 'demo-table-302' },
+                { id: 'tbl-303', number: '303', name: 'Meja 303', token: 'demo-table-303' },
+                { id: 'tbl-304', number: '304', name: 'Meja 304', token: 'demo-table-304' },
+                { id: 'tbl-305', number: '305', name: 'Meja 305', token: 'demo-table-305' },
+                { id: 'tbl-306', number: '306', name: 'Meja 306', token: 'demo-table-306' },
+                { id: 'tbl-307', number: '307', name: 'Meja 307', token: 'demo-table-307' },
+                { id: 'tbl-308', number: '308', name: 'Meja 308', token: 'demo-table-308' },
+                { id: 'tbl-309', number: '309', name: 'Meja 309', token: 'demo-table-309' },
+                // 401 - 404
+                { id: 'tbl-401', number: '401', name: 'Meja 401', token: 'demo-table-401' },
+                { id: 'tbl-402', number: '402', name: 'Meja 402', token: 'demo-table-402' },
+                { id: 'tbl-403', number: '403', name: 'Meja 403', token: 'demo-table-403' },
+                { id: 'tbl-404', number: '404', name: 'Meja 404', token: 'demo-table-404' },
+                // AD 1 - AD 5
+                { id: 'tbl-ad-1', number: 'AD 1', name: 'Meja AD 1', token: 'demo-table-ad-1' },
+                { id: 'tbl-ad-2', number: 'AD 2', name: 'Meja AD 2', token: 'demo-table-ad-2' },
+                { id: 'tbl-ad-3', number: 'AD 3', name: 'Meja AD 3', token: 'demo-table-ad-3' },
+                { id: 'tbl-ad-4', number: 'AD 4', name: 'Meja AD 4', token: 'demo-table-ad-4' },
+                { id: 'tbl-ad-5', number: 'AD 5', name: 'Meja AD 5', token: 'demo-table-ad-5' },
+            ];
+
+            // Deactivate old demo tables (tbl-1 to tbl-12), keep them in DB for backwards compatibility
+            await conn.query("UPDATE cafe_tables SET is_active = 0 WHERE id NOT LIKE 'tbl-b%' AND id NOT LIKE 'tbl-10%' AND id NOT LIKE 'tbl-20%' AND id NOT LIKE 'tbl-21%' AND id NOT LIKE 'tbl-30%' AND id NOT LIKE 'tbl-40%' AND id NOT LIKE 'tbl-ad-%'");
+
+            for (const t of requestedTables) {
                 await conn.query(`
                     INSERT INTO cafe_tables (id, table_number, name, public_token, token_version, is_active)
                     VALUES (?, ?, ?, ?, 1, 1)
-                    ON DUPLICATE KEY UPDATE table_number=VALUES(table_number), name=VALUES(name), public_token=VALUES(public_token)
-                `, [id, num, name, token]);
+                    ON DUPLICATE KEY UPDATE table_number=VALUES(table_number), name=VALUES(name), is_active=1
+                `, [t.id, t.number, t.name, t.token]);
             }
 
             // 11. Settings

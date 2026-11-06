@@ -61,20 +61,48 @@ CREATE TABLE `cafe_tables` (
   UNIQUE KEY `public_token` (`public_token`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
--- Data untuk: `cafe_tables` (Meja 01 s/d 12)
+-- Data untuk: `cafe_tables` (Meja B1 s/d B6, 101-105, 201-210, 301-309, 401-404, AD 1 s/d AD 5)
 INSERT INTO `cafe_tables` (`id`, `table_number`, `name`, `public_token`, `token_version`, `is_active`, `created_at`) VALUES
-('tbl-1', '01', 'Meja 01', 'demo-table-01', 1, 1, '2026-09-18 12:47:44'),
-('tbl-2', '02', 'Meja 02', 'demo-table-02', 1, 1, '2026-09-18 12:47:44'),
-('tbl-3', '03', 'Meja 03', 'demo-table-03', 1, 1, '2026-09-18 12:47:44'),
-('tbl-4', '04', 'Meja 04', 'demo-table-04', 1, 1, '2026-09-18 12:47:44'),
-('tbl-5', '05', 'Meja 05', 'demo-table-05', 1, 1, '2026-09-18 12:47:44'),
-('tbl-6', '06', 'Meja 06', 'demo-table-06', 1, 1, '2026-09-19 12:13:35'),
-('tbl-7', '07', 'Meja 07', 'demo-table-07', 1, 1, '2026-10-01 10:00:00'),
-('tbl-8', '08', 'Meja 08', 'demo-table-08', 1, 1, '2026-10-01 10:00:00'),
-('tbl-9', '09', 'Meja 09', 'demo-table-09', 1, 1, '2026-10-01 10:00:00'),
-('tbl-10', '10', 'Meja 10', 'demo-table-10', 1, 1, '2026-10-01 10:00:00'),
-('tbl-11', '11', 'Meja 11', 'demo-table-11', 1, 1, '2026-10-01 10:00:00'),
-('tbl-12', '12', 'Meja 12', 'demo-table-12', 1, 1, '2026-10-01 10:00:00')
+('tbl-b1', 'B1', 'Meja B1', 'demo-table-b1', 1, 1, '2026-09-18 12:47:44'),
+('tbl-b2', 'B2', 'Meja B2', 'demo-table-b2', 1, 1, '2026-09-18 12:47:44'),
+('tbl-b3', 'B3', 'Meja B3', 'demo-table-b3', 1, 1, '2026-09-18 12:47:44'),
+('tbl-b4', 'B4', 'Meja B4', 'demo-table-b4', 1, 1, '2026-09-18 12:47:44'),
+('tbl-b5', 'B5', 'Meja B5', 'demo-table-b5', 1, 1, '2026-09-18 12:47:44'),
+('tbl-b6', 'B6', 'Meja B6', 'demo-table-b6', 1, 1, '2026-09-19 12:13:35'),
+('tbl-101', '101', 'Meja 101', 'demo-table-101', 1, 1, '2026-10-01 10:00:00'),
+('tbl-102', '102', 'Meja 102', 'demo-table-102', 1, 1, '2026-10-01 10:00:00'),
+('tbl-103', '103', 'Meja 103', 'demo-table-103', 1, 1, '2026-10-01 10:00:00'),
+('tbl-104', '104', 'Meja 104', 'demo-table-104', 1, 1, '2026-10-01 10:00:00'),
+('tbl-105', '105', 'Meja 105', 'demo-table-105', 1, 1, '2026-10-01 10:00:00'),
+('tbl-201', '201', 'Meja 201', 'demo-table-201', 1, 1, '2026-10-01 10:00:00'),
+('tbl-202', '202', 'Meja 202', 'demo-table-202', 1, 1, '2026-10-01 10:00:00'),
+('tbl-203', '203', 'Meja 203', 'demo-table-203', 1, 1, '2026-10-01 10:00:00'),
+('tbl-204', '204', 'Meja 204', 'demo-table-204', 1, 1, '2026-10-01 10:00:00'),
+('tbl-205', '205', 'Meja 205', 'demo-table-205', 1, 1, '2026-10-01 10:00:00'),
+('tbl-206', '206', 'Meja 206', 'demo-table-206', 1, 1, '2026-10-01 10:00:00'),
+('tbl-207', '207', 'Meja 207', 'demo-table-207', 1, 1, '2026-10-01 10:00:00'),
+('tbl-208', '208', 'Meja 208', 'demo-table-208', 1, 1, '2026-10-01 10:00:00'),
+('tbl-209', '209', 'Meja 209', 'demo-table-209', 1, 1, '2026-10-01 10:00:00'),
+('tbl-210', '210', 'Meja 210', 'demo-table-210', 1, 1, '2026-10-01 10:00:00'),
+('tbl-301', '301', 'Meja 301', 'demo-table-301', 1, 1, '2026-10-01 10:00:00'),
+('tbl-302', '302', 'Meja 302', 'demo-table-302', 1, 1, '2026-10-01 10:00:00'),
+('tbl-303', '303', 'Meja 303', 'demo-table-303', 1, 1, '2026-10-01 10:00:00'),
+('tbl-304', '304', 'Meja 304', 'demo-table-304', 1, 1, '2026-10-01 10:00:00'),
+('tbl-305', '305', 'Meja 305', 'demo-table-305', 1, 1, '2026-10-01 10:00:00'),
+('tbl-306', '306', 'Meja 306', 'demo-table-306', 1, 1, '2026-10-01 10:00:00'),
+('tbl-307', '307', 'Meja 307', 'demo-table-307', 1, 1, '2026-10-01 10:00:00'),
+('tbl-308', '308', 'Meja 308', 'demo-table-308', 1, 1, '2026-10-01 10:00:00'),
+('tbl-309', '309', 'Meja 309', 'demo-table-309', 1, 1, '2026-10-01 10:00:00'),
+('tbl-401', '401', 'Meja 401', 'demo-table-401', 1, 1, '2026-10-01 10:00:00'),
+('tbl-402', '402', 'Meja 402', 'demo-table-402', 1, 1, '2026-10-01 10:00:00'),
+('tbl-403', '403', 'Meja 403', 'demo-table-403', 1, 1, '2026-10-01 10:00:00'),
+('tbl-404', '404', 'Meja 404', 'demo-table-404', 1, 1, '2026-10-01 10:00:00'),
+('tbl-ad-1', 'AD 1', 'Meja AD 1', 'demo-table-ad-1', 1, 1, '2026-10-01 10:00:00'),
+('tbl-ad-2', 'AD 2', 'Meja AD 2', 'demo-table-ad-2', 1, 1, '2026-10-01 10:00:00'),
+('tbl-ad-3', 'AD 3', 'Meja AD 3', 'demo-table-ad-3', 1, 1, '2026-10-01 10:00:00'),
+('tbl-ad-4', 'AD 4', 'Meja AD 4', 'demo-table-ad-4', 1, 1, '2026-10-01 10:00:00'),
+('tbl-ad-5', 'AD 5', 'Meja AD 5', 'demo-table-ad-5', 1, 1, '2026-10-01 10:00:00'),
+('tbl-12', '12', 'Meja 12', 'demo-table-12', 1, 0, '2026-10-01 10:00:00')
 ON DUPLICATE KEY UPDATE `table_number`=VALUES(`table_number`), `name`=VALUES(`name`), `public_token`=VALUES(`public_token`);
 
 -- --------------------------------------------------------
@@ -128,18 +156,23 @@ CREATE TABLE `products` (
 
 -- Data untuk: `products`
 INSERT INTO `products` (`id`, `category_id`, `name`, `description`, `price`, `student_price`, `emoji`, `image_url`, `is_available`, `customizable`, `sort_order`, `is_active`, `is_tobacco`) VALUES
-('prod-1', 'cat-1', 'Iced Latte Gula Aren', 'Kopi susu lokal spesial dengan gula aren premium.', 28000.00, 22000.00, '☕', '/assets/iced-latte.jpg', 1, 1, 1, 1, 0),
-('prod-2', 'cat-4', 'Croissant Cokelat', 'Pastry hangat & renyah isi cokelat lembut.', 25000.00, 20000.00, '🥐', '/assets/croissant.jpg', 1, 0, 2, 1, 0),
-('prod-3', 'cat-2', 'Uji Matcha Latte', 'Matcha Jepang autentik kualitas premium.', 32000.00, 25000.00, '🍵', '/assets/matcha.jpg', 1, 1, 3, 1, 0),
-('prod-4', 'cat-5', 'Waffle Gelato', 'Waffle mentega hangat dipadu gelato vanilla.', 35000.00, 28000.00, '🧇', '/assets/waffle.jpg', 1, 0, 4, 1, 0),
-('prod-5', 'cat-1', 'Double Espresso', 'Racikan kopi murni yang intens dan kaya aroma.', 20000.00, 15000.00, '☕', '/assets/espresso.jpg', 1, 0, 5, 1, 0),
-('prod-6', 'cat-2', 'Premium Iced Chocolate', 'Cokelat hitam murni dipadu susu segar.', 30000.00, 24000.00, '🍫', '/assets/chocolate.jpg', 1, 1, 6, 1, 0),
-('prod-7', 'cat-3', 'Nasi Goreng Kampus', 'Nasi goreng gurih dengan telur, ayam, dan acar.', 35000.00, 28000.00, '🍛', '/assets/nasi-goreng.jpg', 1, 0, 7, 1, 0),
-('prod-8', 'cat-3', 'Chicken Rice Bowl', 'Ayam crispy saus lada hitam dengan nasi hangat.', 38000.00, 30000.00, '🥣', '/assets/rice-bowl.jpg', 1, 0, 8, 1, 0),
-('prod-9', 'cat-4', 'French Fries', 'Kentang goreng renyah dengan saus pilihan.', 20000.00, 16000.00, '🍟', '/assets/french-fries.jpg', 1, 0, 9, 1, 0),
-('prod-10', 'cat-5', 'Brownies Gelato', 'Brownies cokelat hangat dengan gelato vanilla.', 32000.00, 26000.00, '🍰', '/assets/brownies.jpg', 1, 0, 10, 1, 0),
-('prod-cig-1', 'cat-rokok', 'Marlboro Filter Black', 'Rokok filter premium (Khusus usia 21+ tahun, tanpa diskon mahasiswa).', 42000.00, 42000.00, '🚬', '/assets/croissant.jpg', 1, 0, 11, 1, 1),
-('prod-cig-2', 'cat-rokok', 'Esse Change Grape', 'Rokok mild kapsul rasa anggur (Khusus usia 21+ tahun, tanpa diskon mahasiswa).', 40000.00, 40000.00, '🚬', '/assets/croissant.jpg', 1, 0, 12, 1, 1)
+('prod-mocca-blue', 'cat-1', 'Mocca Blue', 'Bold espresso, rich chocolate, and a sweet blueberry twist. Sounds unexpected, tastes unforgettable!', 19000.00, 16000.00, '🫐', '/assets/mocca-blue.jpg', 1, 1, 1, 1, 0),
+('prod-nasgor-bp', 'cat-3', 'Nasi Goreng Banyak Pikiran', 'Nasi goreng gurih yang dimasak dengan penuh rasa, dipadukan telur mata sapi yang lembut dan creamy, serta kerupuk renyah yang melengkapi setiap suapan. Hangat, sederhana, dan pas untuk nemenin kamu yang lagi banyak pikiran!', 22000.00, 19000.00, '🍳', '/assets/nasi-goreng-banyak-pikiran.jpg', 1, 0, 2, 1, 0),
+('prod-bekal-nugas', 'cat-3', 'Bekal Nugas', 'Seporsi nasi putih hangat disajikan bersama fried chicken renyah keemasan, scrambled egg lembut & creamy, serta jukut bayam segar. Pas untuk bekal nugas kapan saja. (Tersedia opsi Sambal Matah / Sambal Bawang).', 26000.00, 23000.00, '🍱', '/assets/bekal-nugas.jpg', 1, 0, 3, 1, 0),
+('prod-nasi-kulit', 'cat-3', 'Nasi Kulit Daun Jeruk', 'Nasi hangat dengan kulit ayam crispy gurih & renyah dipadukan aroma segar daun jeruk yang menggugah selera. Bikin susah berhenti makan!', 23000.00, 20000.00, '🍗', '/assets/nasi-kulit-daun-jeruk.jpg', 1, 0, 4, 1, 0),
+('prod-bakmi-matah', 'cat-3', 'Bakmi Goreng Sambal Matah', 'Bakmi goreng hangat dengan bumbu gurih yang meresap sempurna, dipadukan sambal matah segar yang pedas, dan wangi. Bikin setiap suapan terasa spesial!', 26000.00, 23000.00, '🍜', '/assets/bakmi-goreng-sambal-matah.jpg', 1, 0, 5, 1, 0),
+('prod-1', 'cat-1', 'Iced Latte Gula Aren', 'Kopi susu lokal spesial dengan gula aren premium.', 28000.00, 22000.00, '☕', '/assets/iced-latte.jpg', 1, 1, 6, 1, 0),
+('prod-2', 'cat-4', 'Croissant Cokelat', 'Pastry hangat & renyah isi cokelat lembut.', 25000.00, 20000.00, '🥐', '/assets/croissant.jpg', 1, 0, 7, 1, 0),
+('prod-3', 'cat-2', 'Uji Matcha Latte', 'Matcha Jepang autentik kualitas premium.', 32000.00, 25000.00, '🍵', '/assets/matcha.jpg', 1, 1, 8, 1, 0),
+('prod-4', 'cat-5', 'Waffle Gelato', 'Waffle mentega hangat dipadu gelato vanilla.', 35000.00, 28000.00, '🧇', '/assets/waffle.jpg', 1, 0, 9, 1, 0),
+('prod-5', 'cat-1', 'Double Espresso', 'Racikan kopi murni yang intens dan kaya aroma.', 20000.00, 15000.00, '☕', '/assets/espresso.jpg', 1, 0, 10, 1, 0),
+('prod-6', 'cat-2', 'Premium Iced Chocolate', 'Cokelat hitam murni dipadu susu segar.', 30000.00, 24000.00, '🍫', '/assets/chocolate.jpg', 1, 1, 11, 1, 0),
+('prod-7', 'cat-3', 'Nasi Goreng Kampus', 'Nasi goreng gurih dengan telur, ayam, dan acar.', 35000.00, 28000.00, '🍛', '/assets/nasi-goreng.jpg', 1, 0, 12, 1, 0),
+('prod-8', 'cat-3', 'Chicken Rice Bowl', 'Ayam crispy saus lada hitam dengan nasi hangat.', 38000.00, 30000.00, '🥣', '/assets/rice-bowl.jpg', 1, 0, 13, 1, 0),
+('prod-9', 'cat-4', 'French Fries', 'Kentang goreng renyah dengan saus pilihan.', 20000.00, 16000.00, '🍟', '/assets/french-fries.jpg', 1, 0, 14, 1, 0),
+('prod-10', 'cat-5', 'Brownies Gelato', 'Brownies cokelat hangat dengan gelato vanilla.', 32000.00, 26000.00, '🍰', '/assets/brownies.jpg', 1, 0, 15, 1, 0),
+('prod-cig-1', 'cat-rokok', 'Marlboro Filter Black', 'Rokok filter premium (Khusus usia 21+ tahun, tanpa diskon mahasiswa).', 42000.00, 42000.00, '🚬', '/assets/croissant.jpg', 1, 0, 16, 1, 1),
+('prod-cig-2', 'cat-rokok', 'Esse Change Grape', 'Rokok mild kapsul rasa anggur (Khusus usia 21+ tahun, tanpa diskon mahasiswa).', 40000.00, 40000.00, '🚬', '/assets/croissant.jpg', 1, 0, 17, 1, 1)
 ON DUPLICATE KEY UPDATE `price`=VALUES(`price`), `student_price`=VALUES(`student_price`), `is_tobacco`=VALUES(`is_tobacco`);
 
 -- --------------------------------------------------------
