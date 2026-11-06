@@ -49,8 +49,8 @@ try {
     // The dump contains a local CREATE DATABASE/USE statement. Remove those
     // lines so Railway's already-selected database (MYSQLDATABASE) is used.
     schemaSql = schemaSql
-      .replace(/^\s*CREATE DATABASE IF NOT EXISTS `cafe_campus_db`[^;]*;\s*$/im, '')
-      .replace(/^\s*USE `cafe_campus_db`;\s*$/im, '');
+      .replace(/^\s*CREATE DATABASE\b[^;]*;[^\S\r\n]*\r?$/gim, '')
+      .replace(/^\s*USE\b[^;]*;[^\S\r\n]*\r?$/gim, '');
     await connection.query(schemaSql);
     console.log('[db-setup] Schema awal berhasil diimpor.');
   } else if (missingRequired.length > 0) {

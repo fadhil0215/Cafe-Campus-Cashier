@@ -3590,6 +3590,22 @@ const ensureSchema = async () => {
         try {
             await conn.query('SET FOREIGN_KEY_CHECKS = 0');
 
+            // Cek apakah database benar-benar kosong (0 tabel) untuk inisialisasi awal otomatis
+            const [existingTables] = await conn.query(`
+                SELECT TABLE_NAME FROM information_schema.TABLES
+                WHERE TABLE_SCHEMA = DATABASE() AND TABLE_TYPE = 'BASE TABLE'
+            `);
+            if (!existingTables.length) {
+                console.log('📦 [ensureSchema] Database kosong terdeteksi. Mengimpor skema awal dari database.sql...');
+                const sqlPath = path.join(__dirname, 'database.sql');
+                let initialSql = fs.readFileSync(sqlPath, 'utf8');
+                initialSql = initialSql
+                    .replace(/^\s*CREATE DATABASE\b[^;]*;[^\S\r\n]*\r?$/gim, '')
+                    .replace(/^\s*USE\b[^;]*;[^\S\r\n]*\r?$/gim, '');
+                await conn.query(initialSql);
+                console.log('✅ [ensureSchema] Seluruh tabel & seed data berhasil diinisialisasi otomatis!');
+            }
+
             // 1. Faculties table & default seed
             await conn.query(`
                 CREATE TABLE IF NOT EXISTS faculties (

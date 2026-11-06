@@ -3,8 +3,8 @@
 -- Database: cafe_campus_db
 -- ========================================================
 
-CREATE DATABASE IF NOT EXISTS `cafe_campus_db` DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
-USE `cafe_campus_db`;
+-- CREATE DATABASE IF NOT EXISTS `cafe_campus_db` DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+-- USE `cafe_campus_db`;
 
 SET FOREIGN_KEY_CHECKS = 0;
 
