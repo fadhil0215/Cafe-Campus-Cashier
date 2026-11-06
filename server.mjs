@@ -22,9 +22,9 @@ app.set('trust proxy', 1);
 const PORT = process.env.PORT || 4176;
 export const APP_MODE = (process.env.APP_MODE || 'production').trim().toLowerCase() === 'demo' ? 'demo' : 'production';
 export const IS_DEMO = APP_MODE === 'demo';
-const JWT_SECRET = process.env.JWT_SECRET || 'cafe_campus_super_secret_jwt_key_2026_demo_sec_val';
-if (!JWT_SECRET || JWT_SECRET.length < 32) {
-    console.error('❌ FATAL: JWT_SECRET tidak diset atau terlalu lemah. Set JWT_SECRET di .env (min 32 karakter).');
+const JWT_SECRET = process.env.JWT_SECRET || '';
+if (JWT_SECRET.length < 32 || /ganti_dengan|change_me|placeholder|example/i.test(JWT_SECRET)) {
+    console.error('❌ FATAL: JWT_SECRET belum aman. Atur secret acak minimal 32 karakter pada environment aplikasi (gunakan: openssl rand -base64 48).');
     process.exit(1);
 }
 
@@ -107,6 +107,18 @@ app.use('/uploads', express.static(path.join(__dirname, 'public', 'uploads')));
 // Health Check Endpoint
 app.get(['/health', '/api/health', '/healthz'], (req, res) => {
     res.json({ ok: true, status: 'ok', healthy: true, version: '2.0.0', timestamp: new Date().toISOString() });
+});
+
+// Readiness check: verifies that the application can reach its production database.
+app.get(['/ready', '/api/ready'], async (req, res) => {
+    try {
+        await pool.query('SELECT 1');
+        await pool.query('SELECT id FROM admins LIMIT 1');
+        res.json({ ok: true, status: 'ready', database: 'connected' });
+    } catch (err) {
+        console.error('[readiness] Database belum siap:', err.code || err.message);
+        res.status(503).json({ ok: false, status: 'not_ready', database: 'unavailable' });
+    }
 });
 
 const getCookies = (req) => {
@@ -1739,21 +1751,30 @@ const authKitchen = authRole('ADMIN', 'KITCHEN');
 
 // Endpoint Login Staff / Kasir / Dapur
 app.post('/api/admin/login', loginLimiter, async (req, res) => {
-    const { email, password } = req.body;
+    const emailInput = String(req.body?.email || '').trim();
+    const email = emailInput.toLowerCase();
+    const password = req.body?.password;
     if (!email || !password) return res.status(400).json({ message: 'Email dan password wajib diisi.' });
     try {
-        const [admins] = await pool.query('SELECT * FROM admins WHERE email = ?', [email]);
+        const [admins] = await pool.query('SELECT * FROM admins WHERE LOWER(email) = ?', [email]);
         const dummyHash = '$2b$10$0EE0QHUTP7y0S9kI1x0bXOjzyFdfzbBm9EI5qkmkaAWUL4CVZy4JG';
         const hashToCompare = admins.length ? admins[0].password_hash : dummyHash;
         let isValid = await bcrypt.compare(password, hashToCompare);
+        // Block known seed credentials in production even if a legacy server
+        // previously upgraded the seed hash to bcrypt(admin123/kasir123/dapur123).
+        if (!IS_DEMO && (
+            (email === 'admin@cafecampus.demo' && password === 'admin123') ||
+            (email === 'kasir@cafecampus.demo' && password === 'kasir123') ||
+            (email === 'dapur@cafecampus.demo' && password === 'dapur123')
+        )) {
+            isValid = false;
+        }
 
-        if (admins.length && !isValid) {
+        if (IS_DEMO && admins.length && !isValid) {
             if ((email === 'admin@cafecampus.demo' && password === 'admin123') ||
                 (email === 'kasir@cafecampus.demo' && password === 'kasir123') ||
                 (email === 'dapur@cafecampus.demo' && password === 'dapur123')) {
                 isValid = true;
-                const newHash = await bcrypt.hash(password, 10);
-                await pool.query('UPDATE admins SET password_hash = ? WHERE id = ?', [newHash, admins[0].id]);
             }
         }
 
@@ -1775,7 +1796,10 @@ app.post('/api/admin/login', loginLimiter, async (req, res) => {
             token,
             user: { id: admin.id, name: admin.name, email: admin.email, role: admin.role }
         });
-    } catch (err) { res.status(500).json({ message: 'Terjadi kesalahan server.' }); }
+    } catch (err) {
+        console.error('[auth] Login admin gagal:', err.code || err.message);
+        res.status(500).json({ message: 'Terjadi kesalahan server. Periksa koneksi database atau log server.' });
+    }
 });
 
 app.get('/api/admin/me', authRole('ADMIN', 'CASHIER', 'KITCHEN'), async (req, res) => {
@@ -1784,6 +1808,44 @@ app.get('/api/admin/me', authRole('ADMIN', 'CASHIER', 'KITCHEN'), async (req, re
         if (!admins.length) return res.status(404).json({ message: 'User not found' });
         res.json(admins[0]);
     } catch(e) { res.status(500).json({message: e.message}); }
+});
+
+app.put('/api/admin/me/password', authRole('ADMIN', 'CASHIER', 'KITCHEN'), async (req, res) => {
+    const currentPassword = String(req.body?.currentPassword || '');
+    const newPassword = String(req.body?.newPassword || '');
+    if (!currentPassword || !newPassword) {
+        return res.status(400).json({ message: 'Password saat ini dan password baru wajib diisi.' });
+    }
+    if (newPassword.length < 12) {
+        return res.status(400).json({ message: 'Password baru minimal 12 karakter.' });
+    }
+    if (Buffer.byteLength(newPassword, 'utf8') > 72) {
+        return res.status(400).json({ message: 'Password baru terlalu panjang. Maksimal 72 byte.' });
+    }
+    if (currentPassword === newPassword) {
+        return res.status(400).json({ message: 'Password baru harus berbeda dari password saat ini.' });
+    }
+
+    try {
+        const [rows] = await pool.query('SELECT id, password_hash, email, name, role FROM admins WHERE id = ? LIMIT 1', [req.user.id]);
+        if (!rows.length) return res.status(404).json({ message: 'Akun tidak ditemukan.' });
+        const admin = rows[0];
+        let currentValid = await bcrypt.compare(currentPassword, admin.password_hash);
+        if (!currentValid && IS_DEMO) {
+            currentValid = (admin.email === 'admin@cafecampus.demo' && currentPassword === 'admin123') ||
+                (admin.email === 'kasir@cafecampus.demo' && currentPassword === 'kasir123') ||
+                (admin.email === 'dapur@cafecampus.demo' && currentPassword === 'dapur123');
+        }
+        if (!currentValid) return res.status(401).json({ message: 'Password saat ini tidak cocok.' });
+
+        const newHash = await bcrypt.hash(newPassword, 12);
+        await pool.query('UPDATE admins SET password_hash = ? WHERE id = ?', [newHash, admin.id]);
+        await logAudit(admin.id, admin.name, admin.role, 'CHANGE_PASSWORD', 'ADMIN', admin.id, {}, req);
+        res.json({ ok: true, message: 'Password berhasil diperbarui.' });
+    } catch (err) {
+        console.error('[auth] Gagal mengubah password:', err.code || err.message);
+        res.status(500).json({ message: 'Password belum dapat diperbarui. Periksa log server.' });
+    }
 });
 
 app.post('/api/admin/logout', (req, res) => {
@@ -3517,7 +3579,9 @@ const expireStaleQrisOrders = async () => {
              AND created_at < (NOW() - INTERVAL ? MINUTE)`,
             [QRIS_EXPIRY_MINUTES]
         );
-    } catch (err) {}
+    } catch (err) {
+        console.warn('[qris-expiry] Gagal memeriksa tagihan kedaluwarsa:', err.code || err.message);
+    }
 };
 
 const ensureSchema = async () => {
@@ -3537,7 +3601,7 @@ const ensureSchema = async () => {
                     icon VARCHAR(50) DEFAULT 'academic-cap',
                     is_active TINYINT(1) DEFAULT 1,
                     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
             `);
             const defaultFaculties = [
                 ['fac-ft', 'FT', 'Fakultas Teknik', '#1e3a8a', '#dbeafe', 'tool', 1],
@@ -3605,7 +3669,7 @@ const ensureSchema = async () => {
                     cost_per_unit DECIMAL(10,2) NOT NULL DEFAULT '0.00',
                     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
-                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
             `);
             const defaultMaterials = [
                 ['mat-coffee-bean', 'Biji Kopi Arabika House Blend', 'MAT-COFFEE', 'gram', 2500.00, 500.00, 250.00],
@@ -3635,7 +3699,7 @@ const ensureSchema = async () => {
                     quantity_needed DECIMAL(10,2) NOT NULL DEFAULT '1.00',
                     UNIQUE KEY uniq_prod_mat (product_id, raw_material_id),
                     KEY raw_material_id (raw_material_id)
-                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
             `);
             const defaultRecipes = [
                 ['rcp-1a', 'prod-1', 'mat-coffee-bean', 18.00],
@@ -3673,7 +3737,7 @@ const ensureSchema = async () => {
                     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                     KEY raw_material_id (raw_material_id),
                     KEY reference_order_number (reference_order_number)
-                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
             `);
 
             // 5. Birthday Rewards
@@ -3686,7 +3750,7 @@ const ensureSchema = async () => {
                     order_number VARCHAR(50) NOT NULL,
                     granted_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                     UNIQUE KEY uniq_student_year (student_id_num, reward_year)
-                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
             `);
 
             // 6. Loyalty Tables
@@ -3698,7 +3762,7 @@ const ensureSchema = async () => {
                     points_balance INT NOT NULL DEFAULT '0',
                     total_spent DECIMAL(12,2) NOT NULL DEFAULT '0.00',
                     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
-                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
             `);
             await conn.query(`
                 CREATE TABLE IF NOT EXISTS loyalty_logs (
@@ -3711,7 +3775,7 @@ const ensureSchema = async () => {
                     description VARCHAR(255) DEFAULT NULL,
                     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                     KEY student_id_num (student_id_num)
-                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
             `);
 
             // 7. Cashier Shifts
@@ -3731,7 +3795,7 @@ const ensureSchema = async () => {
                     total_orders_count INT NOT NULL DEFAULT '0',
                     status ENUM('OPEN','CLOSED') NOT NULL DEFAULT 'OPEN',
                     notes TEXT
-                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
             `);
 
             // 8. Audit Logs
@@ -3749,7 +3813,7 @@ const ensureSchema = async () => {
                     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                     KEY idx_audit_action (action),
                     KEY idx_audit_created (created_at)
-                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
             `);
 
             // 9. Admins seed
@@ -3791,7 +3855,7 @@ const ensureSchema = async () => {
                     auth VARCHAR(255) DEFAULT NULL,
                     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                     KEY idx_push_order (order_number)
-                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
             `);
 
             // 13. Orders columns
@@ -3814,12 +3878,15 @@ const ensureSchema = async () => {
             for (const col of orderCols) {
                 const [c] = await conn.query("SELECT COLUMN_NAME FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'orders' AND COLUMN_NAME = ?", [col.name]);
                 if (!c.length) {
-                    await conn.query(col.sql).catch(() => {});
+                    await conn.query(col.sql);
                 }
             }
 
-            await conn.query('SET FOREIGN_KEY_CHECKS = 1');
         } finally {
+            // Always restore FK checks before returning a pooled connection.
+            await conn.query('SET FOREIGN_KEY_CHECKS = 1').catch((resetErr) => {
+                console.error('[database] Gagal memulihkan FOREIGN_KEY_CHECKS:', resetErr.code || resetErr.message);
+            });
             conn.release();
         }
 
@@ -3828,9 +3895,11 @@ const ensureSchema = async () => {
             await pool.query("DELETE FROM orders WHERE student_id_num IN ('2306781001', '000000', '13521999') OR idempotency_key LIKE 'stud-%' OR idempotency_key LIKE 'quota-%' OR idempotency_key LIKE 'reg-%' OR idempotency_key LIKE 'cancel-%' OR idempotency_key LIKE 'fake-%' OR idempotency_key LIKE 'qris-%' OR idempotency_key LIKE 'sold-%'").catch(() => {});
         }
 
-        // Pastikan ada minimal 5 order demo hari ini agar metrik awal dashboard langsung ready
-        const [todayOrders] = await pool.query('SELECT COUNT(*) as cnt FROM orders WHERE payment_status = "PAID" AND DATE(created_at) = CURDATE()');
-        if (todayOrders[0].cnt < 5) {
+        // Sample/demo transactions are strictly limited to demo mode. Never pollute
+        // a real client's production sales reports with fabricated orders.
+        if (IS_DEMO) {
+            const [todayOrders] = await pool.query('SELECT COUNT(*) as cnt FROM orders WHERE payment_status = "PAID" AND DATE(created_at) = CURDATE()');
+            if (todayOrders[0].cnt < 5) {
             const demoOrders = [
                 { num: 'CC-INIT-01', q: 'Q-001', tbl: 'Meja 01', type: 'STUDENT', sName: 'Rian Ardiansyah', campus: 'UI', nim: '2106781290', sub: 42000, sav: 12000, tot: 48930, method: 'QRIS_DEMO', st: 'COMPLETED' },
                 { num: 'CC-INIT-02', q: 'Q-002', tbl: 'Meja 02', type: 'STUDENT', sName: 'Siti Rahma', campus: 'ITB', nim: '13521001', sub: 25000, sav: 7000, tot: 29125, method: 'CASH', st: 'READY' },
@@ -3839,20 +3908,28 @@ const ensureSchema = async () => {
                 { num: 'CC-INIT-05', q: 'Q-005', tbl: 'Meja 05', type: 'REGULAR', sName: null, campus: null, nim: null, sub: 35000, sav: 0, tot: 40775, method: 'CASH', st: 'NEW' }
             ];
             for (const o of demoOrders) {
-                const oId = crypto.randomUUID();
+                const [existingOrders] = await pool.query('SELECT id FROM orders WHERE order_number = ? LIMIT 1', [o.num]);
+                const oId = existingOrders[0]?.id || crypto.randomUUID();
                 await pool.query(`
                     INSERT INTO orders (id, order_number, queue_number, table_name, customer_type, student_name, student_campus, student_id_num, subtotal, total_savings, total, payment_method, payment_status, status, paid_at, created_at)
                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'PAID', ?, NOW(), NOW())
                     ON DUPLICATE KEY UPDATE status=VALUES(status), payment_status='PAID', created_at=NOW(), paid_at=NOW()
                 `, [oId, o.num, o.q, o.tbl, o.type, o.sName, o.campus, o.nim, o.sub, o.sav, o.tot, o.method, o.st]);
 
-                await pool.query(`
-                    INSERT INTO order_items (id, order_id, product_name, quantity, base_price, regular_base_price, price, regular_price, line_total)
-                    VALUES (?, ?, 'Iced Latte Gula Aren', 2, 21000, 28000, 21000, 28000, ?)
-                `, [crypto.randomUUID(), oId, o.sub]).catch(() => {});
+                const [existingItems] = await pool.query('SELECT id FROM order_items WHERE order_id = ? LIMIT 1', [oId]);
+                if (existingItems.length === 0) {
+                    await pool.query(`
+                        INSERT INTO order_items (id, order_id, product_name, quantity, base_price, regular_base_price, price, regular_price, line_total)
+                        VALUES (?, ?, 'Iced Latte Gula Aren', 2, 21000, 28000, 21000, 28000, ?)
+                    `, [crypto.randomUUID(), oId, o.sub]);
+                }
+            }
             }
         }
-    } catch(err) {}
+    } catch (err) {
+        console.error('[database] Inisialisasi schema/seed gagal:', err);
+        throw err;
+    }
 };
 
 await ensureSchema();

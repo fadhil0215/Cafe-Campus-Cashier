@@ -102,6 +102,26 @@ function Get-PortableNode {
     }
 }
 
+function Ensure-ProjectDependencies([string]$NodeExe) {
+    $marker = Join-Path $Root 'node_modules/express/package.json'
+    if (Test-Path $marker) { return }
+
+    $npmCmd = Join-Path (Split-Path -Parent $NodeExe) 'npm.cmd'
+    if (-not (Test-Path $npmCmd)) {
+        try { $npmCmd = (Get-Command npm.cmd -ErrorAction Stop).Source } catch { $npmCmd = $null }
+    }
+    if (-not $npmCmd -or -not (Test-Path $npmCmd)) {
+        throw 'npm.cmd tidak ditemukan. Instal Node.js LTS lengkap atau jalankan npm ci secara manual di folder project.'
+    }
+
+    Write-Host '[DEPENDENCY] Menginstal package project (npm ci)...' -ForegroundColor Cyan
+    Push-Location $Root
+    try {
+        & $npmCmd ci --no-audit --no-fund
+        if ($LASTEXITCODE -ne 0) { throw 'Instalasi dependency gagal. Periksa koneksi internet dan npm log.' }
+    } finally { Pop-Location }
+}
+
 function Test-DemoServer([string]$NodeExe) {
     try {
         & $NodeExe -e "const u=process.argv[1];const c=new AbortController();setTimeout(()=>c.abort(),1500);fetch(u,{signal:c.signal,cache:'no-store'}).then(r=>process.exit(r.ok?0:2)).catch(()=>process.exit(3));" "$Url/api/health" *> $null
@@ -127,8 +147,10 @@ function Start-Demo([string]$NodeExe) {
         return
     }
 
-    Write-Host '[MIGRATE] Memastikan migrasi database v7 siap...' -ForegroundColor Cyan
-    try { & $NodeExe (Join-Path $Root 'run-migration.mjs') *> $null } catch {}
+    Ensure-ProjectDependencies $NodeExe
+    Write-Host '[DATABASE] Memeriksa koneksi dan menyiapkan schema database...' -ForegroundColor Cyan
+    & $NodeExe (Join-Path $Root 'scripts/prepare-database.mjs')
+    if ($LASTEXITCODE -ne 0) { throw 'Database belum siap. Periksa konfigurasi .env dan log di atas.' }
 
     Write-Host '[START] Menjalankan server demo...' -ForegroundColor Cyan
     $lanIp = Get-LanIPv4

@@ -10,7 +10,7 @@ $NodeRoot = Join-Path $RuntimeRoot 'node'
 $LogDir = Join-Path $Root 'logs'
 $StdoutLog = Join-Path $LogDir 'demo-server.log'
 $StderrLog = Join-Path $LogDir 'demo-server-error.log'
-$CloudflaredExe = Join-Path $Root 'cloudflared.exe'
+$CloudflaredExe = Join-Path $RuntimeRoot 'cloudflared.exe'
 $LauncherPidFile = Join-Path $RuntimeRoot 'online-launcher.pid'
 
 # Pastikan folder logs dan .runtime siap
@@ -79,7 +79,39 @@ try {
     }
 
     # 2. Cek apakah server lokal 4176 sudah aktif
-    function Test-Health {
+    function Ensure-ProjectDependencies([string]$NodeExe) {
+    $marker = Join-Path $Root 'node_modules/express/package.json'
+    if (Test-Path $marker) { return }
+    $npmCmd = Join-Path (Split-Path -Parent $NodeExe) 'npm.cmd'
+    if (-not (Test-Path $npmCmd)) {
+        try { $npmCmd = (Get-Command npm.cmd -ErrorAction Stop).Source } catch { $npmCmd = $null }
+    }
+    if (-not $npmCmd -or -not (Test-Path $npmCmd)) {
+        throw 'npm.cmd tidak ditemukan. Instal Node.js LTS lengkap atau jalankan npm ci secara manual di folder project.'
+    }
+    Write-Host '[DEPENDENCY] Menginstal package project (npm ci)...' -ForegroundColor Cyan
+    Push-Location $Root
+    try {
+        & $npmCmd ci --no-audit --no-fund
+        if ($LASTEXITCODE -ne 0) { throw 'Instalasi dependency gagal. Periksa koneksi internet dan npm log.' }
+    } finally { Pop-Location }
+}
+
+function Ensure-Cloudflared {
+    if (Test-Path $CloudflaredExe) { return }
+    New-Item -ItemType Directory -Force -Path $RuntimeRoot | Out-Null
+    Write-Host '[DOWNLOAD] Mengambil Cloudflare Tunnel resmi untuk Windows x64...' -ForegroundColor Cyan
+    try {
+        [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+        Invoke-WebRequest -Uri 'https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-windows-amd64.exe' -OutFile $CloudflaredExe -UseBasicParsing -TimeoutSec 180
+        if ((Get-Item $CloudflaredExe).Length -lt 1000000) { throw 'File Cloudflared hasil download tidak valid.' }
+    } catch {
+        Remove-Item $CloudflaredExe -Force -ErrorAction SilentlyContinue
+        throw "Cloudflared gagal diunduh: $($_.Exception.Message)"
+    }
+}
+
+function Test-Health {
         try {
             $r = Invoke-RestMethod -Uri "$Url/api/health" -TimeoutSec 2 -ErrorAction Stop
             if ($r.ok -eq $true -or $r.status -eq 'ok' -or $r.status -eq 'healthy') { return $true }
@@ -89,8 +121,10 @@ try {
 
     $serverRunning = Test-Health
     if (-not $serverRunning) {
-        Write-Host '[INFO] Memeriksa & menjalankan migrasi database v7...' -ForegroundColor Cyan
-        try { & $node (Join-Path $Root 'run-migration.mjs') *> $null } catch {}
+        Ensure-ProjectDependencies $node
+        Write-Host '[DATABASE] Memeriksa koneksi dan menyiapkan schema database...' -ForegroundColor Cyan
+        & $node (Join-Path $Root 'scripts/prepare-database.mjs')
+        if ($LASTEXITCODE -ne 0) { throw 'Database belum siap. Periksa konfigurasi .env dan pesan error di atas.' }
 
         Write-Host '[INFO] Menyalakan server Cafe Campus lokal di port 4176...' -ForegroundColor Cyan
         $env:HOST = '0.0.0.0'
@@ -129,11 +163,7 @@ try {
     Write-Host ''
 
     # 3. Jalankan Cloudflare Tunnel
-    if (-not (Test-Path $CloudflaredExe)) {
-        Write-Host "[ERROR] cloudflared.exe tidak ditemukan di $Root!" -ForegroundColor Red
-        Read-Host 'Tekan Enter untuk keluar'
-        exit 1
-    }
+    Ensure-Cloudflared
 
     # Auto-reconnection loop for Cloudflare Tunnel
     while ($true) {

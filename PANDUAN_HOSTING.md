@@ -104,17 +104,22 @@ Untuk aplikasi kasir & pemesanan kafe (POS) di Indonesia, **Cloud VPS berlokasi 
 
 Cocok jika Anda tidak mau pusing urus Linux/VPS dan ingin tinggal klik **Deploy from GitHub**:
 
-### Opsi A: Railway.app (Sangat Praktis, Support MySQL 1-Klik)
-- **Biaya**: Gratis awal ($5 credit trial), lalu ~$5/bulan (sekitar Rp 80.000).
+### Opsi A: Railway.app (Support MySQL)
 - **Cara Setup**:
-  1. Login ke [Railway.app](https://railway.app) pakai akun GitHub.
-  2. Klik **New Project** -> **Provision MySQL**.
-  3. Klik **New Service** -> **GitHub Repo** (pilih repositori Cafe Campus Anda).
-  4. Buka tab **Variables** di Railway, masukkan variabel:
-     - `DB_HOST`, `DB_USER`, `DB_PASS`, `DB_NAME` (Salin langsung dari variabel MySQL Railway).
-     - `JWT_SECRET`
-  5. Buka tab **Settings** -> **Generate Domain** (misal: `cafe-campus-production.up.railway.app`).
-  6. Import `database.sql` ke database MySQL Railway via tool database (DBeaver / TablePlus).
+  1. Login ke [Railway.app](https://railway.app) menggunakan akun GitHub.
+  2. Buat project lalu tambahkan database **MySQL**. Project ini tidak kompatibel langsung dengan PostgreSQL karena seluruh query dan driver menggunakan MySQL.
+  3. Tambahkan service aplikasi dari repository Cafe Campus.
+  4. Pada service aplikasi → **Variables** → **Add Reference Variable**, pilih variabel `MYSQL_URL` dari service MySQL. Contoh referensi: `${{MySQL.MYSQL_URL}}` (gunakan nama service aktual milik Anda).
+  5. Tambahkan `NODE_ENV=production`, `APP_MODE=production`, `JWT_SECRET` berupa secret acak minimal 32 karakter, dan `ADMIN_EMAIL` serta `ADMIN_PASSWORD` untuk mengganti kredensial admin seed saat bootstrap pertama (password minimal 12 karakter). Buat dengan `openssl rand -base64 48`.
+  6. Biarkan aplikasi memakai Dockerfile dan perintah `npm start`. Script startup akan menginisialisasi `database.sql` hanya jika database yang terpilih benar-benar kosong.
+  7. Generate domain di **Settings** → **Networking** → **Generate Domain**. Isi `APP_URL` dengan URL HTTPS domain tersebut supaya QR meja dan callback memakai alamat publik yang benar.
+  8. Setelah deployment, buka `/ready`. Status `ready` dan `database: connected` menunjukkan database sudah dapat dijangkau dan tabel inti tersedia.
+
+Railway MySQL juga menyediakan variabel `MYSQLHOST`, `MYSQLPORT`, `MYSQLUSER`, `MYSQLPASSWORD`, dan `MYSQLDATABASE`; aplikasi dapat membaca variabel tersebut jika semuanya direferensikan ke service aplikasi.
+
+**Penyimpanan file upload:** tambahkan Railway Volume ke service aplikasi dengan mount path `/app/public/uploads` agar foto dan berkas upload tidak hilang setelah redeploy. File pada filesystem container di luar volume bersifat sementara.
+
+**Peringatan data:** `database.sql` adalah dump awal yang berisi `DROP TABLE IF EXISTS`. Jangan impor manual ke database yang sudah berisi data. `npm run db:setup` memiliki pemeriksaan agar dump hanya dijalankan untuk database yang benar-benar kosong dan akan berhenti jika menemukan schema parsial.
 
 ### Opsi B: Render.com (Web Service) + TiDB Cloud / Aiven (Database Gratis)
 - **Biaya**: **Rp 0 / GRATIS** (Sangat hemat untuk demo klien).
@@ -123,7 +128,7 @@ Cocok jika Anda tidak mau pusing urus Linux/VPS dan ingin tinggal klik **Deploy 
   2. Import `database.sql`.
   3. Di Render.com, buat **New Web Service** yang terhubung ke repositori GitHub Cafe Campus.
   4. Build Command: `npm install && npm run build`
-  5. Start Command: `node server.mjs`
+  5. Start Command: `npm start` (agar pemeriksaan database otomatis berjalan sebelum server aktif).
   6. Masukkan kredensial koneksi DB di **Environment Variables**.
 
 ---
@@ -136,4 +141,4 @@ Cocok jika Anda tidak mau pusing urus Linux/VPS dan ingin tinggal klik **Deploy 
    - URL: `/admin/login`
    - Email: `admin@cafecampus.demo`
    - Password: `admin123`
-   *(Jangan lupa ganti email & password ini di menu Pengaturan Kasir saat sudah diserahkan ke klien)*.
+   *(Akun ini hanya untuk demo. Ganti password dan buat akun khusus client sebelum operasional nyata.)*.

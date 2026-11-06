@@ -5,12 +5,13 @@
   "type": "module",
   "main": "server.mjs",
   "scripts": {
-    "start": "node server.mjs",
+    "start": "node scripts/prepare-database.mjs && node server.mjs",
     "dev": "node server.mjs",
     "build": "esbuild public/app.js --minify --bundle=false --target=es2018 --outfile=public/app.min.js",
     "test": "node test-demo.mjs && node --test tests/",
     "test:unit": "node --test tests/",
-    "smoke": "node smoke-check.mjs"
+    "smoke": "node smoke-check.mjs",
+    "db:setup": "node scripts/prepare-database.mjs"
   },
   "engines": {
     "node": ">=18.0.0"

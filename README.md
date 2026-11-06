@@ -114,16 +114,37 @@ Buat database baru bernama `cafe_campus_db` di MySQL/phpMyAdmin:
 ```sql
 CREATE DATABASE cafe_campus_db;
 ```
-*(Skema tabel, relasi, dan data seed awal akan dibuat otomatis saat server start).*
+*Saat `npm start`, script persiapan database akan mengimpor schema awal hanya jika database benar-benar kosong. Jika database berisi sebagian tabel, proses akan berhenti untuk melindungi data yang sudah ada.*
 
 ### 4. Build Frontend & Jalankan Server
 ```bash
 # Build bundle minifikasi
 npm run build
 
-# Menyalakan server
+# Periksa/siapkan database (aman dijalankan ulang)
+npm run db:setup
+
+# Menyalakan server (otomatis menjalankan pemeriksaan database lagi)
 npm start
 ```
+
+### 5. Konfigurasi Railway MySQL
+
+Project ini menggunakan **MySQL/MariaDB**, bukan PostgreSQL. Jika deploy di Railway:
+
+1. Tambahkan service **MySQL** pada project Railway.
+2. Pada service aplikasi Cafe Campus, buka **Variables** → **Add Reference Variable**.
+3. Pilih service MySQL lalu hubungkan variabel `MYSQL_URL` ke aplikasi (misalnya `${{MySQL.MYSQL_URL}}`; sesuaikan nama service MySQL Anda).
+4. Tambahkan `NODE_ENV=production`, `APP_MODE=production`, `JWT_SECRET` berisi secret acak minimal 32 karakter, serta `ADMIN_EMAIL` dan `ADMIN_PASSWORD` untuk akun admin awal (password minimal 12 karakter) bila database masih memakai seed demo. Buat secret dengan `openssl rand -base64 48`.
+5. Pastikan Start Command menggunakan `npm start` atau biarkan Dockerfile project ini menjalankan `npm start`.
+6. Deploy ulang. Database kosong akan diinisialisasi otomatis; database yang sudah berisi data tidak akan di-reset.
+7. Setelah deploy, periksa endpoint `/ready`. Respons `{"ok":true,"status":"ready","database":"connected"}` menandakan koneksi dan tabel inti tersedia.
+
+Railway MySQL juga menyediakan variabel terpisah `MYSQLHOST`, `MYSQLPORT`, `MYSQLUSER`, `MYSQLPASSWORD`, dan `MYSQLDATABASE`; aplikasi mendukung keduanya. Jangan arahkan project MySQL ini ke Railway PostgreSQL tanpa migrasi driver dan seluruh SQL.
+
+**Penyimpanan file upload:** aplikasi menyimpan file di `public/uploads`. Pada Railway, tambahkan Volume ke service aplikasi dengan mount path `/app/public/uploads` agar foto/berkas yang diunggah tetap ada setelah redeploy. Filesystem container di luar volume bersifat ephemeral.
+
+**Penting:** `database.sql` berisi perintah `DROP TABLE IF EXISTS`. Jangan impor file itu secara manual ke database yang sudah berisi data. Script `npm run db:setup` hanya mengimpor dump ketika database terpilih benar-benar kosong dan akan menolak database dengan schema parsial.
 
 > **Tips Presentasi Windows:**
 > - Klik ganda `start-demo.bat` untuk menyalakan server lokal secara otomatis.
@@ -140,6 +161,8 @@ npm start
 | **Admin / Owner** | `admin@cafecampus.demo` | `admin123` | Seluruh Dashboard & Pengaturan |
 | **Kasir Utama** | `kasir@cafecampus.demo` | `kasir123` | POS Kasir & Transaksi |
 | **Barista / Dapur** | `dapur@cafecampus.demo` | `dapur123` | Kitchen Display System (KDS) |
+
+> Akun di atas hanya aktif saat `APP_MODE=demo`. Dalam production, akun admin seed harus diganti menggunakan `ADMIN_EMAIL` dan `ADMIN_PASSWORD` saat bootstrap pertama, atau password admin diubah ketika masih dalam mode demo. Jangan gunakan password demo untuk client.
 
 ### Tautan Akses Aplikasi:
 - **Menu Pelanggan (Meja 01)**: `http://localhost:4176/order/demo-table-01/menu`

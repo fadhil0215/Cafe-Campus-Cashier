@@ -28,4 +28,4 @@ ENV PORT=4176
 ENV HOST=0.0.0.0
 
 # Jalankan server
-CMD ["node", "server.mjs"]
+CMD ["npm", "start"]

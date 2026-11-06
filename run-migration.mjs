@@ -18,7 +18,7 @@ async function migrate() {
                 icon VARCHAR(50) DEFAULT 'academic-cap',
                 is_active TINYINT(1) DEFAULT 1,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
         `);
 
         const faculties = [
@@ -80,14 +80,10 @@ async function migrate() {
         }
         console.log('✅ Master Produk Rokok siap');
 
-        // Drop & re-create raw_materials if collations mismatched
-        await conn.query('DROP TABLE IF EXISTS product_recipes');
-        await conn.query('DROP TABLE IF EXISTS stock_mutations');
-        await conn.query('DROP TABLE IF EXISTS raw_materials');
-
+        // Safe upgrade: never drop live inventory tables or their data.
         // 4. Raw Materials & Recipes (Inventory)
         await conn.query(`
-            CREATE TABLE raw_materials (
+            CREATE TABLE IF NOT EXISTS raw_materials (
                 id VARCHAR(50) NOT NULL PRIMARY KEY,
                 name VARCHAR(100) NOT NULL,
                 sku VARCHAR(50) NOT NULL UNIQUE,
@@ -97,7 +93,7 @@ async function migrate() {
                 cost_per_unit DECIMAL(10,2) NOT NULL DEFAULT '0.00',
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
-            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
         `);
 
         const rawMaterials = [
@@ -116,11 +112,12 @@ async function migrate() {
             await conn.query(`
                 INSERT INTO raw_materials (id, name, sku, unit, current_stock, minimum_stock, cost_per_unit)
                 VALUES (?, ?, ?, ?, ?, ?, ?)
+                ON DUPLICATE KEY UPDATE name=VALUES(name), unit=VALUES(unit)
             `, [id, name, sku, unit, current_stock, minimum_stock, cost_per_unit]);
         }
 
         await conn.query(`
-            CREATE TABLE product_recipes (
+            CREATE TABLE IF NOT EXISTS product_recipes (
                 id VARCHAR(50) NOT NULL PRIMARY KEY,
                 product_id VARCHAR(50) NOT NULL,
                 raw_material_id VARCHAR(50) NOT NULL,
@@ -129,7 +126,7 @@ async function migrate() {
                 KEY raw_material_id (raw_material_id),
                 CONSTRAINT fk_recipe_product FOREIGN KEY (product_id) REFERENCES products (id) ON DELETE CASCADE,
                 CONSTRAINT fk_recipe_material FOREIGN KEY (raw_material_id) REFERENCES raw_materials (id) ON DELETE CASCADE
-            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
         `);
 
         const recipes = [
@@ -152,11 +149,12 @@ async function migrate() {
             await conn.query(`
                 INSERT INTO product_recipes (id, product_id, raw_material_id, quantity_needed)
                 VALUES (?, ?, ?, ?)
+                ON DUPLICATE KEY UPDATE quantity_needed=VALUES(quantity_needed)
             `, [id, product_id, raw_material_id, quantity_needed]);
         }
 
         await conn.query(`
-            CREATE TABLE stock_mutations (
+            CREATE TABLE IF NOT EXISTS stock_mutations (
                 id VARCHAR(50) NOT NULL PRIMARY KEY,
                 raw_material_id VARCHAR(50) NOT NULL,
                 type ENUM('SALE','VOID_RESTORE','RESTOCK','ADJUSTMENT') NOT NULL,
@@ -168,7 +166,7 @@ async function migrate() {
                 KEY raw_material_id (raw_material_id),
                 KEY reference_order_number (reference_order_number),
                 CONSTRAINT fk_mutation_material FOREIGN KEY (raw_material_id) REFERENCES raw_materials (id) ON DELETE CASCADE
-            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
         `);
         console.log('✅ Bahan Baku, Resep & Log Mutasi siap');
 
@@ -182,7 +180,7 @@ async function migrate() {
                 order_number VARCHAR(50) NOT NULL,
                 granted_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 UNIQUE KEY uniq_student_year (student_id_num, reward_year)
-            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
         `);
         console.log('✅ Tabel Birthday Rewards siap');
 
@@ -195,7 +193,7 @@ async function migrate() {
                 points_balance INT NOT NULL DEFAULT '0',
                 total_spent DECIMAL(12,2) NOT NULL DEFAULT '0.00',
                 updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
-            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
         `);
 
         await conn.query(`
@@ -209,7 +207,7 @@ async function migrate() {
                 description VARCHAR(255) DEFAULT NULL,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 KEY student_id_num (student_id_num)
-            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
         `);
         console.log('✅ Tabel Loyalitas Poin siap');
 
@@ -230,7 +228,7 @@ async function migrate() {
                 total_orders_count INT NOT NULL DEFAULT '0',
                 status ENUM('OPEN','CLOSED') NOT NULL DEFAULT 'OPEN',
                 notes TEXT
-            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
         `);
         console.log('✅ Tabel Shift Kasir siap');
 
@@ -249,7 +247,7 @@ async function migrate() {
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 KEY idx_audit_action (action),
                 KEY idx_audit_created (created_at)
-            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
         `);
         console.log('✅ Tabel Audit Log siap');
 
@@ -289,6 +287,9 @@ async function migrate() {
         await conn.query('SET FOREIGN_KEY_CHECKS = 1');
         console.log('🎉 Migrasi dan Seeder v7 Berhasil 100%!');
     } finally {
+        await conn.query('SET FOREIGN_KEY_CHECKS = 1').catch((resetErr) => {
+            console.error('⚠️ Gagal memulihkan FOREIGN_KEY_CHECKS:', resetErr.code || resetErr.message);
+        });
         conn.release();
     }
 }

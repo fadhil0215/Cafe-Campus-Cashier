@@ -2176,11 +2176,19 @@ async function trackPage(orderNumber) {
 
 async function adminGuard(fn) { try { const user = await api('/admin/me'); return fn(user); } catch { nav('/admin/login'); } }
 
-function loginPage() {
+async function loginPage() {
+  let demoMode = false;
+  try {
+    const settings = await api('/public/settings');
+    demoMode = settings.demoMode === true;
+  } catch { /* Login form can still render; the submit will show the server error. */ }
+
+  const demoEmail = demoMode ? 'admin@cafecampus.demo' : '';
+  const demoPassword = demoMode ? 'admin123' : '';
   document.body.className = 'admin-login-body';
-  document.body.innerHTML = `<main class="admin-login-page"><section class="login-card"><div class="login-logo">${brandMark(60)}<h1>Cafe Campus</h1><span>PORTAL STAFF & ADMIN</span></div><form id="loginForm"><h2>Masuk ke Dashboard</h2><label>Email Staff<input id="email" type="email" value="admin@cafecampus.demo" autocomplete="username"></label><label>Kata Sandi<div class="password-wrap"><input id="password" type="password" value="admin123" autocomplete="current-password"><button type="button" id="showPass" aria-label="Lihat kata sandi">${icon('eye', 17)}</button></div></label><button class="btn btn-primary btn-wide" id="loginBtn">Masuk ${icon('arrow', 17)}</button><button type="button" class="forgot" id="forgot">Gunakan akun demo terisi</button></form></section></main>`;
+  document.body.innerHTML = `<main class="admin-login-page"><section class="login-card"><div class="login-logo">${brandMark(60)}<h1>Cafe Campus</h1><span>PORTAL STAFF & ADMIN</span></div><form id="loginForm"><h2>Masuk ke Dashboard</h2><label>Email Staff<input id="email" type="email" value="${demoEmail}" placeholder="nama@cafecampus.id" autocomplete="username" required></label><label>Kata Sandi<div class="password-wrap"><input id="password" type="password" value="${demoPassword}" placeholder="Masukkan kata sandi" autocomplete="current-password" required><button type="button" id="showPass" aria-label="Lihat kata sandi">${icon('eye', 17)}</button></div></label><button class="btn btn-primary btn-wide" id="loginBtn">Masuk ${icon('arrow', 17)}</button>${demoMode ? '<button type="button" class="forgot" id="forgot">Gunakan akun demo terisi</button>' : ''}</form></section></main>`;
   $('#showPass').onclick = () => { const x = $('#password'); x.type = x.type === 'password' ? 'text' : 'password' };
-  $('#forgot').onclick = () => toast('Untuk demo gunakan akun yang sudah terisi.');
+  if (demoMode) $('#forgot').onclick = () => toast('Akun demo sudah terisi.');
   $('#loginForm').onsubmit = async e => {
     e.preventDefault(); alarm.unlock(); const b = $('#loginBtn'); b.disabled = true; b.innerHTML = '<span class="spinner"></span> Memeriksa...';
     try {
@@ -2997,13 +3005,44 @@ async function settingsPage(user) {
     </div>
     <span class="badge ${isDemo ? 'badge-warning' : 'badge-success'}" style="padding: 4px 10px; font-weight: 700; font-size: 11px;">${isDemo ? 'DEMO MODE' : 'PRODUCTION MODE'}</span>
   </section>`;
-  document.body.innerHTML = adminShell(`${adminTop('Pengaturan Sistem', isDemo ? 'Kelola identitas cafe, metode pembayaran, notifikasi, dan akun demo.' : 'Kelola identitas cafe, metode pembayaran, notifikasi, dan operasional.')}<section class="settings-grid">${modeBanner}<div><section class="admin-panel settings-panel"><h2>Profil Cafe</h2>${[['cafeName', 'Nama Cafe', s.cafeName], ['cafeAddress', 'Alamat', s.cafeAddress || ''], ['cafePhone', 'No. Telepon', s.cafePhone || ''], ['operatingHours', 'Jam Operasional', s.operatingHours || '']].map(([id, l, v]) => `<label>${l}<input id="${id}" value="${esc(v)}"></label>`).join('')}<div class="two-fields"><label>Biaya Layanan (%)<input id="serviceFee" type="number" min="0" max="30" value="${s.serviceFee}"></label><label>Pajak (%)<input id="taxPercent" type="number" min="0" max="30" value="${s.taxPercent}"></label></div></section><section class="admin-panel settings-panel"><h2>Metode Pembayaran</h2>${settingSwitch('qrisEnabled', 'Integrasi QRIS Otomatis', 'Mode demo memakai simulasi sandbox.', switches.qrisEnabled)}${settingSwitch('cashEnabled', 'Bayar di Kasir (Tunai)', 'Pelanggan membayar langsung di meja kasir.', switches.cashEnabled)}</section></div><div><section class="admin-panel settings-panel"><h2>Notifikasi & Suara</h2>${settingSwitch('soundEnabled', 'Pesanan Masuk Baru', 'Mainkan notifikasi suara saat browser mengizinkan.', switches.soundEnabled)}${settingSwitch('dailyReportEnabled', 'Laporan Penutupan Harian', 'Siapkan ringkasan operasional harian.', switches.dailyReportEnabled)}</section><section class="admin-panel settings-panel"><h2>Keamanan & Akun</h2><label>Email Akun<input value="admin@cafecampus.demo" disabled></label><div class="setting-actions"><button class="btn btn-outline" id="passwordDemo">Ubah Password</button><button class="btn btn-danger" id="logoutSettings">Keluar Sesi</button></div></section><section class="admin-panel settings-panel demo-controls"><h2>Kontrol Demo</h2><p>Reset mengembalikan menu, meja, sample order, reports, dan settings ke kondisi awal.</p><button class="btn btn-outline" id="resetDemo">Reset Data Demo</button></section></div></section><section class="admin-panel audit-panel"><div class="panel-head"><h2>Audit Trail</h2><span>${audit.length} aktivitas terakhir</span></div><div class="audit-list">${audit.slice(0, 12).map(a => `<div><span>${formatTime(a.at)}</span><b>${esc(a.action.replaceAll('_', ' '))}</b><small>${esc(JSON.stringify(a.meta || {}))}</small></div>`).join('') || '<div class="admin-empty">Belum ada aktivitas admin.</div>'}</div></section><div class="settings-save"><button class="btn btn-primary" id="saveSettings">Simpan Perubahan</button></div>`, 'settings', user);
+  document.body.innerHTML = adminShell(`${adminTop('Pengaturan Sistem', isDemo ? 'Kelola identitas cafe, metode pembayaran, notifikasi, dan akun demo.' : 'Kelola identitas cafe, metode pembayaran, notifikasi, dan operasional.')}<section class="settings-grid">${modeBanner}<div><section class="admin-panel settings-panel"><h2>Profil Cafe</h2>${[['cafeName', 'Nama Cafe', s.cafeName], ['cafeAddress', 'Alamat', s.cafeAddress || ''], ['cafePhone', 'No. Telepon', s.cafePhone || ''], ['operatingHours', 'Jam Operasional', s.operatingHours || '']].map(([id, l, v]) => `<label>${l}<input id="${id}" value="${esc(v)}"></label>`).join('')}<div class="two-fields"><label>Biaya Layanan (%)<input id="serviceFee" type="number" min="0" max="30" value="${s.serviceFee}"></label><label>Pajak (%)<input id="taxPercent" type="number" min="0" max="30" value="${s.taxPercent}"></label></div></section><section class="admin-panel settings-panel"><h2>Metode Pembayaran</h2>${settingSwitch('qrisEnabled', 'Integrasi QRIS Otomatis', 'Mode demo memakai simulasi sandbox.', switches.qrisEnabled)}${settingSwitch('cashEnabled', 'Bayar di Kasir (Tunai)', 'Pelanggan membayar langsung di meja kasir.', switches.cashEnabled)}</section></div><div><section class="admin-panel settings-panel"><h2>Notifikasi & Suara</h2>${settingSwitch('soundEnabled', 'Pesanan Masuk Baru', 'Mainkan notifikasi suara saat browser mengizinkan.', switches.soundEnabled)}${settingSwitch('dailyReportEnabled', 'Laporan Penutupan Harian', 'Siapkan ringkasan operasional harian.', switches.dailyReportEnabled)}</section><section class="admin-panel settings-panel"><h2>Keamanan & Akun</h2><label>Email Akun<input value="${esc(user.email || '')}" disabled></label><div class="setting-actions"><button class="btn btn-outline" id="passwordDemo">Ubah Password</button><button class="btn btn-danger" id="logoutSettings">Keluar Sesi</button></div></section><section class="admin-panel settings-panel demo-controls"><h2>Kontrol Demo</h2><p>Reset mengembalikan menu, meja, sample order, reports, dan settings ke kondisi awal.</p><button class="btn btn-outline" id="resetDemo">Reset Data Demo</button></section></div></section><section class="admin-panel audit-panel"><div class="panel-head"><h2>Audit Trail</h2><span>${audit.length} aktivitas terakhir</span></div><div class="audit-list">${audit.slice(0, 12).map(a => `<div><span>${formatTime(a.at)}</span><b>${esc(a.action.replaceAll('_', ' '))}</b><small>${esc(JSON.stringify(a.meta || {}))}</small></div>`).join('') || '<div class="admin-empty">Belum ada aktivitas admin.</div>'}</div></section><div class="settings-save"><button class="btn btn-primary" id="saveSettings">Simpan Perubahan</button></div>`, 'settings', user);
 
   bindAdminChrome('settings');
   $$('[data-setting-switch]').forEach(b => b.onclick = () => { const k = b.dataset.settingSwitch; switches[k] = !switches[k]; b.classList.toggle('on', switches[k]); });$('#saveSettings').onclick = async () => {
     try { await api('/admin/settings', { method: 'PATCH', body: JSON.stringify({ cafeName: $('#cafeName').value, cafeAddress: $('#cafeAddress').value, cafePhone: $('#cafePhone').value, operatingHours: $('#operatingHours').value, serviceFee: +$('#serviceFee').value, taxPercent: +$('#taxPercent').value, ...switches }) }); toast('Pengaturan berhasil disimpan'); } catch (e) { toast(e.message, true); }
   };
-  $('#passwordDemo').onclick = () => toast('Password demo tetap admin123 agar mudah direview.');
+  $('#passwordDemo').onclick = () => {
+    const d = modal(`<div class="dialog">
+      <div class="dialog-icon">${icon('lock', 24)}</div>
+      <h3>Ubah Password</h3>
+      <p>Gunakan password baru minimal 12 karakter agar akun lebih aman.</p>
+      <form id="changePasswordForm" class="form-grid" style="margin-top:16px;">
+        <label class="field-label">Password saat ini<input class="input" id="currentPassword" type="password" autocomplete="current-password" required></label>
+        <label class="field-label">Password baru<input class="input" id="newPassword" type="password" minlength="12" autocomplete="new-password" required></label>
+        <label class="field-label">Konfirmasi password baru<input class="input" id="confirmNewPassword" type="password" minlength="12" autocomplete="new-password" required></label>
+        <div class="dialog-actions"><button type="button" class="btn btn-soft" data-modal-close>Batal</button><button type="submit" class="btn btn-primary" id="saveNewPassword">Simpan Password</button></div>
+      </form>
+    </div>`, 'dialog-card');
+    $('#changePasswordForm', d).onsubmit = async e => {
+      e.preventDefault();
+      const currentPassword = $('#currentPassword', d).value;
+      const newPassword = $('#newPassword', d).value;
+      const confirmNewPassword = $('#confirmNewPassword', d).value;
+      if (newPassword.length < 12) return toast('Password baru minimal 12 karakter.', true);
+      if (newPassword !== confirmNewPassword) return toast('Konfirmasi password baru tidak sama.', true);
+      const saveButton = $('#saveNewPassword', d);
+      saveButton.disabled = true;
+      try {
+        await api('/admin/me/password', { method: 'PUT', body: JSON.stringify({ currentPassword, newPassword }) });
+        d.remove();
+        toast('Password berhasil diperbarui. Simpan password baru dengan aman.');
+      } catch (err) {
+        toast(err.message, true);
+        saveButton.disabled = false;
+      }
+    };
+    $('#currentPassword', d).focus();
+  };
   $('#logoutSettings').onclick = logoutAdmin;
   $('#resetDemo').onclick = async () => { if (!(await confirmDialog({ title: 'Reset Semua Data Demo?', message: 'Semua perubahan review akan dihapus dan dikembalikan ke data awal.', ok: 'Reset Demo', danger: true }))) return; await api('/admin/demo/reset', { method: 'POST', body: '{}' }); clearCart(); toast('Data demo berhasil di-reset'); nav('/admin'); };
 }

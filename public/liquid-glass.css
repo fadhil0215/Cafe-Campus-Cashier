@@ -74,7 +74,7 @@ html::before {
   background:
     radial-gradient(34vmax 34vmax at 16% 20%, rgba(255, 158, 84, .55), transparent 62%),
     radial-gradient(30vmax 30vmax at 86% 10%, rgba(255, 214, 160, .75), transparent 64%),
-    radial-gradient(36vmax 36vmax at 74% 84%, rgba(222, 120, 50, .30), transparent 64%),
+    radial-gradient(36vmax 36vmax at 74% 84%, rgba(175, 86, 26, 0.3), transparent 64%),
     radial-gradient(28vmax 28vmax at 10% 86%, rgba(120, 178, 146, .30), transparent 64%),
     radial-gradient(22vmax 22vmax at 50% 50%, rgba(255, 255, 255, .55), transparent 70%);
   animation: lgDrift 26s var(--lg-soft) infinite alternate;

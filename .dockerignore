@@ -1,0 +1,17 @@
+.env
+.env.*
+!.env.example
+.git
+.gitignore
+.runtime
+node_modules
+logs
+*.log
+*.pid
+cloudflared.exe
+.DS_Store
+Thumbs.db
+
+# User-uploaded files are runtime data, not part of the image
+public/uploads/*
+!public/uploads/.gitkeep

@@ -1,10 +1,20 @@
 $ErrorActionPreference = "Continue"
 $scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
-$cloudflared = Join-Path $scriptDir "cloudflared.exe"
+$runtimeDir = Join-Path $scriptDir ".runtime"
+$cloudflared = Join-Path $runtimeDir "cloudflared.exe"
 
 if (-not (Test-Path $cloudflared)) {
-    Write-Host "[ERROR] cloudflared.exe tidak ditemukan di folder $scriptDir!" -ForegroundColor Red
-    exit 1
+    try {
+        if (-not (Test-Path $runtimeDir)) { New-Item -ItemType Directory -Path $runtimeDir -Force | Out-Null }
+        [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+        Write-Host '[DOWNLOAD] Mengambil Cloudflare Tunnel resmi untuk Windows x64...' -ForegroundColor Cyan
+        Invoke-WebRequest -Uri 'https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-windows-amd64.exe' -OutFile $cloudflared -UseBasicParsing -TimeoutSec 180
+        if ((Get-Item $cloudflared).Length -lt 1000000) { throw 'File Cloudflared hasil download tidak valid.' }
+    } catch {
+        Remove-Item $cloudflared -Force -ErrorAction SilentlyContinue
+        Write-Host "[ERROR] Cloudflared gagal disiapkan: $($_.Exception.Message)" -ForegroundColor Red
+        exit 1
+    }
 }
 
 # Bersihkan proses cloudflared lama jika ada
