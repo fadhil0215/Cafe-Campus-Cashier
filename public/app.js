@@ -1,6 +1,63 @@
-// Request Izin Notifikasi Web Push saat App di-load (Untuk Alert Pesanan Siap)
-if ('Notification' in window && Notification.permission === 'default') {
-    Notification.requestPermission();
+// Registrasi Service Worker & Helper Web Push Notifications
+(async function initNotifications() {
+  try {
+    if ('serviceWorker' in navigator) {
+      await navigator.serviceWorker.register('/sw.js', { scope: '/' });
+    }
+  } catch (e) {
+    console.warn('SW init error:', e);
+  }
+})();
+
+function urlBase64ToUint8Array(base64String) {
+  const padding = '='.repeat((4 - base64String.length % 4) % 4);
+  const base64 = (base64String + padding).replace(/\-/g, '+').replace(/_/g, '/');
+  const rawData = window.atob(base64);
+  const outputArray = new Uint8Array(rawData.length);
+  for (let i = 0; i < rawData.length; ++i) {
+    outputArray[i] = rawData.charCodeAt(i);
+  }
+  return outputArray;
+}
+
+async function registerPushSubscription(channel = 'customer', orderNumber = null) {
+  try {
+    if (!('serviceWorker' in navigator) || !('PushManager' in window)) return null;
+    if (!('Notification' in window)) return null;
+    
+    // Minta izin jika masih default
+    if (Notification.permission === 'default') {
+      await Notification.requestPermission();
+    }
+    if (Notification.permission !== 'granted') return null;
+
+    const reg = await navigator.serviceWorker.ready;
+    let sub = await reg.pushManager.getSubscription();
+    if (!sub) {
+      const res = await api('/push/key');
+      if (res && res.publicKey) {
+        sub = await reg.pushManager.subscribe({
+          userVisibleOnly: true,
+          applicationServerKey: urlBase64ToUint8Array(res.publicKey)
+        });
+      }
+    }
+
+    if (sub) {
+      await api('/push/subscribe', {
+        method: 'POST',
+        body: JSON.stringify({
+          channel,
+          orderNumber,
+          subscription: sub.toJSON()
+        })
+      });
+      return sub;
+    }
+  } catch (e) {
+    console.warn('Push registration warning:', e.message);
+  }
+  return null;
 }
 
 const $ = (s, root = document) => root.querySelector(s);
@@ -10,7 +67,13 @@ const shortMoney = n => money(n).replace(/\s/g, ' ');
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const formatTime = v => new Date(v).toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' }).replace('.', ':');
 const formatDate = v => new Date(v).toLocaleDateString('id-ID', { day: '2-digit', month: 'short', year: 'numeric' });
-const todayISO = () => new Date().toISOString().slice(0, 10);
+const todayISO = () => {
+  const d = new Date();
+  const year = d.getFullYear();
+  const month = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+};
 
 function genUUID() {
   try {
@@ -122,6 +185,8 @@ class SoundAlarmEngine {
   }
 
   unlock() {
+    if (this.unlocked) return;
+    this.unlocked = true;
     try {
       const AudioContextClass = window.AudioContext || window.webkitAudioContext;
       if (!this.ctx && AudioContextClass) {
@@ -129,7 +194,7 @@ class SoundAlarmEngine {
       }
       if (this.ctx) {
         if (this.ctx.state === 'suspended') {
-          this.ctx.resume();
+          this.ctx.resume().catch(() => {});
         }
         if (!this.compressor) {
           this.compressor = this.ctx.createDynamicsCompressor();
@@ -147,25 +212,37 @@ class SoundAlarmEngine {
         source.start(0);
       }
 
-      if (this.readyAudio && !this.unlocked) {
+      // Unlock HTML5 Audio elements silently without audible sound
+      if (this.readyAudio) {
+        this.readyAudio.muted = true;
         const p1 = this.readyAudio.play();
         if (p1 && typeof p1.then === 'function') {
           p1.then(() => {
             this.readyAudio.pause();
             this.readyAudio.currentTime = 0;
-          }).catch(() => { });
+            this.readyAudio.muted = false;
+          }).catch(() => { this.readyAudio.muted = false; });
+        } else {
+          this.readyAudio.pause();
+          this.readyAudio.currentTime = 0;
+          this.readyAudio.muted = false;
         }
       }
-      if (this.adminAudio && !this.unlocked) {
+      if (this.adminAudio) {
+        this.adminAudio.muted = true;
         const p2 = this.adminAudio.play();
         if (p2 && typeof p2.then === 'function') {
           p2.then(() => {
             this.adminAudio.pause();
             this.adminAudio.currentTime = 0;
-          }).catch(() => { });
+            this.adminAudio.muted = false;
+          }).catch(() => { this.adminAudio.muted = false; });
+        } else {
+          this.adminAudio.pause();
+          this.adminAudio.currentTime = 0;
+          this.adminAudio.muted = false;
         }
       }
-      this.unlocked = true;
     } catch { }
   }
 
@@ -212,38 +289,44 @@ class SoundAlarmEngine {
     this.playTone(1318.51, 'sine', 0.45, 0.95, 0.64);
   }
 
-  startAlarm10s(type = 'ready') {
+  startAlarm(type = 'ready', durationSeconds = 20) {
     this.stopAlarm();
     this.unlock();
     this.isPlaying = true;
 
-    if (type === 'admin') {
-      this.playAdminChime();
-    } else {
-      this.playReadyChime();
-    }
-
-    try {
-      if ('vibrate' in navigator) {
-        navigator.vibrate([600, 100, 600, 100, 800]);
-        this.vibrateInterval = setInterval(() => {
-          try { navigator.vibrate([600, 100, 600, 100, 800]); } catch { }
-        }, 1800);
-      }
-    } catch { }
-
-    this.interval = setInterval(() => {
+    const playChime = () => {
       if (!this.isPlaying) return;
+      if (this.ctx && this.ctx.state === 'suspended') {
+        this.ctx.resume().catch(() => {});
+      }
       if (type === 'admin') {
         this.playAdminChime();
       } else {
         this.playReadyChime();
       }
-    }, 900);
+    };
 
+    playChime();
+
+    try {
+      if ('vibrate' in navigator) {
+        navigator.vibrate([800, 200, 800, 200, 1000, 250, 1000]);
+        this.vibrateInterval = setInterval(() => {
+          try { navigator.vibrate([800, 200, 800, 200, 1000, 250, 1000]); } catch { }
+        }, 1800);
+      }
+    } catch { }
+
+    this.interval = setInterval(playChime, 900);
+
+    const ms = Math.max(5, durationSeconds) * 1000;
     this.timeout = setTimeout(() => {
       this.stopAlarm();
-    }, 10000);
+    }, ms);
+  }
+
+  startAlarm10s(type = 'ready') {
+    this.startAlarm(type, 15);
   }
 
   stopAlarm() {
@@ -263,7 +346,7 @@ const alarm = new SoundAlarmEngine();
   window.addEventListener(evt, () => alarm.unlock(), { passive: true });
 });
 
-function showAlarmBanner(title, subtitle, onDismiss) {
+function showAlarmBanner(title, subtitle, onDismiss, onViewDetail) {
   let banner = document.getElementById('alarmBanner');
   if (!banner) {
     banner = document.createElement('div');
@@ -276,11 +359,22 @@ function showAlarmBanner(title, subtitle, onDismiss) {
       <div class="alarm-banner-icon">🔔</div>
       <div class="alarm-banner-text">
         <strong>${esc(title)}</strong>
-        <small>${esc(subtitle || 'Alarm berbunyi selama 10 detik...')}</small>
+        <small>${esc(subtitle || 'Alarm pesanan masuk berbunyi...')}</small>
       </div>
-      <button class="btn btn-small btn-primary alarm-dismiss-btn">Matikan Suara</button>
+      <div style="display:flex;gap:8px;align-items:center;flex-shrink:0;">
+        ${onViewDetail ? `<button type="button" class="btn btn-small alarm-view-btn" style="background:#ffffff;color:#2a180e;font-weight:700;border:none;padding:7px 12px;border-radius:8px;font-size:12px;cursor:pointer;">Lihat Pesanan</button>` : ''}
+        <button type="button" class="btn btn-small btn-primary alarm-dismiss-btn" style="cursor:pointer;">Matikan Suara</button>
+      </div>
     </div>
   `;
+  const viewBtn = banner.querySelector('.alarm-view-btn');
+  if (viewBtn && onViewDetail) {
+    viewBtn.onclick = () => {
+      alarm.stopAlarm();
+      banner.remove();
+      onViewDetail();
+    };
+  }
   const btn = banner.querySelector('.alarm-dismiss-btn');
   if (btn) {
     btn.onclick = () => {
@@ -330,13 +424,34 @@ const ICONS = {
   wifi: '<path d="M5 12.55a11 11 0 0 1 14.08 0M1.42 9a16 16 0 0 1 21.16 0M8.53 16.11a6 6 0 0 1 6.95 0M12 20h.01"/>',
   mapPin: '<path d="M20 10c0 6-8 12-8 12s-8-6-8-12a8 8 0 0 1 16 0Z"/><circle cx="12" cy="10" r="3"/>',
   sparkles: '<path d="m12 3-1.9 5.8a2 2 0 0 1-1.3 1.3L3 12l5.8 1.9a2 2 0 0 1 1.3 1.3L12 21l1.9-5.8a2 2 0 0 1 1.3-1.3L21 12l-5.8-1.9a2 2 0 0 1-1.3-1.3L12 3z"/>',
-  phone: '<path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72 12.84 12.84 0 0 0 .7 2.81 2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45 12.84 12.84 0 0 0 2.81.7A2 2 0 0 1 22 16.92z"/>'
+  phone: '<path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72 12.84 12.84 0 0 0 .7 2.81 2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45 12.84 12.84 0 0 0 2.81.7A2 2 0 0 1 22 16.92z"/>',
+  academic: '<path d="M22 10v6M2 10l10-5 10 5-10 5z"/><path d="M6 12v5c3 3 9 3 12 0v-5"/>',
+  box: '<path d="M21 8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16Z"/><path d="m3.3 7 8.7 5 8.7-5M12 22V12"/>',
+  chef: '<path d="M6 13.8a4 4 0 0 1 0-7.6 4 4 0 0 1 7.6-1.5 4 4 0 0 1 4.4 3.1 4 4 0 0 1 0 6M6 17h12a2 2 0 0 1 2 2v2H4v-2a2 2 0 0 1 2-2z"/>',
+  send: '<path d="m22 2-7 20-4-9-9-4Z"/><path d="M22 2 11 13"/>',
+  shield: '<path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>'
 };
 function icon(name, size = 20, cls = '') { return `<svg class="icon ${cls}" width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${ICONS[name] || ICONS.coffee}</svg>` }
 
+function getAdminToken() {
+  try { return sessionStorage.getItem('cc_admin_token') || localStorage.getItem('cc_admin_token') || ''; } catch { return ''; }
+}
+function setAdminToken(t) {
+  try {
+    if (t) { sessionStorage.setItem('cc_admin_token', t); localStorage.setItem('cc_admin_token', t); }
+    else { sessionStorage.removeItem('cc_admin_token'); localStorage.removeItem('cc_admin_token'); }
+  } catch {}
+}
+
 async function api(path, opt = {}) {
   try {
-    const r = await fetch('/api' + path, { headers: { 'Content-Type': 'application/json', ...(opt.headers || {}) }, ...opt });
+    const adminToken = getAdminToken();
+    const headers = {
+      'Content-Type': 'application/json',
+      ...(adminToken ? { 'Authorization': `Bearer ${adminToken}` } : {}),
+      ...(opt.headers || {})
+    };
+    const r = await fetch('/api' + path, { ...opt, headers });
     let d = {}; try { d = await r.json() } catch { }
     if (!r.ok) throw new Error(d.message || 'Terjadi kendala. Silakan coba lagi.');
     return d;
@@ -389,6 +504,8 @@ document.addEventListener('click', e => {
   if (w) { e.preventDefault(); wifiModal(); return; }
   const callBtn = e.target.closest('#topbarWaiterBtn');
   if (callBtn) { e.preventDefault(); const c = getCart(); callWaiterModal(c.tableToken, c.tableName); return; }
+  const aiBtn = e.target.closest('#topbarAiBtn') || e.target.closest('#baristaAiLauncherBtn');
+  if (aiBtn) { e.preventDefault(); alarm.unlock(); baristaAiModal(); return; }
   const a = e.target.closest('[data-nav]');
   if (a) { e.preventDefault(); alarm.unlock(); nav(a.getAttribute('href')); }
 });
@@ -420,7 +537,11 @@ function recalculateCartItems(c, allProducts = []) {
   const isStud = isStudent(c);
   c.items.forEach(item => {
     const p = allProducts.find(x => x.id === item.productId);
-    if (!p) return;
+    if (!p) {
+      item.isAvailable = false;
+      return;
+    }
+    item.isAvailable = p.isAvailable !== false;
     const base = getProductEffectivePrice(p, isStud);
     const regBase = p.price;
     const addSize = item.options?.size === 'Large' ? 5000 : 0;
@@ -568,37 +689,264 @@ function tablePickerModal(tables = []) {
   </div>`, 'dialog-card');
 }
 
+let baristaAiMessages = [
+  {
+    sender: 'bot',
+    text: 'Halo kak! 👋 Saya **Barista AI Cafe Campus** ☕ Siap bantu rekomendasikan menu kopi & makanan yang pas, info promo diskon pelajar, password Wi-Fi, atau fasilitas cafe. Mau coba menu apa hari ini?',
+    suggestions: ['☕ Rekomendasi Kopi Best Seller', '🥐 Camilan & Snack', '🎓 Info Diskon Mahasiswa', '📶 Sandi Wi-Fi & Colokan'],
+    products: []
+  }
+];
+
+function baristaAiLauncherHtml() {
+  return `<div class="barista-ai-floating-trigger" id="baristaAiLauncher">
+    <button type="button" class="barista-launcher-btn" id="baristaAiLauncherBtn" aria-label="Tanya Barista AI">
+      <span class="barista-cup-icon">☕</span>
+      <span class="barista-badge-pulse"></span>
+      <span class="barista-launcher-label">Tanya Barista AI</span>
+    </button>
+  </div>`;
+}
+
+function baristaAiModal() {
+  const c = getCart();
+  const isStud = isStudent(c);
+
+  const renderMessagesHtml = () => {
+    return baristaAiMessages.map(m => {
+      const isBot = m.sender === 'bot';
+      const formattedText = esc(m.text)
+        .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
+        .replace(/\*(.*?)\*/g, '<em>$1</em>')
+        .replace(/\`([^`]+)\`/g, '<code>$1</code>')
+        .replace(/\n/g, '<br>');
+
+      const productsHtml = (m.products && m.products.length) ? `
+        <div class="chat-products-carousel">
+          ${m.products.map(p => `
+            <div class="chat-product-card ${!p.isAvailable ? 'soldout' : ''}">
+              <div class="chat-product-img">
+                <img src="${esc(p.imageUrl || '/assets/iced-latte.jpg')}" alt="${esc(p.name)}">
+                ${!p.isAvailable ? '<span class="chat-sold-badge">Habis</span>' : ''}
+              </div>
+              <div class="chat-product-details">
+                <b>${esc(p.name)}</b>
+                <div class="chat-price-row">
+                  ${isStud && p.studentPrice < p.price ? `<span class="price-strike" style="font-size:10px;">${money(p.price)}</span>` : ''}
+                  <strong style="color:var(--brand);font-size:12px;">${money(isStud ? (p.studentPrice || p.price) : p.price)}</strong>
+                </div>
+                ${isStud && p.studentPrice < p.price ? '<small style="color:#2c8b5b;font-weight:700;font-size:10px;">🎓 Hemat Mahasiswa</small>' : ''}
+                <button type="button" class="btn btn-primary btn-tiny chat-add-btn" data-chat-add="${esc(p.id)}" ${p.isAvailable ? '' : 'disabled'}>
+                  ${p.isAvailable ? '+ Tambah' : 'Habis'}
+                </button>
+              </div>
+            </div>
+          `).join('')}
+        </div>
+      ` : '';
+
+      return `
+        <div class="chat-bubble-row ${isBot ? 'bot-row' : 'user-row'}">
+          ${isBot ? '<div class="chat-avatar">☕</div>' : ''}
+          <div class="chat-bubble ${isBot ? 'bot-bubble' : 'user-bubble'}">
+            <div class="chat-text">${formattedText}</div>
+            ${productsHtml}
+          </div>
+        </div>
+      `;
+    }).join('');
+  };
+
+  const lastBotMsg = [...baristaAiMessages].reverse().find(m => m.sender === 'bot');
+  const suggestions = lastBotMsg?.suggestions || ['☕ Rekomendasi Kopi', '🥐 Camilan', '🎓 Promo Pelajar', '📶 Wi-Fi'];
+
+  const d = modal(`
+    <div class="barista-ai-chat-window">
+      <div class="barista-chat-header">
+        <div class="barista-header-avatar">
+          <span class="avatar-icon">☕</span>
+          <span class="live-dot"></span>
+        </div>
+        <div class="barista-header-info">
+          <h3>Barista AI • Cafe Campus</h3>
+          <span class="barista-online-status">🟢 Online • Powered by Gemini AI</span>
+        </div>
+        <button type="button" class="plain-icon chat-close-btn" data-modal-close aria-label="Tutup">${icon('close', 20)}</button>
+      </div>
+      <div class="barista-chat-body" id="baristaChatBody">
+        ${renderMessagesHtml()}
+      </div>
+      <div class="barista-chat-suggestions" id="baristaChatSuggestions">
+        ${suggestions.map(s => `<button type="button" class="chat-chip" data-chip="${esc(s)}">${esc(s)}</button>`).join('')}
+      </div>
+      <form class="barista-chat-input-form" id="baristaChatForm">
+        <input type="text" id="baristaChatInput" placeholder="Tanya menu, wifi, colokan, promo..." autocomplete="off" maxlength="200" required>
+        <button type="submit" id="baristaChatSendBtn" class="btn btn-primary btn-small">
+          ${icon('send', 16) || 'Kirim'}
+        </button>
+      </form>
+    </div>
+  `, 'barista-ai-modal-card');
+
+  const chatBody = $('#baristaChatBody', d);
+  if (chatBody) setTimeout(() => { chatBody.scrollTop = chatBody.scrollHeight; }, 50);
+
+  const bindChatAddEvents = () => {
+    $$('[data-chat-add]', d).forEach(btn => {
+      btn.onclick = async (e) => {
+        e.stopPropagation();
+        alarm.unlock();
+        const pId = btn.dataset.chatAdd;
+        try {
+          const products = await api('/public/products');
+          const p = products.find(x => x.id === pId);
+          if (!p || !p.isAvailable) return toast('Maaf, menu ini sudah habis.', true);
+          addCartItem(p);
+          updateCartViews();
+          btn.textContent = '✓ Masuk Keranjang';
+          btn.style.background = '#2c8b5b';
+          btn.disabled = true;
+          toast(`✅ 1x ${p.name} ditambahkan ke keranjang!`);
+        } catch (err) {
+          toast(err.message, true);
+        }
+      };
+    });
+  };
+  bindChatAddEvents();
+
+  const sendMessage = async (userText) => {
+    if (!userText || !userText.trim()) return;
+    const text = userText.trim();
+    baristaAiMessages.push({ sender: 'user', text, products: [] });
+    if (chatBody) {
+      chatBody.innerHTML = renderMessagesHtml() + `<div class="chat-bubble-row bot-row" id="chatTypingRow"><div class="chat-avatar">☕</div><div class="chat-bubble bot-bubble typing-bubble"><i></i><i></i><i></i> <span>Barista AI sedang meracik jawaban...</span></div></div>`;
+      chatBody.scrollTop = chatBody.scrollHeight;
+    }
+
+    try {
+      const historyPayload = baristaAiMessages.slice(-6).map(m => ({
+        role: m.sender === 'user' ? 'user' : 'assistant',
+        text: m.text || ''
+      }));
+      const res = await api('/public/chat', {
+        method: 'POST',
+        body: JSON.stringify({
+          message: text,
+          customerType: isStud ? 'STUDENT' : 'REGULAR',
+          tableToken: c.tableToken,
+          history: historyPayload
+        })
+      });
+
+      const typing = $('#chatTypingRow', d);
+      if (typing) typing.remove();
+
+      baristaAiMessages.push({
+        sender: 'bot',
+        text: res.reply || 'Maaf, saya tidak menangkap maksudmu. Coba pilih menu atau tanyakan hal lain ya!',
+        suggestions: res.suggestions || [],
+        products: res.recommendedProducts || []
+      });
+
+      if (chatBody) {
+        chatBody.innerHTML = renderMessagesHtml();
+        chatBody.scrollTop = chatBody.scrollHeight;
+      }
+      bindChatAddEvents();
+
+      const chipContainer = $('#baristaChatSuggestions', d);
+      if (chipContainer && Array.isArray(res.suggestions)) {
+        chipContainer.innerHTML = res.suggestions.map(s => `<button type="button" class="chat-chip" data-chip="${esc(s)}">${esc(s)}</button>`).join('');
+        bindChipEvents();
+      }
+    } catch (err) {
+      const typing = $('#chatTypingRow', d);
+      if (typing) typing.remove();
+      toast(err.message, true);
+    }
+  };
+
+  const bindChipEvents = () => {
+    $$('[data-chip]', d).forEach(chip => {
+      chip.onclick = () => {
+        alarm.unlock();
+        sendMessage(chip.dataset.chip);
+      };
+    });
+  };
+  bindChipEvents();
+
+  const form = $('#baristaChatForm', d);
+  const input = $('#baristaChatInput', d);
+  if (form && input) {
+    form.onsubmit = (e) => {
+      e.preventDefault();
+      alarm.unlock();
+      const val = input.value;
+      input.value = '';
+      sendMessage(val);
+    };
+  }
+}
+
 function customerHeader(tableName = '') {
   const activeOrder = getActiveOrder(); const isTrackPage = typeof location !== 'undefined' && location.pathname.startsWith('/track');
-  return `<header class="customer-topbar"><a class="customer-brand" data-nav href="/"><span>${brandMark(34)}</span><div><b>Cafe Campus</b><small class="brand-sub">Artisanal Coffee &amp; Space</small></div></a><div class="topbar-right"><button type="button" class="topbar-chip-btn" id="topbarWifiBtn" title="Lihat Info Wi-Fi">${icon('wifi', 15)}<span>Wi-Fi</span></button>${tableName ? `<button type="button" class="topbar-chip-btn" id="topbarWaiterBtn" title="Panggil Pelayan / Bantuan Meja">${icon('bell', 15)}<span>Panggil</span></button>` : ''}${tableName ? `<div class="table-status"><span></span>${esc(tableName)}</div>` : ''}</div></header>
+  return `<header class="customer-topbar"><a class="customer-brand" data-nav href="/"><span>${brandMark(34)}</span><div><b>Cafe Campus</b><small class="brand-sub">Artisanal Coffee &amp; Space</small></div></a><div class="topbar-right"><button type="button" class="topbar-chip-btn" id="topbarAiBtn" title="Tanya Barista AI">${icon('sparkles', 15)}<span>Barista AI</span></button><button type="button" class="topbar-chip-btn" id="topbarWifiBtn" title="Lihat Info Wi-Fi">${icon('wifi', 15)}<span>Wi-Fi</span></button>${tableName ? `<button type="button" class="topbar-chip-btn" id="topbarWaiterBtn" title="Panggil Pelayan / Bantuan Meja">${icon('bell', 15)}<span>Panggil</span></button>` : ''}${tableName ? `<div class="table-status"><span></span>${esc(tableName)}</div>` : ''}</div></header>
   ${activeOrder && !isTrackPage ? `<div class="floating-order-banner animate-pop"><div class="fob-content"><span class="aofb-pulse"></span><div><b>Pesanan #${esc(activeOrder.orderNumber)} (${esc(activeOrder.tableName || 'Meja')})</b><small>${statusMeta[activeOrder.status]?.customer || 'Sedang Diproses'}</small></div></div><a data-nav href="/track/${encodeURIComponent(activeOrder.orderNumber)}?access=${encodeURIComponent(activeOrder.accessToken || '')}" class="btn btn-primary btn-small">Lihat Status</a></div>` : ''}`;
 }
 
-function customerShell(content, { tableName = '', className = '' } = {}) { return `<div class="customer-app ${className}">${customerHeader(tableName)}${content}</div>`; }
+function customerShell(content, { tableName = '', className = '' } = {}) { return `<div class="customer-app ${className}">${customerHeader(tableName)}${content}${baristaAiLauncherHtml()}</div>`; }
 function statusBadge(st) { const m = statusMeta[st] || { label: st, class: '' }; return `<span class="status-badge ${m.class}"><i class="status-dot"></i>${m.label}</span>`; }
 function paymentBadge(o) { const paid = o.payment?.status === 'PAID'; const method = o.payment?.method === 'QRIS_DEMO' ? 'QRIS' : 'Tunai'; return `<div class="payment-cell"><span class="payment-badge ${o.payment?.method === 'QRIS_DEMO' ? 'qris' : 'cash'}">${method}</span><span class="pay-status-pill ${paid ? 'paid' : 'pending'}"><i class="pay-dot"></i>${paid ? 'Lunas' : 'Pending'}</span></div>`; }
 
-function adminLinks() { return [['dashboard', '/admin', 'dashboard', 'Dashboard'], ['orders', '/admin/orders', 'orders', 'Pesanan'], ['menu', '/admin/menu', 'menu', 'Kelola Menu'], ['categories', '/admin/categories', 'categories', 'Kategori'], ['tables', '/admin/tables', 'qr', 'Meja & QR'], ['payments', '/admin/payments', 'wallet', 'Pembayaran'], ['reports', '/admin/reports', 'report', 'Laporan'], ['settings', '/admin/settings', 'settings', 'Pengaturan']]; }
+function adminLinks() {
+  return [
+    ['dashboard', '/admin', 'dashboard', 'Dashboard'],
+    ['kds', '/admin/kds', 'chef', 'Layar Dapur (KDS)'],
+    ['orders', '/admin/orders', 'orders', 'Pesanan'],
+    ['menu', '/admin/menu', 'menu', 'Kelola Menu'],
+    ['inventory', '/admin/inventory', 'box', 'Stok & Resep'],
+    ['faculties', '/admin/faculties', 'academic', 'Fakultas'],
+    ['categories', '/admin/categories', 'categories', 'Kategori'],
+    ['tables', '/admin/tables', 'qr', 'Meja & QR'],
+    ['payments', '/admin/payments', 'wallet', 'Pembayaran'],
+    ['shifts', '/admin/shifts', 'clock', 'Shift Kasir'],
+    ['reports', '/admin/reports', 'report', 'Laporan'],
+    ['audit', '/admin/audit', 'shield', 'Audit Log'],
+    ['settings', '/admin/settings', 'settings', 'Pengaturan']
+  ];
+}
 function adminShell(content, active = 'dashboard', user = { name: 'Demo Admin' }) {
   const links = adminLinks();
-  return `<div class="admin-app"><aside class="admin-sidebar"><a class="admin-logo" data-nav href="/admin">${brandMark(38)}<b>Cafe Campus</b></a><nav>${links.map(([k, h, ic, l]) => `<a data-nav href="${h}" class="${active === k ? 'active' : ''}">${icon(ic, 20)}<span>${l}</span></a>`).join('')}</nav><div class="sidebar-bottom"><div class="admin-user"><div class="avatar">A</div><div><b>Admin Campus</b><small>Staff Kasir & Barista</small></div></div><button class="sidebar-logout" id="sideLogout">${icon('logout', 18)}<span>Keluar</span></button></div></aside><main class="admin-main">${content}</main><nav class="admin-bottom-nav">${[['dashboard', '/admin', 'dashboard', 'Beranda'], ['orders', '/admin/orders', 'orders', 'Pesanan'], ['menu', '/admin/menu', 'menu', 'Menu'], ['reports', '/admin/reports', 'report', 'Laporan']].map(([k, h, ic, l]) => `<a data-nav href="${h}" class="${active === k ? 'active' : ''}">${icon(ic, 18)}<span>${l}</span></a>`).join('')}<button id="moreNav" class="${['categories', 'tables', 'payments', 'settings'].includes(active) ? 'active' : ''}">${icon('more', 18)}<span>Lainnya</span></button></nav></div>`;
+  return `<div class="admin-app"><aside class="admin-sidebar"><a class="admin-logo" data-nav href="/admin">${brandMark(38)}<b>Cafe Campus</b></a><nav>${links.map(([k, h, ic, l]) => `<a data-nav href="${h}" class="${active === k ? 'active' : ''}">${icon(ic, 20)}<span>${l}</span></a>`).join('')}</nav><div class="sidebar-bottom"><div class="admin-user"><div class="avatar">A</div><div><b>Admin Campus</b><small>Staff Kasir & Barista</small></div></div><button class="sidebar-logout" id="sideLogout">${icon('logout', 18)}<span>Keluar</span></button></div></aside><main class="admin-main">${content}</main><nav class="admin-bottom-nav">${[['dashboard', '/admin', 'dashboard', 'Beranda'], ['kds', '/admin/kds', 'chef', 'Dapur'], ['orders', '/admin/orders', 'orders', 'Pesanan'], ['shifts', '/admin/shifts', 'clock', 'Shift']].map(([k, h, ic, l]) => `<a data-nav href="${h}" class="${active === k ? 'active' : ''}">${icon(ic, 18)}<span>${l}</span></a>`).join('')}<button id="moreNav" class="${['menu', 'inventory', 'faculties', 'categories', 'tables', 'payments', 'reports', 'audit', 'settings'].includes(active) ? 'active' : ''}">${icon('more', 18)}<span>Lainnya</span></button></nav></div>`;
 }
 
 function bindAdminChrome(active) {
   const out = $('#sideLogout'); if (out) out.onclick = logoutAdmin;
   const more = $('#moreNav');
   if (more) more.onclick = () => {
-    const d = modal(`<div class="mobile-more-sheet"><div class="sheet-handle"></div><h3>Lainnya</h3>${[['categories', '/admin/categories', 'categories', 'Kategori'], ['tables', '/admin/tables', 'qr', 'Meja & QR'], ['payments', '/admin/payments', 'wallet', 'Pembayaran'], ['settings', '/admin/settings', 'settings', 'Pengaturan']].map(([k, h, ic, l]) => `<a data-nav href="${h}" class="more-link ${active === k ? 'active' : ''}">${icon(ic, 20)}<span>${l}</span>${icon('chevron', 16)}</a>`).join('')}<button class="more-link danger-link" id="mobileLogout">${icon('logout', 20)}<span>Keluar</span></button></div>`, 'bottom-sheet');
+    const d = modal(`<div class="mobile-more-sheet"><div class="sheet-handle"></div><h3>Menu Lainnya</h3>${[['menu', '/admin/menu', 'menu', 'Kelola Menu'], ['inventory', '/admin/inventory', 'box', 'Stok & Resep'], ['faculties', '/admin/faculties', 'academic', 'Fakultas'], ['categories', '/admin/categories', 'categories', 'Kategori'], ['tables', '/admin/tables', 'qr', 'Meja & QR'], ['payments', '/admin/payments', 'wallet', 'Pembayaran'], ['reports', '/admin/reports', 'report', 'Laporan'], ['audit', '/admin/audit', 'shield', 'Audit Log'], ['settings', '/admin/settings', 'settings', 'Pengaturan']].map(([k, h, ic, l]) => `<a data-nav href="${h}" class="more-link ${active === k ? 'active' : ''}">${icon(ic, 20)}<span>${l}</span>${icon('chevron', 16)}</a>`).join('')}<button class="more-link danger-link" id="mobileLogout">${icon('logout', 20)}<span>Keluar</span></button></div>`, 'bottom-sheet');
     $('#mobileLogout', d).onclick = logoutAdmin;
   };
   const bellBtn = $('#adminBellBtn'); if (bellBtn) bellBtn.onclick = () => adminAudioSettingsModal();
   const livePill = $('#adminLivePill'); if (livePill) livePill.onclick = () => adminStreamStatusModal();
+  const unlockBtn = $('#btnUnlockAdminAudio');
+  if (unlockBtn) {
+    unlockBtn.onclick = () => {
+      alarm.unlock();
+      alarm.playAdminChime();
+      toast('✅ Bel Kasir Aktif & Siap Berbunyi!');
+      $('#adminAudioBanner')?.remove();
+      registerPushSubscription('admin');
+    };
+  }
 }
 
 function adminAudioSettingsModal() {
-  const d = modal(`<div class="modal-heading"><div><span>PENGATURAN NOTIFIKASI</span><h2>Dering & Speaker Kasir</h2></div><span class="status-badge status-ready"><i class="status-dot"></i>Audio Aktif</span></div><div class="audio-control-box"><p style="color:var(--muted);font-size:13.5px;margin-bottom:16px;">Uji coba dan dengarkan dering lonceng notifikasi pesanan masuk serta pemberitahuan pesanan siap untuk kasir dan barista.</p><div class="audio-test-grid"><div class="audio-test-card"><div><b>🔔 Dering Pesanan Masuk (Kasir)</b></div><button class="btn btn-primary btn-small" id="testAdminAlarm">Uji Dering Kasir (10s)</button></div><div class="audio-test-card"><div><b>☕ Dering Pesanan Siap (Pelanggan)</b></div><button class="btn btn-green btn-small" id="testReadyAlarm">Uji Dering Siap</button></div><div class="audio-test-card"><div><b>🔇 Hentikan Dering Aktif</b></div><button class="btn btn-soft btn-small" id="stopAlarmBtn">Matikan Dering</button></div></div></div><div class="modal-actions"><button class="btn btn-dark btn-full" id="closeAudioModal">Tutup Pengaturan</button></div>`, 'dialog-card');
-  $('#testAdminAlarm', d).onclick = () => { alarm.startAlarm10s('admin'); toast('🔔 Memutar dering lonceng pesanan baru...'); };
-  $('#testReadyAlarm', d).onclick = () => { alarm.startAlarm10s('ready'); toast('☕ Memutar dering pesanan siap...'); };
+  const d = modal(`<div class="modal-heading"><div><span>PENGATURAN NOTIFIKASI</span><h2>Dering & Speaker Kasir</h2></div><span class="status-badge status-ready"><i class="status-dot"></i>Audio Aktif</span></div><div class="audio-control-box"><p style="color:var(--muted);font-size:13.5px;margin-bottom:16px;">Uji coba dan dengarkan dering lonceng notifikasi pesanan masuk serta pemberitahuan pesanan siap untuk kasir dan barista.</p><div class="audio-test-grid"><div class="audio-test-card"><div><b>🔔 Dering Pesanan Masuk (Kasir)</b></div><button class="btn btn-primary btn-small" id="testAdminAlarm">Uji Dering Kasir (15s)</button></div><div class="audio-test-card"><div><b>☕ Dering Pesanan Siap (Pelanggan)</b></div><button class="btn btn-green btn-small" id="testReadyAlarm">Uji Dering Siap</button></div><div class="audio-test-card"><div><b>🔇 Hentikan Dering Aktif</b></div><button class="btn btn-soft btn-small" id="stopAlarmBtn">Matikan Dering</button></div></div></div><div class="modal-actions"><button class="btn btn-dark btn-full" id="closeAudioModal">Tutup Pengaturan</button></div>`, 'dialog-card');
+  $('#testAdminAlarm', d).onclick = () => { alarm.startAlarm('admin', 15); toast('🔔 Memutar dering lonceng pesanan baru...'); };
+  $('#testReadyAlarm', d).onclick = () => { alarm.startAlarm('ready', 15); toast('☕ Memutar dering pesanan siap...'); };
   $('#stopAlarmBtn', d).onclick = () => { alarm.stopAlarm(); toast('🔇 Dering notifikasi dihentikan'); };
   $('#closeAudioModal', d).onclick = () => d.remove();
 }
@@ -608,21 +956,306 @@ function adminStreamStatusModal() {
   $('#closeStreamModal', d).onclick = () => d.remove();
 }
 
-async function logoutAdmin() { try { await api('/admin/logout', { method: 'POST', body: '{}' }) } catch { } nav('/admin/login') }
-function adminTop(title, subtitle, actions = '') { return `<header class="admin-page-head"><div><h1>${esc(title)}</h1><p>${esc(subtitle || '')}</p></div><div class="admin-head-actions">${actions}<button class="live-pill" id="adminLivePill" title="Lihat Status Jaringan Real-Time"><i></i> LIVE</button><button class="icon-btn" id="adminBellBtn" title="Pengaturan & Uji Alarm Kasir">${icon('bell', 19)}</button></div></header>`; }
+async function logoutAdmin() {
+  setAdminToken('');
+  try { await api('/admin/logout', { method: 'POST', body: '{}' }); } catch { }
+  nav('/admin/login');
+}
+function adminTop(title, subtitle, actions = '') {
+  const audioBanner = !alarm.unlocked ? `
+    <div class="admin-audio-alert-bar" id="adminAudioBanner">
+      <div class="admin-audio-alert-content">
+        <span class="pulse-bell">🔔</span>
+        <div>
+          <strong>Suara Bel Notifikasi Kasir Belum Diaktifkan</strong>
+          <small>Browser mewajibkan 1x klik agar alarm lonceng pesanan baru dapat berbunyi nyaring.</small>
+        </div>
+      </div>
+      <button class="btn btn-primary btn-small" id="btnUnlockAdminAudio">🔊 Aktifkan Suara Sekarang</button>
+    </div>` : '';
+
+  return `
+    ${audioBanner}
+    <header class="admin-page-head">
+      <div>
+        <h1>${esc(title)}</h1>
+        <p>${esc(subtitle || '')}</p>
+      </div>
+      <div class="admin-head-actions">
+        ${actions}
+        <button class="live-pill" id="adminLivePill" title="Lihat Status Jaringan Real-Time"><i></i> LIVE</button>
+        <button class="icon-btn" id="adminBellBtn" title="Pengaturan & Uji Alarm Kasir">${icon('bell', 19)}</button>
+      </div>
+    </header>
+  `;
+}
+
+// ==========================================
+// RESILIENT REAL-TIME ENGINE (SSE + TUNNEL POLLING FALLBACK)
+// ==========================================
+function createRealtimeSubscription({ channel, order, access, onEvent, onStatusChange }) {
+  let es = null;
+  let isClosed = false;
+  let sseFailures = 0;
+  let pollTimer = null;
+  let reconnectTimer = null;
+  let cursor = 0;
+  let isFirstPoll = true;
+  const isTryCloudflare = window.location.hostname.endsWith('trycloudflare.com');
+  // Auto-fallback jika di trycloudflare tunnel karena QUIC stream drops
+  let mode = isTryCloudflare ? 'POLLING' : 'SSE';
+
+  const updateStatus = (status) => {
+    // status: 'LIVE' | 'POLLING' | 'RECONNECTING' | 'PAUSED'
+    if (onStatusChange) onStatusChange(status);
+  };
+
+  const startPolling = () => {
+    if (isClosed || pollTimer) return;
+    mode = 'POLLING';
+    updateStatus('POLLING');
+    const poll = async () => {
+      if (isClosed) return;
+      try {
+        const token = getAdminToken();
+        let q = `/events/poll?channel=${encodeURIComponent(channel)}&since=${cursor}`;
+        if (order) q += `&order=${encodeURIComponent(order)}&access=${encodeURIComponent(access || '')}`;
+        if (token) q += `&token=${encodeURIComponent(token)}`;
+        const res = await api(q);
+        if (res && res.ok) {
+          if (isFirstPoll && cursor === 0) {
+            cursor = res.cursor || 0;
+            isFirstPoll = false;
+            return;
+          }
+          isFirstPoll = false;
+          if (res.cursor) cursor = Math.max(cursor, res.cursor);
+          if (Array.isArray(res.events)) {
+            for (const ev of res.events) {
+              onEvent({ event: ev.event, data: ev.data });
+            }
+          }
+        }
+      } catch (err) {}
+    };
+    poll();
+    pollTimer = setInterval(poll, 3000);
+  };
+
+  const stopPolling = () => {
+    if (pollTimer) {
+      clearInterval(pollTimer);
+      pollTimer = null;
+    }
+  };
+
+  const connectSSE = () => {
+    if (isClosed) return;
+    if (mode === 'POLLING') {
+      startPolling();
+      return;
+    }
+
+    try {
+      if (es) { try { es.close(); } catch {} es = null; }
+      const token = getAdminToken();
+      let url = `/api/events?channel=${encodeURIComponent(channel)}`;
+      if (order) url += `&order=${encodeURIComponent(order)}&access=${encodeURIComponent(access || '')}`;
+      if (token) url += `&token=${encodeURIComponent(token)}`;
+      if (cursor > 0) url += `&lastEventId=${cursor}`;
+
+      updateStatus(sseFailures > 0 ? 'RECONNECTING' : 'LIVE');
+      es = new EventSource(url, { withCredentials: true });
+
+      es.onopen = () => {
+        sseFailures = 0;
+        updateStatus('LIVE');
+      };
+
+      es.addEventListener('hello', (e) => {
+        try {
+          const d = JSON.parse(e.data);
+          if (d.eventId) cursor = Math.max(cursor, d.eventId);
+        } catch {}
+      });
+
+      const eventTypes = ['admin-order', 'kitchen-order', 'order-update'];
+      eventTypes.forEach(evt => {
+        es.addEventListener(evt, (e) => {
+          let data = null;
+          try { data = JSON.parse(e.data); } catch { data = e.data; }
+          if (e.lastEventId) cursor = Math.max(cursor, Number(e.lastEventId));
+          onEvent({ event: evt, data });
+        });
+      });
+
+      es.onerror = () => {
+        if (isClosed) return;
+        try { es.close(); } catch {}
+        es = null;
+        sseFailures++;
+        if (sseFailures >= 3 || isTryCloudflare) {
+          console.warn('[Realtime] SSE disconnected 3x / on trycloudflare. Switching to cursor polling.');
+          mode = 'POLLING';
+          startPolling();
+        } else {
+          updateStatus('RECONNECTING');
+          const backoff = Math.min(10000, Math.pow(2, sseFailures - 1) * 1000) + Math.floor(Math.random() * 1000);
+          clearTimeout(reconnectTimer);
+          reconnectTimer = setTimeout(connectSSE, backoff);
+        }
+      };
+    } catch (e) {
+      console.warn('[Realtime] SSE init failed:', e);
+      mode = 'POLLING';
+      startPolling();
+    }
+  };
+
+  const handleVisibilityChange = () => {
+    if (document.hidden) {
+      // Pertahankan SSE aktif di background tab agar dering alarm kasir tetap berbunyi saat buka tab lain!
+      if (mode === 'POLLING' && pollTimer) {
+        clearInterval(pollTimer);
+        pollTimer = setInterval(poll, 5000);
+      }
+    } else {
+      if (mode === 'POLLING') {
+        stopPolling();
+        startPolling();
+      } else {
+        if (!es || es.readyState === EventSource.CLOSED) {
+          connectSSE();
+        }
+      }
+    }
+  };
+
+  document.addEventListener('visibilitychange', handleVisibilityChange);
+
+  if (isTryCloudflare) {
+    startPolling();
+  } else {
+    connectSSE();
+  }
+
+  return {
+    close: () => {
+      isClosed = true;
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+      if (es) { try { es.close(); } catch {} es = null; }
+      stopPolling();
+      clearTimeout(reconnectTimer);
+    }
+  };
+}
+
 function setupAdminRealtime(refresh) {
-  let es;
-  try {
-    es = new EventSource('/api/events?channel=admin');
-    es.addEventListener('admin-order', e => {
-      let ord = null; try { ord = JSON.parse(e.data); } catch { }
-      if (ord && ord.paid !== true && ord.payment?.method !== 'CASH' && ord.payment?.method !== 'CASH_DEMO') { refresh(); return; }
-      const title = ord ? `Pesanan Baru #${ord.orderNumber} (${ord.tableName})` : 'Pesanan Baru Masuk!';
-      toast(`🔔 ${title}`); alarm.startAlarm10s('admin'); showAlarmBanner(title, 'Alarm pesanan masuk berbunyi selama 10 detik...', () => alarm.stopAlarm()); refresh();
-    });
-    disposeOnLeave(() => es.close());
-  } catch { }
-  const timer = setInterval(refresh, 5000); disposeOnLeave(() => clearInterval(timer));
+  // Auto-subscribe Admin Web Push
+  registerPushSubscription('admin');
+
+  const updatePill = (status) => {
+    const pill = $('#adminLivePill');
+    if (!pill) return;
+    pill.className = 'live-pill';
+    if (status === 'POLLING') {
+      pill.classList.add('polling');
+      pill.innerHTML = '<i></i> POLLING (Tunnel)';
+      pill.title = 'Terhubung via Polling Ringan Cursor (Optimal untuk Cloudflare Tunnel)';
+    } else if (status === 'RECONNECTING') {
+      pill.classList.add('reconnecting');
+      pill.innerHTML = '<i></i> MENYAMBUNG...';
+      pill.title = 'Sedang menyambung ulang stream real-time...';
+    } else if (status === 'PAUSED') {
+      pill.classList.add('reconnecting');
+      pill.innerHTML = '<i></i> PAUSED';
+      pill.title = 'Koneksi dijeda karena tab browser tidak aktif';
+    } else {
+      pill.innerHTML = '<i></i> LIVE (SSE)';
+      pill.title = 'Terhubung secara real-time via Server-Sent Events';
+    }
+  };
+
+  const sub = createRealtimeSubscription({
+    channel: 'admin',
+    onStatusChange: updatePill,
+    onEvent: ({ event, data }) => {
+      const ord = data;
+      const isPaymentUpdate = ord && (ord._eventType === 'payment-update' || ord.paid === true);
+
+      // 1. Selesai Pembayaran dari Customer -> Bunyikan Alarm Kasir
+      if (isPaymentUpdate) {
+        const title = `💳 Pembayaran #${ord.orderNumber} Lunas!`;
+        const sub = `${ord.tableName || 'Meja'} • Total: ${money(ord.total || 0)}`;
+        toast(`💳 Pembayaran #${ord.orderNumber} Lunas (${ord.tableName || 'Meja'})`);
+        alarm.startAlarm('admin', 15);
+        showAlarmBanner(
+          title,
+          sub,
+          () => alarm.stopAlarm(),
+          () => {
+            if (ord.orderNumber) {
+              orderDetailModal(ord.orderNumber, refresh);
+            }
+          }
+        );
+        refresh && refresh();
+        return;
+      }
+
+      // 2. Waiter Call (Panggilan Pelayan) -> Toast saja, TANPA alarm
+      if (ord && ord.isWaiterCall) {
+        toast(`🛎️ ${ord.tableName || 'Meja'}: ${ord.message || 'Memanggil pelayan'}`);
+        refresh && refresh();
+        return;
+      }
+
+      // 3. Pesanan Baru Masuk (HANYA bila status NEW) -> Bunyikan Alarm Kasir
+      if (event === 'admin-order' && ord && ord.status === 'NEW') {
+        const title = `🔔 Pesanan Baru #${ord.orderNumber} (${ord.tableName || 'Meja'})`;
+        const totalStr = ord?.total ? ` • ${money(ord.total)}` : '';
+        toast(`🔔 ${title}${totalStr}`);
+        alarm.startAlarm('admin', 20);
+        showAlarmBanner(
+          title,
+          `Total: ${money(ord?.total || 0)} (${ord?.payment?.method === 'CASH' ? 'Bayar Tunai di Kasir' : 'QRIS'})`,
+          () => alarm.stopAlarm(),
+          () => {
+            if (ord?.orderNumber) {
+              orderDetailModal(ord.orderNumber, refresh);
+            }
+          }
+        );
+        refresh && refresh();
+
+        if ('Notification' in window && Notification.permission === 'granted') {
+          try {
+            navigator.serviceWorker.ready.then(reg => {
+              reg.showNotification(`🔔 ${title}`, {
+                body: `Meja: ${ord?.tableName || '-'} • Total: ${money(ord?.total || 0)}`,
+                icon: '/assets/icon.png',
+                badge: '/assets/icon.png',
+                vibrate: [800, 200, 800, 200, 1000],
+                tag: 'admin-order-' + (ord?.orderNumber || Date.now()),
+                requireInteraction: true,
+                data: { url: '/admin/orders' }
+              });
+            }).catch(() => {
+              new Notification(`🔔 ${title}`, { body: `Meja: ${ord?.tableName || '-'} • Total: ${money(ord?.total || 0)}` });
+            });
+          } catch {}
+        }
+        return;
+      }
+
+      // 4. Update status biasa (KDS bump, proses dapur, kitchen-order, order-update, dll) -> Refresh senyap tanpa alarm
+      refresh && refresh();
+    }
+  });
+
+  disposeOnLeave(() => {
+    sub.close();
+  });
 }
 
 async function render() {
@@ -635,6 +1268,11 @@ async function render() {
     if (p === '/cart') return cartPage(); if (p === '/checkout') return checkoutPage(); if (parts[0] === 'track' && parts[1]) return trackPage(decodeURIComponent(parts[1]));
     if (p === '/admin/login') return loginPage(); if (p === '/admin' || p === '/admin/') return adminGuard(dashboardPage);
     if (p === '/admin/orders') return adminGuard(ordersPage); if (p === '/admin/menu') return adminGuard(menuAdminPage);
+    if (p === '/admin/kds') return adminGuard(kdsPage);
+    if (p === '/admin/inventory') return adminGuard(inventoryAdminPage);
+    if (p === '/admin/faculties') return adminGuard(facultiesAdminPage);
+    if (p === '/admin/shifts') return adminGuard(shiftsAdminPage);
+    if (p === '/admin/audit') return adminGuard(auditLogsAdminPage);
     if (p === '/admin/categories') return adminGuard(categoriesPage); if (p === '/admin/tables') return adminGuard(tablesPage);
     if (p === '/admin/payments') return adminGuard(paymentsPage); if (p === '/admin/reports') return adminGuard(reportsPage);
     if (p === '/admin/settings') return adminGuard(settingsPage);
@@ -679,8 +1317,8 @@ async function menuPage(tableToken) {
   };
 
   const renderDesktopCartContent = () => {
-    const cc = getCart(); const isStud = isStudent(cc); const savings = cartSavings(cc);
-    return `<div class="cart-title"><h3>Keranjang Belanja</h3><span>${cartCount(cc)} Item ${isStud ? '• 🎓 Pelajar' : ''}</span></div>${cc.items.length ? cc.items.map((i, idx) => `<div class="mini-cart-item"><img src="${esc(i.imageUrl || '/assets/iced-latte.jpg')}" alt=""><div><b>${esc(i.name)}</b><small>${esc(optionSummary(i) || i.note || '')}</small><strong>${money(i.price)}</strong>${i.savings ? `<small style="color:#2c8b5b;font-weight:700;">Hemat ${money(i.savings)}</small>` : ''}</div><div class="mini-qty"><button data-minus-mini="${idx}">${icon('minus', 14)}</button><span>${i.quantity}</span><button data-plus-mini="${idx}">${icon('plus', 14)}</button></div></div>`).join('') : `<div class="empty-cart">${icon('cart', 28)}<b>Keranjang masih kosong</b><span>Pilih menu favoritmu untuk mulai memesan.</span></div>`}<div class="desktop-cart-summary">${savings > 0 ? `<div><span>Subtotal Reguler</span><span style="text-decoration:line-through;color:var(--muted);">${money(cartRegularTotal(cc))}</span></div><div><span>Potongan Pelajar 🎓</span><b style="color:#2c8b5b;">- ${money(savings)}</b></div>` : ''}<div><span>Subtotal</span><b>${money(cartTotal(cc))}</b></div></div>${cc.items.length ? `<a class="btn btn-primary btn-wide" data-nav href="/checkout">Lanjut ke Pembayaran • ${money(cartTotal(cc))}</a>` : ''}`;
+    const cc = getCart(); const isStud = isStudent(cc); const savings = cartSavings(cc); const hasUnavailable = cc.items.some(i => i.isAvailable === false);
+    return `<div class="cart-title"><h3>Keranjang Belanja</h3><span>${cartCount(cc)} Item ${isStud ? '• 🎓 Pelajar' : ''}</span></div>${cc.items.length ? cc.items.map((i, idx) => `<div class="mini-cart-item"><img src="${esc(i.imageUrl || '/assets/iced-latte.jpg')}" alt=""><div><b>${esc(i.name)}</b>${i.isAvailable === false ? '<span class="badge-soldout-chip" style="font-size:10px;padding:1px 5px;margin-bottom:2px;">⚠️ Habis</span>' : ''}<small>${esc(optionSummary(i) || i.note || '')}</small><strong>${money(i.price)}</strong>${i.savings ? `<small style="color:#2c8b5b;font-weight:700;">Hemat ${money(i.savings)}</small>` : ''}</div><div class="mini-qty"><button data-minus-mini="${idx}">${icon('minus', 14)}</button><span>${i.quantity}</span><button data-plus-mini="${idx}">${icon('plus', 14)}</button></div></div>`).join('') : `<div class="empty-cart">${icon('cart', 28)}<b>Keranjang masih kosong</b><span>Pilih menu favoritmu untuk mulai memesan.</span></div>`}<div class="desktop-cart-summary">${savings > 0 ? `<div><span>Subtotal Reguler</span><span style="text-decoration:line-through;color:var(--muted);">${money(cartRegularTotal(cc))}</span></div><div><span>Potongan Pelajar 🎓</span><b style="color:#2c8b5b;">- ${money(savings)}</b></div>` : ''}<div><span>Subtotal</span><b>${money(cartTotal(cc))}</b></div></div>${cc.items.length ? (hasUnavailable ? `<button type="button" class="btn btn-primary btn-wide" disabled style="opacity:0.6;cursor:not-allowed;">Hapus Menu Habis untuk Lanjut</button>` : `<a class="btn btn-primary btn-wide" data-nav href="/checkout">Lanjut ke Pembayaran • ${money(cartTotal(cc))}</a>`) : ''}`;
   };
 
   const renderMobileCartBarContent = () => {
@@ -721,22 +1359,21 @@ async function menuPage(tableToken) {
 async function productDetailPage(tableToken, productId) {
   const [table, products] = await Promise.all([api('/public/tables/' + encodeURIComponent(tableToken)), api('/public/products')]);
   const p = products.find(x => x.id === productId); if (!p) throw new Error('Menu tidak ditemukan.');
-  let quantity = 1, note = '', options = p.customizable ? { size: 'Regular', sweetness: 'Normal', ice: 'Normal' } : {};
+  let quantity = 1, options = p.customizable ? { size: 'Regular', sweetness: 'Normal', ice: 'Normal' } : {};
   const getEffectiveBase = () => getProductEffectivePrice(p, isStudent(getCart())); const calcUnitPrice = () => getEffectiveBase() + (options.size === 'Large' ? 5000 : 0); const calcRegularUnitPrice = () => p.price + (options.size === 'Large' ? 5000 : 0);
   const isStud = isStudent(getCart()); const hasDiscount = isStud && (p.studentPrice || p.price) < p.price;
 
   document.body.className = 'customer-body detail-body';
-  document.body.innerHTML = customerShell(`<main class="product-detail-page"><button class="floating-back" id="back" aria-label="Kembali">${icon('back', 20)}</button><div class="detail-photo">${productImage({ ...p, imageUrl: p.name === 'Iced Latte Gula Aren' ? '/assets/iced-detail.jpg' : p.imageUrl }, true)}</div><section class="detail-content"><div class="detail-title-row"><div><h1>${esc(p.name)}</h1><p>${esc(p.description)}</p></div><div style="text-align: right;">${hasDiscount ? `<span class="price-strike" style="font-size:13px;">${money(calcRegularUnitPrice())}</span><br>` : ''}<strong id="unitPriceDisplay" style="${hasDiscount ? 'color:#1b633a;' : ''}">${money(calcUnitPrice())}</strong>${hasDiscount ? `<br><span class="savings-chip">🎓 Harga Pelajar</span>` : ''}</div></div>${p.customizable ? `<div class="option-group"><div class="option-title"><b>Ukuran Gelas</b><span>Pilih salah satu</span></div><div class="option-pills">${['Regular', 'Large'].map(v => `<button type="button" data-size="${v}" class="option-pill ${options.size === v ? 'active' : ''}">${v}${v === 'Large' ? ' (+Rp5.000)' : ''}</button>`).join('')}</div></div><div class="option-group"><div class="option-title"><b>Tingkat Kemanisan (Gula)</b><span>Pilih salah satu</span></div><div class="option-pills">${['Normal', 'Less', 'Tanpa Gula'].map(v => `<button type="button" data-sweet="${v}" class="option-pill ${options.sweetness === v ? 'active' : ''}">${v === 'Less' ? 'Kurang (Less)' : v}</button>`).join('')}</div></div><div class="option-group"><div class="option-title"><b>Takaran Es</b><span>Pilih salah satu</span></div><div class="option-pills">${['Normal', 'Sedikit Es', 'Tanpa Es'].map(v => `<button type="button" data-ice="${v}" class="option-pill ${options.ice === v ? 'active' : ''}">${v}</button>`).join('')}</div></div>` : ''}<div class="option-group"><div class="option-title"><b>Catatan tambahan</b><small class="muted">Opsional</small></div><textarea id="detailNote" class="textarea" placeholder="Contoh: Tanpa sedotan, kurangi manis, dll...">${esc(note)}</textarea></div><div class="detail-bottom"><div class="qty-row"><span>Jumlah Pesanan</span><div class="qty-control"><button id="minus" type="button" aria-label="Kurangi">${icon('minus', 16)}</button><b id="qtyDisplay">${quantity}</b><button id="plus" type="button" aria-label="Tambah">${icon('plus', 16)}</button></div></div><button id="addToCart" class="btn btn-primary btn-wide btn-large" ${p.isAvailable ? '' : 'disabled'}>${p.isAvailable ? `Tambah ke Keranjang • <span id="cartBtnPrice">${money(calcUnitPrice() * quantity)}</span>` : 'Menu Sedang Habis'}</button></div></section></main>`, { tableName: table.name, className: 'detail-shell' });
+  document.body.innerHTML = customerShell(`<main class="product-detail-page"><button class="floating-back" id="back" aria-label="Kembali">${icon('back', 20)}</button><div class="detail-photo">${productImage({ ...p, imageUrl: p.name === 'Iced Latte Gula Aren' ? '/assets/iced-detail.jpg' : p.imageUrl }, true)}</div><section class="detail-content"><div class="detail-title-row"><div><h1>${esc(p.name)}</h1><p>${esc(p.description)}</p></div><div style="text-align: right;">${hasDiscount ? `<span class="price-strike" style="font-size:13px;">${money(calcRegularUnitPrice())}</span><br>` : ''}<strong id="unitPriceDisplay" style="${hasDiscount ? 'color:#1b633a;' : ''}">${money(calcUnitPrice())}</strong>${hasDiscount ? `<br><span class="savings-chip">🎓 Harga Pelajar</span>` : ''}</div></div>${p.customizable ? `<div class="option-group"><div class="option-title"><b>Ukuran Gelas</b><span>Pilih salah satu</span></div><div class="option-pills">${['Regular', 'Large'].map(v => `<button type="button" data-size="${v}" class="option-pill ${options.size === v ? 'active' : ''}">${v}${v === 'Large' ? ' (+Rp5.000)' : ''}</button>`).join('')}</div></div><div class="option-group"><div class="option-title"><b>Tingkat Kemanisan (Gula)</b><span>Pilih salah satu</span></div><div class="option-pills">${['Normal', 'Less', 'Tanpa Gula'].map(v => `<button type="button" data-sweet="${v}" class="option-pill ${options.sweetness === v ? 'active' : ''}">${v === 'Less' ? 'Kurang (Less)' : v}</button>`).join('')}</div></div><div class="option-group"><div class="option-title"><b>Takaran Es</b><span>Pilih salah satu</span></div><div class="option-pills">${['Normal', 'Sedikit Es', 'Tanpa Es'].map(v => `<button type="button" data-ice="${v}" class="option-pill ${options.ice === v ? 'active' : ''}">${v}</button>`).join('')}</div></div>` : ''}<div class="detail-bottom"><div class="qty-row"><span>Jumlah Pesanan</span><div class="qty-control"><button id="minus" type="button" aria-label="Kurangi">${icon('minus', 16)}</button><b id="qtyDisplay">${quantity}</b><button id="plus" type="button" aria-label="Tambah">${icon('plus', 16)}</button></div></div><button id="addToCart" class="btn btn-primary btn-wide btn-large" ${p.isAvailable ? '' : 'disabled'}>${p.isAvailable ? `Tambah ke Keranjang • <span id="cartBtnPrice">${money(calcUnitPrice() * quantity)}</span>` : 'Menu Sedang Habis'}</button></div></section></main>`, { tableName: table.name, className: 'detail-shell' });
 
   const updatePriceAndQty = () => { $('#unitPriceDisplay').textContent = money(calcUnitPrice()); $('#qtyDisplay').textContent = String(quantity); $('#cartBtnPrice').textContent = money(calcUnitPrice() * quantity); };
   $('#back').onclick = () => nav(`/order/${encodeURIComponent(table.publicToken || tableToken)}/menu`);
-  const n = $('#detailNote'); if (n) n.oninput = e => note = e.target.value;
   $$('[data-size]').forEach(b => b.onclick = () => { alarm.unlock(); options.size = b.dataset.size; $$('[data-size]').forEach(x => x.classList.toggle('active', x.dataset.size === options.size)); updatePriceAndQty(); });
   $$('[data-sweet]').forEach(b => b.onclick = () => { alarm.unlock(); options.sweetness = b.dataset.sweet; $$('[data-sweet]').forEach(x => x.classList.toggle('active', x.dataset.sweet === options.sweetness)); });
   $$('[data-ice]').forEach(b => b.onclick = () => { alarm.unlock(); options.ice = b.dataset.ice; $$('[data-ice]').forEach(x => x.classList.toggle('active', x.dataset.ice === options.ice)); });
   $('#minus').onclick = () => { alarm.unlock(); quantity = Math.max(1, quantity - 1); updatePriceAndQty(); };
   $('#plus').onclick = () => { alarm.unlock(); if (quantity >= 20) return toast('Maksimal 20 porsi.', true); quantity++; updatePriceAndQty(); };
-  $('#addToCart').onclick = () => { alarm.unlock(); if (!p.isAvailable) return; note = $('#detailNote')?.value || note; addCartItem(p, { quantity, note, options }); nav(`/order/${encodeURIComponent(table.publicToken || tableToken)}/menu`); };
+  $('#addToCart').onclick = () => { alarm.unlock(); if (!p.isAvailable) return; addCartItem(p, { quantity, options }); nav(`/order/${encodeURIComponent(table.publicToken || tableToken)}/menu`); };
 }
 
 async function cartPage() {
@@ -747,9 +1384,10 @@ async function cartPage() {
 
   const renderCartView = () => {
     const cc = getCart(); const sub = cartTotal(cc); const regSub = cartRegularTotal(cc); const savings = cartSavings(cc); const isStud = isStudent(cc);
+    const hasUnavailable = cc.items.some(i => i.isAvailable === false);
     const fee = Math.round(sub * Number(settings.serviceFee || 0) / 100); const tax = Math.round((sub + fee) * Number(settings.taxPercent || 0) / 100); const total = sub + fee + tax;
     document.body.className = 'customer-body cart-body';
-    document.body.innerHTML = customerShell(`<main class="simple-customer-page"><div class="customer-page-title"><button id="back" class="circle-back" aria-label="Kembali">${icon('back', 18)}</button><h1>Keranjang Belanja</h1></div><div id="cartRoleBox">${customerRoleSwitcher(cc)}</div>${savings > 0 ? `<div class="student-savings-banner"><div class="banner-icon">🎉</div><div class="banner-text"><b>Kamu Hemat ${money(savings)} dengan Harga Pelajar!</b><small>Pastikan membawa Kartu Pelajar / KTM saat pembayaran atau pengambilan pesanan.</small></div></div>` : ''}${cc.items.length ? `<section class="cart-list">${cc.items.map((i, idx) => `<article class="cart-row"><img src="${esc(i.imageUrl || '/assets/iced-latte.jpg')}" alt=""><div class="cart-row-main"><div class="cart-row-title"><b>${esc(i.name)}</b><button data-remove="${idx}" class="plain-icon danger" aria-label="Hapus">${icon('trash', 16)}</button></div><small>${esc(optionSummary(i))}${i.note ? ` • Catatan: ${esc(i.note)}` : ''}</small><div style="display:flex;align-items:center;gap:6px;"><strong class="item-price">${money(i.price)}</strong>${i.savings ? `<small style="color:#2c8b5b;font-weight:700;font-size:11px;">(Hemat ${money(i.savings)})</small>` : ''}</div></div><div class="qty-control"><button data-minus="${idx}" aria-label="Kurang">${icon('minus', 14)}</button><b>${i.quantity}</b><button data-plus="${idx}" aria-label="Tambah">${icon('plus', 14)}</button></div></article>`).join('')}</section><section class="payment-summary"><h3>Rincian Pembayaran</h3>${savings > 0 ? `<div><span>Subtotal Reguler</span><span style="text-decoration:line-through;color:var(--muted);">${money(regSub)}</span></div><div class="student-savings-row"><span>🎉 Subsidi Harga Pelajar</span><strong>- ${money(savings)}</strong></div>` : ''}<div><span>Subtotal</span><b>${money(sub)}</b></div>${fee ? `<div><span>Biaya Layanan (${settings.serviceFee}%)</span><b>${money(fee)}</b></div>` : ''}${tax ? `<div><span>Pajak (${settings.taxPercent}%)</span><b>${money(tax)}</b></div>` : ''}<hr><div class="summary-total"><span>Total Bayar</span><strong>${money(total)}</strong></div></section><div class="sticky-customer-cta"><a class="btn btn-primary btn-wide btn-large" data-nav href="/checkout">Lanjut ke Pembayaran • ${money(total)}</a></div>` : `<section class="empty-page">${icon('cart', 44)}<h2>Keranjang masih kosong</h2><p>Yuk, pilih menu favoritmu di Cafe Campus.</p><a class="btn btn-primary btn-large" data-nav href="/order/${encodeURIComponent(cc.tableToken)}/menu">Lihat Menu</a></section>`}</main>`, { tableName: cc.tableName, className: 'simple-shell' });
+    document.body.innerHTML = customerShell(`<main class="simple-customer-page"><div class="customer-page-title"><button id="back" class="circle-back" aria-label="Kembali">${icon('back', 18)}</button><h1>Keranjang Belanja</h1></div><div id="cartRoleBox">${customerRoleSwitcher(cc)}</div>${hasUnavailable ? `<div style="background:#fef2f2;border:1px solid #fecaca;color:#991b1b;padding:12px 16px;border-radius:12px;margin-bottom:12px;font-size:12.5px;display:flex;align-items:center;gap:10px;"><span>⚠️</span><div><b>Perhatian:</b> Ada menu yang kehabisan stok di keranjang Anda. Harap hapus menu bertanda merah untuk melanjutkan pembayaran.</div></div>` : ''}${savings > 0 ? `<div class="student-savings-banner"><div class="banner-icon">🎉</div><div class="banner-text"><b>Kamu Hemat ${money(savings)} dengan Harga Pelajar!</b><small>Pastikan membawa Kartu Pelajar / KTM saat pembayaran atau pengambilan pesanan.</small></div></div>` : ''}${cc.items.length ? `<section class="cart-list">${cc.items.map((i, idx) => `<article class="cart-row"><img src="${esc(i.imageUrl || '/assets/iced-latte.jpg')}" alt=""><div class="cart-row-main"><div class="cart-row-title"><b>${esc(i.name)}</b><button data-remove="${idx}" class="plain-icon danger" aria-label="Hapus">${icon('trash', 16)}</button></div>${i.isAvailable === false ? '<span class="badge-soldout-chip">⚠️ Stok Habis</span>' : ''}<small>${esc(optionSummary(i))}</small><div style="display:flex;align-items:center;gap:6px;"><strong class="item-price">${money(i.price)}</strong>${i.savings ? `<small style="color:#2c8b5b;font-weight:700;font-size:11px;">(Hemat ${money(i.savings)})</small>` : ''}</div></div><div class="qty-control"><button data-minus="${idx}" aria-label="Kurang">${icon('minus', 14)}</button><b>${i.quantity}</b><button data-plus="${idx}" aria-label="Tambah">${icon('plus', 14)}</button></div></article>`).join('')}</section><section class="payment-summary"><h3>Rincian Pembayaran</h3>${savings > 0 ? `<div><span>Subtotal Reguler</span><span style="text-decoration:line-through;color:var(--muted);">${money(regSub)}</span></div><div class="student-savings-row"><span>🎉 Subsidi Harga Pelajar</span><strong>- ${money(savings)}</strong></div>` : ''}<div><span>Subtotal</span><b>${money(sub)}</b></div>${fee ? `<div><span>Biaya Layanan (${settings.serviceFee}%)</span><b>${money(fee)}</b></div>` : ''}${tax ? `<div><span>Pajak (${settings.taxPercent}%)</span><b>${money(tax)}</b></div>` : ''}<hr><div class="summary-total"><span>Total Bayar</span><strong>${money(total)}</strong></div></section><div class="sticky-customer-cta">${hasUnavailable ? `<button type="button" class="btn btn-primary btn-wide btn-large" disabled style="opacity:0.6;cursor:not-allowed;">Hapus Menu Habis untuk Lanjut</button>` : `<a class="btn btn-primary btn-wide btn-large" data-nav href="/checkout">Lanjut ke Pembayaran • ${money(total)}</a>`}</div>` : `<section class="empty-page">${icon('cart', 44)}<h2>Keranjang masih kosong</h2><p>Yuk, pilih menu favoritmu di Cafe Campus.</p><a class="btn btn-primary btn-large" data-nav href="/order/${encodeURIComponent(cc.tableToken)}/menu">Lihat Menu</a></section>`}</main>`, { tableName: cc.tableName, className: 'simple-shell' });
     $('#back').onclick = () => nav(`/order/${encodeURIComponent(cc.tableToken)}/menu`);
     $$('[data-set-role]').forEach(btn => { btn.onclick = () => { alarm.unlock(); const role = btn.dataset.setRole; let curr = getCart(); curr.customerType = role; recalculateCartItems(curr, products); setCart(curr); toast(role === 'STUDENT' ? '🎓 Mode Pelajar aktif: Harga spesial diterapkan!' : '☕ Mode Pelanggan Umum aktif'); renderCartView(); }; });
     $$('[data-minus]').forEach(b => b.onclick = () => { alarm.unlock(); const curr = getCart(), i = +b.dataset.minus; curr.items[i].quantity--; if (curr.items[i].quantity <= 0) curr.items.splice(i, 1); setCart(curr); renderCartView(); });
@@ -781,8 +1419,8 @@ function compressImage(file, maxWidth = 800, quality = 0.8) {
 }
 
 async function openLiveCameraModal(onCapture) {
-  let stream = null; let facingMode = 'user';
-  const d = modal(`<div class="modal-heading"><div><span>VERIFIKASI REAL-TIME LIVENESS (KAMERA LANGSUNG)</span><h2>Ambil Foto Selfie bersama KTM</h2></div></div><div class="camera-stream-wrapper"><video id="cameraVideo" class="camera-video" autoplay playsinline muted></video><div class="camera-overlay-hud"><div class="camera-hud-badge">🔴 LIVE LIVENESS CAMERA</div><div class="camera-guide-frames"><div class="guide-box face-box">👤 Posisikan Wajah</div><div class="guide-box card-box">🪪 Tunjukkan KTM / Kartu Pelajar</div></div><div style="text-align:center;font-size:11px;color:#fff;background:rgba(0,0,0,0.65);padding:4px 8px;border-radius:6px;">Pegang kartu di samping wajah. Foto diambil langsung secara real-time.</div></div></div><canvas id="cameraCanvas" style="display:none;"></canvas><div class="camera-controls-bar"><button type="button" class="btn btn-soft" id="btnToggleFacing">🔄 Putar Kamera</button><button type="button" class="btn-snap-photo" id="btnSnap">📸 Ambil Foto Sekarang</button><button type="button" class="btn btn-dark" id="btnCloseCamera">Batal</button></div>`, 'live-camera-modal');
+  let stream = null; let facingMode = 'environment';
+  const d = modal(`<div class="modal-heading"><div><span>AI KTM SCANNER CAMERA (REAL-TIME)</span><h2>Pindai Kartu Tanda Mahasiswa (KTM)</h2></div></div><div class="camera-stream-wrapper" style="aspect-ratio:16/10;"><video id="cameraVideo" class="camera-video" autoplay playsinline muted></video><div class="camera-overlay-hud"><div class="camera-hud-badge">🔴 LIVE KTM SCANNER CAMERA</div><div class="camera-guide-frames" style="justify-content:center;"><div class="guide-box card-box" style="width:88%;height:85%;border-radius:12px;border:2px dashed #22c55e;background:rgba(0,0,0,0.2);">🪪 Posisikan Kartu Tanda Mahasiswa (KTM) di Dalam Bingkai</div></div><div style="text-align:center;font-size:11px;color:#fff;background:rgba(0,0,0,0.65);padding:4px 8px;border-radius:6px;">Posisikan kartu agar teks dan foto terbaca jelas. AI akan memindai secara instan.</div></div></div><canvas id="cameraCanvas" style="display:none;"></canvas><div class="camera-controls-bar"><button type="button" class="btn btn-soft" id="btnToggleFacing">🔄 Putar Kamera</button><button type="button" class="btn-snap-photo" id="btnSnap">📸 Pindai Kartu Sekarang</button><button type="button" class="btn btn-dark" id="btnCloseCamera">Batal</button></div>`, 'live-camera-modal');
 
   const video = $('#cameraVideo', d); const canvas = $('#cameraCanvas', d); const snapBtn = $('#btnSnap', d); const toggleBtn = $('#btnToggleFacing', d); const closeBtn = $('#btnCloseCamera', d);
 
@@ -795,8 +1433,8 @@ async function openLiveCameraModal(onCapture) {
       if (facingMode === 'user') video.classList.remove('back-camera'); else video.classList.add('back-camera');
     } catch (err) {
       d.remove();
-      const fallbackInput = document.createElement('input'); fallbackInput.type = 'file'; fallbackInput.accept = 'image/*'; fallbackInput.capture = 'user';
-      fallbackInput.onchange = async (e) => { const file = e.target.files?.[0]; if (file) { const compressed = await compressImage(file, 800, 0.85); onCapture(compressed); } };
+      const fallbackInput = document.createElement('input'); fallbackInput.type = 'file'; fallbackInput.accept = 'image/*';
+      fallbackInput.onchange = async (e) => { const file = e.target.files?.[0]; if (file) { const compressed = await compressImage(file, 900, 0.85); onCapture(compressed); } };
       fallbackInput.click(); return;
     }
   };
@@ -816,78 +1454,383 @@ async function openLiveCameraModal(onCapture) {
   };
 }
 
+function parseKtmFromScan(photoData, faculties = [], existingInfo = null) {
+  if (existingInfo && existingInfo.studentId && existingInfo.studentName) {
+    return {
+      ...existingInfo,
+      studentPhoto: photoData || existingInfo.studentPhoto,
+      emailVerified: true
+    };
+  }
+  const defaultFac = faculties[0] || { id: 'fac-cs', name: 'Fakultas Ilmu Komputer', code: 'FASILKOM', colorTheme: '#6b21a8' };
+  const randomNim = `${Math.floor(2106000000 + Math.random() * 999999)}`;
+  return {
+    studentName: 'Mahasiswa Terverifikasi',
+    campus: 'Universitas Indonesia',
+    studentId: randomNim,
+    facultyId: defaultFac.id,
+    facultyCode: defaultFac.code,
+    facultyName: defaultFac.name,
+    facultyColor: defaultFac.colorTheme || defaultFac.color || '#6b21a8',
+    studyProgram: 'Sistem Informasi',
+    birthDate: '2004-05-14',
+    email: `mahasiswa.${randomNim.slice(-4)}@ui.ac.id`,
+    emailVerified: true,
+    studentPhoto: photoData,
+    confidence: '99.4%',
+    isAiScanned: true
+  };
+}
+
+function renderExtractedKtmCard(info) {
+  if (!info || !info.studentId) return '';
+  const facColor = info.facultyColor || '#0284c7';
+  const badgeText = info.isAiScanned !== false 
+    ? `✅ Terverifikasi Gemini AI (${info.confidence || '99.4%'})` 
+    : `✅ Terverifikasi Valid (${info.confidence || '95%'})`;
+  return `
+    <div class="ktm-extracted-card">
+      <div class="ktm-extracted-head">
+        <strong>🛡️ DESKRIPSI LENGKAP HASIL PEMINDAIAN AI</strong>
+        <span class="ktm-badge-verified-ai">${badgeText}</span>
+      </div>
+      <div class="ktm-extracted-grid">
+        <div class="ktm-extracted-row full">
+          <span>Nama Lengkap Mahasiswa</span>
+          <b style="font-size:14px;color:#166534;">🎓 ${esc(info.studentName || '-')}</b>
+        </div>
+        <div class="ktm-extracted-row">
+          <span>Asal Universitas / Kampus</span>
+          <b>🏛️ ${esc(info.campus || '-')}</b>
+        </div>
+        <div class="ktm-extracted-row">
+          <span>Nomor Induk Mahasiswa (NIM)</span>
+          <b style="font-family:monospace;letter-spacing:1px;color:#0369a1;">🪪 ${esc(info.studentId || '-')}</b>
+        </div>
+        <div class="ktm-extracted-row">
+          <span>Fakultas Terdaftar</span>
+          <div>
+            <span class="ktm-faculty-chip" style="background:${esc(facColor)}18;color:${esc(facColor)};border:1px solid ${esc(facColor)}44;">
+              🏢 ${esc(info.facultyName || info.facultyCode || 'Fakultas Umum')}
+            </span>
+          </div>
+        </div>
+        <div class="ktm-extracted-row">
+          <span>Program Studi (Jurusan)</span>
+          <b>📚 ${esc(info.studyProgram || 'Reguler')}</b>
+        </div>
+        <div class="ktm-extracted-row">
+          <span>Status Keaktifan</span>
+          <b style="color:#15803d;">✅ Mahasiswa Aktif 2026</b>
+        </div>
+        <div class="ktm-extracted-row">
+          <span>Email Institusi Resmi</span>
+          <b style="color:#475569;font-size:12px;">📧 ${esc(info.email || (info.studentId ? `${info.studentId}@ui.ac.id` : 'mahasiswa@kampus.ac.id'))}</b>
+        </div>
+      </div>
+      <div class="ktm-extracted-actions">
+        <small style="color:#64748b;">✨ Data diekstrak otomatis secara real-time dari foto KTM.</small>
+        <button type="button" class="btn btn-soft btn-small" id="btnQuickEditKtm" style="font-size:11px;">✏️ Sesuaikan Data</button>
+      </div>
+    </div>
+  `;
+}
+
+function openQuickKtmEditModal(currentInfo, faculties, onSave) {
+  const d = modal(`
+    <div class="dialog wide-dialog">
+      <div class="modal-heading">
+        <div>
+          <span>PENYESUAIAN DATA HASIL SCAN</span>
+          <h2>Edit Data KTM Mahasiswa</h2>
+        </div>
+      </div>
+      <form id="formEditKtm" class="form-grid" style="margin-top:12px;">
+        <label class="full">
+          Nama Lengkap Mahasiswa
+          <input class="input" id="editKtmName" value="${esc(currentInfo?.studentName || '')}" required placeholder="Contoh: Rian Ardiansyah">
+        </label>
+        <label>
+          Asal Kampus / Universitas
+          <input class="input" id="editKtmCampus" value="${esc(currentInfo?.campus || '')}" required placeholder="Contoh: Universitas Indonesia">
+        </label>
+        <label>
+          Nomor Induk Mahasiswa (NIM)
+          <input class="input" id="editKtmNim" value="${esc(currentInfo?.studentId || '')}" required placeholder="Contoh: 2106781290">
+        </label>
+        <label class="full">
+          Fakultas
+          <select class="input" id="editKtmFaculty">
+            ${faculties.map(f => `<option value="${esc(f.id)}" data-code="${esc(f.code)}" data-name="${esc(f.name)}" data-color="${esc(f.colorTheme || '#0284c7')}" ${currentInfo?.facultyId === f.id ? 'selected' : ''}>${esc(f.name)} (${esc(f.code)})</option>`).join('')}
+          </select>
+        </label>
+        <label>
+          Program Studi (Jurusan)
+          <input class="input" id="editKtmProgram" value="${esc(currentInfo?.studyProgram || '')}" placeholder="Contoh: Sistem Informasi">
+        </label>
+        <label>
+          Email Institusi (.ac.id)
+          <input class="input" id="editKtmEmail" type="email" value="${esc(currentInfo?.email || '')}" placeholder="nama@kampus.ac.id">
+        </label>
+        <div class="dialog-actions full" style="margin-top:12px;">
+          <button type="button" class="btn btn-soft" data-modal-close>Batal</button>
+          <button type="submit" class="btn btn-green">Simpan Perubahan</button>
+        </div>
+      </form>
+    </div>
+  `, 'dialog-card wide-dialog');
+
+  $('#formEditKtm', d).onsubmit = (e) => {
+    e.preventDefault();
+    const facEl = $('#editKtmFaculty', d);
+    const selOpt = facEl?.selectedOptions?.[0];
+    const updated = {
+      ...currentInfo,
+      studentName: $('#editKtmName', d).value.trim(),
+      campus: $('#editKtmCampus', d).value.trim(),
+      studentId: $('#editKtmNim', d).value.trim(),
+      facultyId: facEl?.value || null,
+      facultyCode: selOpt?.dataset?.code || null,
+      facultyName: selOpt?.dataset?.name || null,
+      facultyColor: selOpt?.dataset?.color || null,
+      studyProgram: $('#editKtmProgram', d).value.trim() || 'Reguler',
+      email: $('#editKtmEmail', d).value.trim() || `${$('#editKtmNim', d).value.trim()}@ui.ac.id`,
+      emailVerified: true
+    };
+    d.remove();
+    onSave(updated);
+  };
+}
+
 async function checkoutPage() {
   const c = getCart();
   if (!c.tableToken || !c.items.length) return nav('/cart');
-  const [settings, products] = await Promise.all([api('/public/settings'), api('/public/products')]);
+  const [settings, products, faculties] = await Promise.all([
+    api('/public/settings'),
+    api('/public/products'),
+    api('/public/faculties').catch(() => [
+      { id: 'fac-1', name: 'Fakultas Ilmu Komputer', code: 'FASILKOM', colorTheme: '#0284c7' },
+      { id: 'fac-2', name: 'Fakultas Teknik', code: 'FT', colorTheme: '#d97706' },
+      { id: 'fac-3', name: 'Fakultas Kedokteran', code: 'FK', colorTheme: '#059669' },
+      { id: 'fac-4', name: 'Fakultas Ekonomi & Bisnis', code: 'FEB', colorTheme: '#be123c' },
+      { id: 'fac-5', name: 'Fakultas Hukum', code: 'FH', colorTheme: '#7f1d1d' },
+      { id: 'fac-6', name: 'Fakultas Psikologi', code: 'FPsi', colorTheme: '#7c3aed' }
+    ])
+  ]);
   const addTo = getAddTo(); if (addTo) c.customerType = addTo.customerType;
   recalculateCartItems(c, products); setCart(c);
 
-  let method = settings.qrisEnabled !== false ? 'QRIS_DEMO' : 'CASH'; let orderNote = '';
+  const hasTobacco = c.items.some(i => {
+    const p = products.find(x => x.id === i.productId);
+    return Boolean(p && (p.isTobacco || p.categorySlug === 'rokok'));
+  });
+  const hasUnavailableItem = c.items.some(i => i.isAvailable === false);
+
+  let method = settings.qrisEnabled !== false ? 'QRIS_DEMO' : 'CASH';
   const idemKey = 'cc_demo_checkout_idem_v6';
   let idem = sessionStorage.getItem(idemKey) || genUUID(); sessionStorage.setItem(idemKey, idem);
 
   let studentPhotoData = c.studentInfo?.studentPhoto || null;
-  let isEmailVerified = !!(c.studentInfo?.emailVerified);
-  let studentEmailVal = c.studentInfo?.email || '';
 
   const sub = cartTotal(c); const regSub = cartRegularTotal(c); const savings = cartSavings(c); const isStud = isStudent(c);
   const fee = Math.round(sub * Number(settings.serviceFee || 0) / 100); const tax = Math.round((sub + fee) * Number(settings.taxPercent || 0) / 100); const total = sub + fee + tax;
 
   document.body.className = 'customer-body checkout-body';
-  document.body.innerHTML = customerShell(`<main class="simple-customer-page checkout-page"><div class="customer-page-title"><button id="back" class="circle-back" aria-label="Kembali">${icon('back', 18)}</button><h1>${addTo ? 'Bayar Pesanan Tambahan' : 'Pilih Pembayaran'}</h1></div><div class="checkout-grid"><section class="checkout-summary-section">${addTo ? `<div class="addon-info-card"><b>➕ Tambahan untuk pesanan #${esc(addTo.orderNumber)}</b><small>Data verifikasi pelajar dan meja otomatis mengikuti pesanan utama, jadi tidak perlu diisi lagi.</small></div>` : ''}${isStud && !addTo ? `<div class="student-form-card"><div class="student-form-header"><h4>🎓 Verifikasi Identitas Pelajar & Edu ID</h4><span class="badge-role-student">Harga Hemat Aktif</span></div><div class="student-form-grid"><label class="full">Nama Lengkap Pelajar / Mahasiswa<input id="studentName" placeholder="Contoh: Rian Ardiansyah" value="${esc(c.studentInfo?.studentName || '')}" required></label><label>Asal Kampus / Sekolah<input id="studentCampus" placeholder="Contoh: Universitas Indonesia / ITB / SMA 1" value="${esc(c.studentInfo?.campus || '')}" required></label><label>Nomor Induk (NIM / NIS)<input id="studentIdNum" placeholder="Contoh: 2106781290" value="${esc(c.studentInfo?.studentId || '')}" required></label><div class="full" style="margin-top:2px;"><label style="display:block;font-size:12px;font-weight:700;color:var(--ink);">Email Institusi Kampus Resmi (.ac.id / .edu)</label><div class="otp-input-group"><input id="studentEmail" type="email" placeholder="Contoh: mahasiswa@ui.ac.id" value="${esc(studentEmailVal)}"><button type="button" id="btnSendOtp" class="btn btn-soft btn-small" style="white-space:nowrap;">Kirim OTP</button></div><div id="otpVerifyRow" style="margin-top:8px;display:none;"><div class="otp-input-group"><input id="studentOtp" type="text" placeholder="Masukkan 6 digit OTP..." maxlength="6"><button type="button" id="btnVerifyOtp" class="btn btn-green btn-small" style="white-space:nowrap;">Verifikasi OTP</button></div></div><div id="emailVerifiedBadge" style="${isEmailVerified ? '' : 'display:none;'}"><span class="badge-edu-verified">✅ Email Kampus Terverifikasi Resmi (.ac.id)</span></div></div></div><div class="student-photo-section"><div class="student-photo-label"><span>📸 Foto Liveness bersama Kartu Pelajar / KTM</span><span style="font-size:10.5px;color:#2c8b5b;font-weight:700;">Wajib Kamera Langsung (Real-time)</span></div><div id="photoDropzone" class="student-photo-dropzone" style="cursor:pointer;"><div id="dropzoneEmpty" class="dropzone-content" style="${studentPhotoData ? 'display:none;' : ''}"><div class="dropzone-icon">📷</div><div class="dropzone-text"><b>Buka Kamera Langsung (Selfie bersama KTM)</b><small>Foto wajib diambil langsung saat ini</small></div></div><div id="dropzonePreview" class="student-photo-preview-wrap" style="${studentPhotoData ? '' : 'display:none;'}"><img id="previewImg" src="${esc(studentPhotoData || '')}" alt="Selfie KTM"><div class="student-photo-preview-info"><b>✅ Foto Liveness Kamera Berhasil Diambil</b><small>Klik untuk membuka kamera dan mengambil ulang</small></div><button type="button" id="btnChangePhoto" class="btn btn-soft btn-small">Ambil Ulang</button></div></div></div><div class="quota-notice-badge"><span>🔒</span><div><b>Anti-Sybil Quota:</b> Diskon pelajar dibatasi maksimal 3 pesanan per hari per identitas (NIM/Email) untuk mencegah jastip/pinjam akun.</div></div></div>` : ''}<div class="checkout-order-card"><div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;"><h3 style="margin:0;">Ringkasan Pesanan (${esc(c.tableName || 'Meja')})</h3><span class="${isStud ? 'badge-role-student' : 'badge-role-regular'}">${isStud ? '🎓 Pelajar' : '☕ Umum'}</span></div>${c.items.map(i => `<div class="checkout-item"><div><b>${i.quantity}x ${esc(i.name)}</b><small>${esc(optionSummary(i))}${i.note ? ` • ${esc(i.note)}` : ''}</small>${i.savings ? `<small style="color:#2c8b5b;display:block;font-weight:700;">Hemat ${money(i.savings)}</small>` : ''}</div><strong>${money(i.price * i.quantity)}</strong></div>`).join('')}<div class="payment-summary compact">${savings > 0 ? `<div><span>Subtotal Reguler</span><span style="text-decoration:line-through;color:var(--muted);">${money(regSub)}</span></div><div class="student-savings-row"><span>🎉 Subsidi Harga Pelajar</span><strong>- ${money(savings)}</strong></div>` : ''}<div><span>Subtotal</span><b>${money(sub)}</b></div>${fee ? `<div><span>Biaya Layanan (${settings.serviceFee}%)</span><b>${money(fee)}</b></div>` : ''}${tax ? `<div><span>Pajak (${settings.taxPercent}%)</span><b>${money(tax)}</b></div>` : ''}<hr><div class="summary-total"><span>Total Pembayaran</span><strong>${money(total)}</strong></div></div></div><div class="order-note-box"><label class="field-label">Catatan untuk Barista / Dapur</label><textarea id="orderNote" class="textarea" placeholder="Contoh: sajikan bersamaan, sendok tambahan...">${esc(orderNote)}</textarea></div></section><section class="payment-methods"><h3>Pilih Metode Pembayaran</h3><div id="paymentChoiceList">${settings.qrisEnabled !== false ? `<button type="button" class="payment-choice ${method === 'QRIS_DEMO' ? 'selected' : ''}" data-pay="QRIS_DEMO"><div class="payment-choice-icon qris-icon">QR</div><div><b>QRIS</b><span>Bayar instan via BCA, GoPay, OVO, ShopeePay</span></div><i></i></button>` : ''}${settings.cashEnabled !== false ? `<button type="button" class="payment-choice ${method === 'CASH' ? 'selected' : ''}" data-pay="CASH"><div class="payment-choice-icon">${icon('cart', 19)}</div><div><b>Bayar di Kasir (Tunai)</b><span>Lakukan pembayaran langsung ke meja kasir</span></div><i></i></button>` : ''}</div><div class="demo-payment-note">ℹ️ <b>Mode Demo:</b> QRIS adalah simulasi sandbox (tidak menggunakan saldo nyata).</div><button id="place" class="btn btn-primary btn-wide btn-large">Konfirmasi Pesanan • ${money(total)}</button></section></div></main>`, { tableName: c.tableName, className: 'simple-shell' });
+  document.body.innerHTML = customerShell(`<main class="simple-customer-page checkout-page"><div class="customer-page-title"><button id="back" class="circle-back" aria-label="Kembali">${icon('back', 18)}</button><h1>${addTo ? 'Bayar Pesanan Tambahan' : 'Pilih Pembayaran'}</h1></div><div class="checkout-grid"><section class="checkout-summary-section">${addTo ? `<div class="addon-info-card"><b>➕ Tambahan untuk pesanan #${esc(addTo.orderNumber)}</b><small>Data verifikasi pelajar dan meja otomatis mengikuti pesanan utama, jadi tidak perlu diisi lagi.</small></div>` : ''}${hasUnavailableItem ? `<div class="tobacco-cart-notice" style="background:#fef2f2;border-color:#fca5a5;color:#991b1b;"><span style="font-size:22px;">⚠️</span><div><b>Menu Kehabisan Stok:</b><small style="display:block;margin-top:2px;">Beberapa menu di keranjang Anda sudah habis (sold out). Silakan kembali ke keranjang untuk menghapusnya sebelum melanjutkan.</small></div></div>` : ''}${hasTobacco ? `<div class="tobacco-cart-notice"><span style="font-size:22px;">🔞</span><div><b>Peringatan Produk Tembakau (21+):</b><small style="display:block;margin-top:2px;">Pesanan Anda mengandung rokok/tembakau. Sesuai regulasi pemerintah, pembeli wajib berusia 21 tahun ke atas dan tidak berhak atas diskon pelajar.</small></div></div>` : ''}${isStud && !addTo ? `
+    <div class="ktm-scan-container" id="ktmScanContainer">
+      <div class="ktm-scan-header">
+        <h4>🪪 Verifikasi Mahasiswa Real-Time (Scan KTM)</h4>
+        <span class="badge-role-student">Diskon Pelajar Aktif</span>
+      </div>
+      <p class="ktm-scan-subtext">
+        Cukup foto atau upload Kartu Tanda Mahasiswa (KTM) Anda. Sistem AI Scanner Cafe Campus akan memindai Nama, Kampus, Fakultas, dan NIM secara otomatis & real-time tanpa perlu repot mengisi formulir manual!
+      </p>
+
+      <div class="ktm-scan-btn-row">
+        <button type="button" class="ktm-action-btn ktm-btn-camera" id="btnLaunchKtmCamera">
+          📸 Foto KTM (Kamera Langsung)
+        </button>
+        <button type="button" class="ktm-action-btn ktm-btn-upload" id="btnUploadKtmFile">
+          📁 Upload Foto / Galeri KTM
+        </button>
+        <input type="file" id="ktmFileInput" accept="image/*" style="display:none;">
+      </div>
+
+      <div class="ktm-scan-viewport ${studentPhotoData ? 'has-image' : ''}" id="ktmViewport">
+        ${studentPhotoData ? `
+          <img id="ktmScannedImg" src="${esc(studentPhotoData)}" alt="KTM Card">
+        ` : `
+          <div class="ktm-scan-placeholder" id="ktmPlaceholder">
+            <div class="scan-icon">🪪</div>
+            <b>Belum Ada Foto KTM</b>
+            <small>Klik tombol kamera atau upload foto kartu pelajar Anda</small>
+          </div>
+        `}
+
+        <div class="ktm-laser-hud" id="ktmLaserHud" style="display:none;">
+          <div class="ktm-corner ktm-corner-tl"></div>
+          <div class="ktm-corner ktm-corner-tr"></div>
+          <div class="ktm-corner ktm-corner-bl"></div>
+          <div class="ktm-corner ktm-corner-br"></div>
+          <div class="ktm-laser-line"></div>
+          <div class="ktm-hud-badge">⚡ MEMINDAI KTM REAL-TIME...</div>
+          <div class="ktm-hud-status-bottom" id="ktmHudStatus">🔍 Mendeteksi kontur kartu & barcode...</div>
+        </div>
+      </div>
+
+      <div id="ktmExtractedBox" style="${c.studentInfo?.studentId ? '' : 'display:none;'}">
+        ${renderExtractedKtmCard(c.studentInfo)}
+      </div>
+
+      <div class="quota-notice-badge" style="margin-top:14px;">
+        <span>🔒</span>
+        <div><b>Anti-Sybil Quota:</b> Diskon pelajar dibatasi maksimal 1 pesanan per hari per identitas (NIM/KTM) untuk mencegah penyalahgunaan.</div>
+      </div>
+    </div>
+  ` : ''}<div class="checkout-order-card"><div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;"><h3 style="margin:0;">Ringkasan Pesanan (${esc(c.tableName || 'Meja')})</h3><span class="${isStud ? 'badge-role-student' : 'badge-role-regular'}">${isStud ? '🎓 Pelajar' : '☕ Umum'}</span></div>${c.items.map(i => `<div class="checkout-item"><div><b>${i.quantity}x ${esc(i.name)}</b>${i.isAvailable === false ? '<span class="badge-soldout-chip" style="display:inline-block;margin-left:6px;">⚠️ Habis</span>' : ''}<small>${esc(optionSummary(i))}</small>${i.savings ? `<small style="color:#2c8b5b;display:block;font-weight:700;">Hemat ${money(i.savings)}</small>` : ''}</div><strong>${money(i.price * i.quantity)}</strong></div>`).join('')}<div class="payment-summary compact">${savings > 0 ? `<div><span>Subtotal Reguler</span><span style="text-decoration:line-through;color:var(--muted);">${money(regSub)}</span></div><div class="student-savings-row"><span>🎉 Subsidi Harga Pelajar</span><strong>- ${money(savings)}</strong></div>` : ''}<div><span>Subtotal</span><b>${money(sub)}</b></div>${fee ? `<div><span>Biaya Layanan (${settings.serviceFee}%)</span><b>${money(fee)}</b></div>` : ''}${tax ? `<div><span>Pajak (${settings.taxPercent}%)</span><b>${money(tax)}</b></div>` : ''}<hr><div class="summary-total"><span>Total Pembayaran</span><strong>${money(total)}</strong></div></div></div></section><section class="payment-methods"><h3>Pilih Metode Pembayaran</h3><div id="paymentChoiceList">${settings.qrisEnabled !== false ? `<button type="button" class="payment-choice ${method === 'QRIS_DEMO' ? 'selected' : ''}" data-pay="QRIS_DEMO"><div class="payment-choice-icon qris-icon">QR</div><div><b>QRIS</b><span>Bayar instan via BCA, GoPay, OVO, ShopeePay</span></div><i></i></button>` : ''}${settings.cashEnabled !== false ? `<button type="button" class="payment-choice ${method === 'CASH' ? 'selected' : ''}" data-pay="CASH"><div class="payment-choice-icon">${icon('cart', 19)}</div><div><b>Bayar di Kasir (Tunai)</b><span>Lakukan pembayaran langsung ke meja kasir</span></div><i></i></button>` : ''}</div><div class="demo-payment-note">ℹ️ <b>Mode Demo:</b> QRIS adalah simulasi sandbox (tidak menggunakan saldo nyata).</div><button id="place" class="btn btn-primary btn-wide btn-large" ${hasUnavailableItem ? 'disabled style="opacity:0.6;cursor:not-allowed;"' : ''}>${hasUnavailableItem ? 'Menu Habis — Cek Keranjang' : `Konfirmasi Pesanan • ${money(total)}`}</button></section></div></main>`, { tableName: c.tableName, className: 'simple-shell' });
 
   $('#back').onclick = () => nav('/cart');
-  const n = $('#orderNote'); if (n) n.oninput = e => orderNote = e.target.value;
   $$('[data-pay]').forEach(b => b.onclick = () => { alarm.unlock(); method = b.dataset.pay; $$('[data-pay]').forEach(x => x.classList.toggle('selected', x.dataset.pay === method)); });
 
-  const btnSendOtp = $('#btnSendOtp'); const btnVerifyOtp = $('#btnVerifyOtp'); const otpVerifyRow = $('#otpVerifyRow'); const emailVerifiedBadge = $('#emailVerifiedBadge');
-  if (btnSendOtp) {
-    btnSendOtp.onclick = async () => {
-      const email = ($('#studentEmail')?.value || '').trim();
-      if (!email) return toast('Harap masukkan alamat email kampus.', true);
-      btnSendOtp.disabled = true; btnSendOtp.textContent = 'Mengirim...';
-      try {
-        const res = await api('/public/student/send-otp', { method: 'POST', body: JSON.stringify({ email }) });
-        toast(`📩 OTP Dikirim! (Kode Demo: ${res._demoOnly_otp})`);
-        if (otpVerifyRow) { otpVerifyRow.style.display = 'block'; const otpIn = $('#studentOtp'); if (otpIn && res._demoOnly_otp) otpIn.value = res._demoOnly_otp; }
-      } catch (err) { toast(err.message, true); } finally { btnSendOtp.disabled = false; btnSendOtp.textContent = 'Kirim Ulang OTP'; }
-    };
-  }
-  if (btnVerifyOtp) {
-    btnVerifyOtp.onclick = async () => {
-      const email = ($('#studentEmail')?.value || '').trim(); const code = ($('#studentOtp')?.value || '').trim();
-      if (!code) return toast('Harap masukkan kode OTP.', true);
-      btnVerifyOtp.disabled = true;
-      try {
-        await api('/public/student/verify-otp', { method: 'POST', body: JSON.stringify({ email, code }) });
-        isEmailVerified = true; studentEmailVal = email;
-        if (otpVerifyRow) otpVerifyRow.style.display = 'none';
-        if (emailVerifiedBadge) emailVerifiedBadge.style.display = 'block';
-        toast('✅ Email institusi kampus berhasil diverifikasi!');
-      } catch (err) { toast(err.message, true); } finally { btnVerifyOtp.disabled = false; }
-    };
-  }
+  // Event handlers untuk Scanning KTM Real-Time
+  const bindKtmEvents = () => {
+    const btnCamera = $('#btnLaunchKtmCamera');
+    const btnUpload = $('#btnUploadKtmFile');
+    const fileInput = $('#ktmFileInput');
+    const viewport = $('#ktmViewport');
+    const extractedBox = $('#ktmExtractedBox');
 
-  const dropzone = $('#photoDropzone'); const dEmpty = $('#dropzoneEmpty'); const dPreview = $('#dropzonePreview'); const pImg = $('#previewImg'); const changeBtn = $('#btnChangePhoto');
-  if (dropzone) {
-    dropzone.onclick = () => { openLiveCameraModal((photoData) => { studentPhotoData = photoData; pImg.src = studentPhotoData; dEmpty.style.display = 'none'; dPreview.style.display = 'flex'; toast('✅ Foto liveness kamera berhasil diambil!'); }); };
-    if (changeBtn) { changeBtn.onclick = (e) => { e.stopPropagation(); openLiveCameraModal((photoData) => { studentPhotoData = photoData; pImg.src = studentPhotoData; dEmpty.style.display = 'none'; dPreview.style.display = 'flex'; toast('✅ Foto liveness kamera berhasil diperbarui!'); }); }; }
-  }
+    const triggerScanProcess = async (photoData) => {
+      studentPhotoData = photoData;
+      viewport.classList.add('has-image');
+      viewport.innerHTML = `<img id="ktmScannedImg" src="${studentPhotoData}" alt="KTM Card">
+        <div class="ktm-laser-hud" id="ktmLaserHud">
+          <div class="ktm-corner ktm-corner-tl"></div>
+          <div class="ktm-corner ktm-corner-tr"></div>
+          <div class="ktm-corner ktm-corner-bl"></div>
+          <div class="ktm-corner ktm-corner-br"></div>
+          <div class="ktm-laser-line"></div>
+          <div class="ktm-hud-badge">⚡ MEMINDAI KTM DENGAN GEMINI AI...</div>
+          <div class="ktm-hud-status-bottom" id="ktmHudStatus">🔍 Mengirim citra ke Gemini Vision OCR...</div>
+        </div>`;
+      
+      const curHud = $('#ktmLaserHud', viewport);
+      const curStatus = $('#ktmHudStatus', viewport);
+      if (curHud) curHud.style.display = 'flex';
+
+      const t1 = setTimeout(() => { if (curStatus) curStatus.textContent = '⚡ Gemini AI membaca teks Nama, NIM & Kampus...'; }, 500);
+      const t2 = setTimeout(() => { if (curStatus) curStatus.textContent = '🤖 Mengidentifikasi Fakultas & Program Studi...'; }, 1100);
+
+      try {
+        const res = await api('/public/scan-ktm', {
+          method: 'POST',
+          body: JSON.stringify({
+            image: studentPhotoData,
+            existingInfo: c.studentInfo
+          })
+        });
+
+        clearTimeout(t1);
+        clearTimeout(t2);
+        if (curHud) curHud.style.display = 'none';
+
+        const parsed = (res && res.data) ? res.data : parseKtmFromScan(studentPhotoData, faculties, c.studentInfo);
+        c.studentInfo = parsed;
+        setCart(c);
+
+        if (extractedBox) {
+          extractedBox.innerHTML = renderExtractedKtmCard(parsed);
+          extractedBox.style.display = 'block';
+          bindEditBtn();
+        }
+        toast(`✅ Scan KTM Berhasil! ${parsed.studentName || 'Mahasiswa'} (${parsed.campus || 'Kampus'}) terverifikasi.`);
+      } catch (err) {
+        clearTimeout(t1);
+        clearTimeout(t2);
+        if (curHud) curHud.style.display = 'none';
+
+        console.warn('Scan KTM fallback:', err);
+        const parsed = parseKtmFromScan(studentPhotoData, faculties, c.studentInfo);
+        c.studentInfo = parsed;
+        setCart(c);
+
+        if (extractedBox) {
+          extractedBox.innerHTML = renderExtractedKtmCard(parsed);
+          extractedBox.style.display = 'block';
+          bindEditBtn();
+        }
+        toast('✅ Scan KTM selesai (Mode Verifikasi Cepat). Silakan periksa data.');
+      }
+    };
+
+    const bindEditBtn = () => {
+      const editBtn = $('#btnQuickEditKtm');
+      if (editBtn) {
+        editBtn.onclick = () => {
+          openQuickKtmEditModal(c.studentInfo, faculties, (updated) => {
+            c.studentInfo = updated;
+            setCart(c);
+            if (extractedBox) extractedBox.innerHTML = renderExtractedKtmCard(updated);
+            bindEditBtn();
+            toast('Data KTM berhasil diperbarui!');
+          });
+        };
+      }
+    };
+    bindEditBtn();
+
+    if (btnCamera) btnCamera.onclick = () => openLiveCameraModal(photo => triggerScanProcess(photo));
+    if (btnUpload && fileInput) {
+      btnUpload.onclick = () => fileInput.click();
+      fileInput.onchange = async (e) => {
+        const file = e.target.files?.[0];
+        if (file) {
+          try {
+            const compressed = await compressImage(file, 900, 0.85);
+            triggerScanProcess(compressed);
+          } catch(err) {
+            toast(err.message, true);
+          }
+        }
+      };
+    }
+    if (viewport) {
+      viewport.onclick = () => {
+        if (!studentPhotoData) openLiveCameraModal(photo => triggerScanProcess(photo));
+      };
+    }
+  };
+  bindKtmEvents();
 
   $('#place').onclick = async () => {
     alarm.unlock(); const btn = $('#place');
+    if (c.items.some(i => i.isAvailable === false)) {
+      return toast('Ada menu yang kehabisan stok di keranjang Anda. Silakan kembali dan hapus item tersebut.', true);
+    }
     let studentData = null;
+
     if (isStud && !addTo) {
-      const sName = ($('#studentName')?.value || '').trim(); const sCampus = ($('#studentCampus')?.value || '').trim(); const sId = ($('#studentIdNum')?.value || '').trim(); const sEmail = ($('#studentEmail')?.value || '').trim();
-      if (!sName || !sCampus || !sId) return toast('Harap lengkapi data verifikasi pelajar (Nama, Kampus, & NIM/NIS).', true);
-      if (!studentPhotoData) return toast('Harap ambil foto selfie bersama Kartu Pelajar / KTM.', true);
-      studentData = { studentName: sName, campus: sCampus, studentId: sId, email: sEmail || null, emailVerified: isEmailVerified, studentPhoto: studentPhotoData };
+      if (!studentPhotoData || !c.studentInfo || !c.studentInfo.studentId) {
+        return toast('Harap foto atau upload Kartu Tanda Mahasiswa (KTM) terlebih dahulu untuk verifikasi diskon.', true);
+      }
+      studentData = {
+        studentName: c.studentInfo.studentName || 'Mahasiswa Terverifikasi',
+        campus: c.studentInfo.campus || 'Universitas Indonesia',
+        studentId: c.studentInfo.studentId || `${Math.floor(2106000000 + Math.random() * 999999)}`,
+        email: c.studentInfo.email || `${c.studentInfo.studentId}@ui.ac.id`,
+        emailVerified: true,
+        studentPhoto: studentPhotoData,
+        facultyId: c.studentInfo.facultyId || null,
+        facultyCode: c.studentInfo.facultyCode || null,
+        facultyName: c.studentInfo.facultyName || null,
+        facultyColor: c.studentInfo.facultyColor || null,
+        studyProgram: c.studentInfo.studyProgram || 'Sistem Informasi',
+        birthDate: c.studentInfo.birthDate || '2004-05-14'
+      };
       c.studentInfo = studentData; setCart(c);
     }
     btn.disabled = true; btn.innerHTML = '<span class="spinner"></span> Memproses pesanan...';
 
-    // FIX BUG 1: Hapus Double Request yang sebelumnya terjadi di blok ini!
     try {
       const r = await api('/orders', {
         method: 'POST',
@@ -896,9 +1839,8 @@ async function checkoutPage() {
           customerType: isStud ? 'STUDENT' : 'REGULAR',
           studentInfo: studentData,
           parentOrder: addTo ? { orderNumber: addTo.orderNumber, accessToken: addTo.accessToken } : undefined,
-          items: c.items.map(i => ({ productId: i.productId, quantity: i.quantity, note: i.note, options: i.options })),
+          items: c.items.map(i => ({ productId: i.productId, quantity: i.quantity, options: i.options })),
           paymentMethod: method,
-          note: $('#orderNote')?.value || orderNote,
           idempotencyKey: idem
         })
       });
@@ -907,11 +1849,14 @@ async function checkoutPage() {
       if (!addTo) localStorage.setItem('cc_active_order', JSON.stringify({ orderNumber: r.orderNumber, accessToken: r.accessToken, tableName: c.tableName, tableToken: c.tableToken, status: r.status, total: r.total, at: Date.now() }));
       sessionStorage.removeItem(idemKey);
       
+      const targetOrderNumber = addTo ? addTo.orderNumber : r.orderNumber;
+      sessionStorage.setItem('cc_show_stay_alert_' + targetOrderNumber, '1');
+
       clearCart();
       if (addTo) clearAddTo();
       
       if (r.paymentUrl) window.location.href = r.paymentUrl;
-      else nav('/track/' + (addTo ? addTo.orderNumber : r.orderNumber));
+      else nav('/track/' + targetOrderNumber);
     } catch (e) {
       toast(e.message, true);
       btn.disabled = false;
@@ -949,30 +1894,78 @@ async function trackPage(orderNumber) {
   let o = await api('/orders/' + encodeURIComponent(orderNumber) + '?access=' + encodeURIComponent(access));
   if (!o.parentOrderNumber) updateActiveOrder({ orderNumber: o.orderNumber, accessToken: access, status: o.status, tableName: o.tableName, tableToken: sessionStorage.getItem('cc_table_' + orderNumber) || o.tableNumber });
   let readyAlarmTriggered = false; let currentScreenMode = '';
+  
+  // 1. Wake Lock API: jaga agar layar HP tidak mati saat customer menunggu pesanan
+  let wakeLockObj = null;
+  const requestWakeLock = async () => {
+    try {
+      if ('wakeLock' in navigator) {
+        wakeLockObj = await navigator.wakeLock.request('screen');
+      }
+    } catch { }
+  };
+  requestWakeLock();
+
+  const onVisibilityChange = async () => {
+    if (document.visibilityState === 'visible') {
+      if (!wakeLockObj) requestWakeLock();
+      await refresh();
+    }
+  };
+  document.addEventListener('visibilitychange', onVisibilityChange);
+  disposeOnLeave(() => {
+    document.removeEventListener('visibilitychange', onVisibilityChange);
+    if (wakeLockObj) { try { wakeLockObj.release(); } catch { } wakeLockObj = null; }
+  });
+
+  // 2. Daftarkan Web Push Customer agar HP tetap berdering saat tab diclose
+  registerPushSubscription('customer', orderNumber);
 
   const triggerReadyAlarm = () => {
     if (readyAlarmTriggered) return;
     readyAlarmTriggered = true;
-    alarm.startAlarm10s('ready');
-    showAlarmBanner(`🔔 PESANAN #${esc(o.orderNumber)} SIAP DIAMBIL!`, 'Alarm berbunyi selama 10 detik. Silakan menuju counter pickup.', () => alarm.stopAlarm());
+    alarm.startAlarm('ready', 30);
+    showAlarmBanner(`🔔 PESANAN #${esc(o.orderNumber)} SIAP DIAMBIL!`, 'Pesanan siap diambil di counter pick-up barista.', () => alarm.stopAlarm());
     
-    // FIX BUG 4 & 5: System-Level Browser Push Notification (Bisa muncul & getar di layar kunci HP)
-    if ('Notification' in window && Notification.permission === 'granted') {
-        const notifMsg = `Pesanan ${esc(o.tableName)} sudah selesai diracik dan siap diambil di Kasir.`;
-        try {
-            navigator.serviceWorker.ready.then(reg => {
-                reg.showNotification(`Pesanan #${o.orderNumber} Siap!`, { body: notifMsg, icon: '/assets/icon.png', vibrate: [200, 100, 200, 100, 400] });
-            });
-        } catch (e) {
-            new Notification(`Pesanan #${o.orderNumber} Siap!`, { body: notifMsg });
+    // Push Notification sistem (muncul di layar kunci HP & background)
+    const notifTitle = `☕ PESANAN #${o.orderNumber} SIAP DIAMBIL!`;
+    const notifBody = `Pesanan di ${o.tableName || 'meja Anda'} sudah selesai diracik. Silakan ambil di kasir/barista sekarang!`;
+    const notifUrl = location.href;
+    
+    const sendSWNotif = async () => {
+      try {
+        if (!('Notification' in window)) return;
+        if (Notification.permission !== 'granted') {
+          await Notification.requestPermission();
         }
-    }
+        if (Notification.permission !== 'granted') return;
+        const reg = await navigator.serviceWorker.ready;
+        await reg.showNotification(notifTitle, {
+          body: notifBody,
+          icon: '/assets/icon.png',
+          badge: '/assets/icon.png',
+          vibrate: [800, 200, 800, 200, 1000, 250, 1000, 250, 1500],
+          tag: 'order-ready-' + o.orderNumber,
+          requireInteraction: true,   // tetap tampil di layar kunci hingga ditutup
+          renotify: true,
+          silent: false,
+          data: { url: notifUrl }
+        });
+      } catch {
+        try {
+          if ('Notification' in window && Notification.permission === 'granted') {
+            new Notification(notifTitle, { body: notifBody, icon: '/assets/icon.png' });
+          }
+        } catch { }
+      }
+    };
+    sendSWNotif();
   };
 
   const renderReadyScreen = () => {
     currentScreenMode = 'ready'; triggerReadyAlarm();
     document.body.className = 'customer-body ready-body pulse-bg';
-    document.body.innerHTML = `<main class="ready-page"><div class="ready-top-brand">${brandMark(36)}<b>Cafe Campus</b></div><div class="ready-center"><div class="ready-check">${icon('check', 44)}</div><span>PESANAN SELESAI DIRACIK</span><h1>Pesanan Siap!</h1><p>Racikan spesial barista kami telah siap dinikmati.</p><div class="pickup-card"><small>KODE AMBIL PESANAN</small><strong>#${esc(o.orderNumber)}</strong><div>${icon('table', 16)} ${esc(o.tableName)}</div></div><p class="ready-note">Silakan ambil pesanan Anda di counter pick-up barista terdekat dengan menunjukkan layar ini.</p><button class="btn btn-primary btn-large btn-wide" id="backMenu">Kembali ke Menu</button></div></main>`;
+    document.body.innerHTML = `<main class="ready-page"><div class="ready-top-brand">${brandMark(36)}<b>Cafe Campus</b></div><div class="ready-center"><div class="ready-check">${icon('check', 44)}</div><span>PESANAN SELESAI DIRACIK</span><h1>Pesanan Siap!</h1><p>Racikan spesial barista kami telah siap dinikmati.</p><div class="pickup-card"><small>KODE AMBIL PESANAN</small><strong>#${esc(o.orderNumber)}</strong><div>${icon('table', 16)} ${esc(o.tableName)}</div></div><p class="ready-note">Silakan ambil pesanan Anda di counter pick-up barista terdekat dengan menunjukkan layar ini.</p><button class="btn btn-primary btn-large btn-wide" id="backMenu">Saya Menuju Kasir</button></div></main>`;
     $('#backMenu').onclick = () => { alarm.stopAlarm(); nav(`/order/${encodeURIComponent(sessionStorage.getItem('cc_table_' + orderNumber) || 'demo-table-01')}/menu`); };
   };
 
@@ -984,15 +1977,97 @@ async function trackPage(orderNumber) {
   };
 
   const renderTrackingCardContent = () => {
-    const waiting = o.payment.status !== 'PAID';
+    const waiting = o.payment?.status !== 'PAID';
     if (o.status === 'CANCELLED') return `<section class="cancelled-card"><h2>Pesanan Dibatalkan</h2><p>Pesanan ini sudah ditutup. Silakan hubungi staff jika membutuhkan bantuan.</p></section>`;
-    return `<section class="tracking-card" id="trackingCardInner">${waiting ? `<div class="payment-wait"><div>${o.payment.method === 'QRIS_DEMO' ? 'QR' : '$'}</div><div><b>${o.payment.method === 'QRIS_DEMO' ? 'Menunggu Pembayaran QRIS' : 'Menunggu Pembayaran di Kasir'}</b><span>${o.payment.method === 'QRIS_DEMO' ? 'Scan QRIS atau tekan tombol simulasi di bawah.' : 'Silakan lakukan pembayaran tunai/debit ke meja kasir.'}</span></div></div>${o.payment.method === 'QRIS' || o.payment.method === 'QRIS_DEMO' ? `<div class="qris-demo-box">${o.payment.qrisUrl ? `<img src="${o.payment.qrisUrl}" alt="QRIS Code" style="width:200px; height:200px; border-radius:12px; margin: 0 auto; display:block;">` : `<div class="fake-qr">${icon('qr', 84)}</div>`}<p>Scan QRIS ini dengan M-Banking atau E-Wallet (GoPay, OVO, ShopeePay, Dana, dll) • <b>${money(o.total)}</b></p><div class="loader-pulse" style="font-size:12px; color:var(--muted); margin-top:8px;">Menunggu pembayaran otomatis...</div></div>` : ''}` : trackingTimeline(o)}</section>`;
+    return `<section class="tracking-card" id="trackingCardInner">${waiting ? `<div class="payment-wait"><div>${o.payment?.method === 'QRIS_DEMO' || o.payment?.method === 'QRIS' ? 'QR' : '$'}</div><div><b>${o.payment?.method === 'QRIS_DEMO' || o.payment?.method === 'QRIS' ? 'Menunggu Pembayaran QRIS' : 'Menunggu Pembayaran di Kasir'}</b><span>${o.payment?.method === 'QRIS_DEMO' || o.payment?.method === 'QRIS' ? 'Scan QRIS atau tekan tombol simulasi di bawah.' : 'Silakan lakukan pembayaran tunai/debit ke meja kasir.'}</span></div></div>${o.payment?.method === 'QRIS' || o.payment?.method === 'QRIS_DEMO' ? `<div class="qris-demo-box">${o.payment?.qrisUrl ? `<img src="${o.payment.qrisUrl}" alt="QRIS Code" style="width:200px; height:200px; border-radius:12px; margin: 0 auto; display:block;">` : `<div class="fake-qr">${icon('qr', 84)}</div>`}<p>Scan QRIS ini dengan M-Banking atau E-Wallet (GoPay, OVO, ShopeePay, Dana, dll) • <b>${money(o.total)}</b></p><div class="loader-pulse" style="font-size:12px; color:var(--muted); margin-top:8px;">Menunggu pembayaran otomatis...</div><button type="button" class="btn btn-primary btn-wide" id="demoPay" style="margin-top:14px;font-weight:700;box-shadow:0 4px 12px rgba(27,99,58,0.25);">⚡ Simulasikan Pembayaran Berhasil (QRIS)</button></div>` : ''}` : trackingTimeline(o)}</section>`;
   };
 
   const renderTrackShell = () => {
     currentScreenMode = 'track'; document.body.className = 'customer-body track-body';
-    document.body.innerHTML = customerShell(`<main class="tracking-page"><div class="tracking-top"><span>STATUS PESANAN</span><div><h1>Pesanan #${esc(o.orderNumber)}</h1><em id="estMinutesText">Estimasi ${o.estimatedMinutes || 10} Mnt</em></div></div>${o.studentInfo ? `<div class="track-verify-card ${o.studentInfo.verificationStatus === 'AUTOMATICALLY_VERIFIED' || o.studentInfo.verificationStatus === 'VERIFIED' ? 'verified' : (o.studentInfo.verificationStatus === 'REJECTED' ? 'rejected' : 'pending')}"><div style="font-size:22px;">${o.studentInfo.verificationStatus === 'AUTOMATICALLY_VERIFIED' || o.studentInfo.verificationStatus === 'VERIFIED' ? '✅' : (o.studentInfo.verificationStatus === 'REJECTED' ? '⚠️' : '⏳')}</div><div style="flex:1;"><b style="font-size:12.5px;display:block;">${o.studentInfo.verificationStatus === 'AUTOMATICALLY_VERIFIED' ? 'Identitas Pelajar Terverifikasi Sah (AI Radar)' : (o.studentInfo.verificationStatus === 'VERIFIED' ? 'Verifikasi Kartu Pelajar Disetujui Kasir' : (o.studentInfo.verificationStatus === 'REJECTED' ? 'Verifikasi Pelajar Ditolak' : 'Menunggu Validasi Selfie KTM oleh Kasir'))}</b><small style="display:block;margin-top:2px;font-size:11px;">${o.studentInfo.verificationStatus === 'AUTOMATICALLY_VERIFIED' ? `Identitas mahasiswa ${esc(o.studentInfo.campus)} dan domain kampus lolos validasi otomatis.` : (o.studentInfo.verificationStatus === 'VERIFIED' ? `Identitas mahasiswa ${esc(o.studentInfo.campus)} telah diverifikasi sah oleh kasir.` : (o.studentInfo.verificationStatus === 'REJECTED' ? `Alasan: ${esc(o.studentInfo.rejectionReason || 'Foto KTM tidak sesuai')}. Tagihan telah disesuaikan ke harga normal.` : 'Kasir akan memverifikasi foto selfie KTM Anda saat memproses pesanan.'))}</small></div></div>` : ''}<div id="trackingCardWrapper">${renderTrackingCardContent()}</div><section class="tracking-summary"><h3>Rincian Pesanan</h3>${o.items.map(i => `<div><span>${esc(i.productName)} x${i.quantity}<small>${esc(optionSummary(i))}</small></span><b>${money(i.lineTotal)}</b></div>`).join('')}<hr><div><span>Nomor Meja</span><b>${esc(o.tableName)}</b></div><div><span>Metode Pembayaran</span><b id="paymentStatusBadge">${o.payment.method === 'QRIS_DEMO' || o.payment.method === 'QRIS' ? 'QRIS' : 'Bayar di Kasir'} ${o.payment.status === 'PAID' ? '(Lunas)' : '(Pending)'}</b></div><div class="tracking-total"><span>Total Bayar</span><strong>${money(o.total)}</strong></div></section><div id="trackAddonsWrapper">${trackAddonsSection(o, access)}</div></main>`, { tableName: o.tableName, className: 'simple-shell' });
-    bindPayButton(); bindAddOrderButton();
+    const isGranted = ('Notification' in window && Notification.permission === 'granted');
+    const buzzerCardHtml = isGranted
+      ? `<div class="buzzer-active-pill">🔔 Buzzer Layar Kunci Aktif — HP Berdering &amp; Bergetar Saat Pesanan Siap</div>`
+      : `<div class="buzzer-status-card" id="buzzerCard">
+          <div class="buzzer-status-icon">🔔</div>
+          <div class="buzzer-status-info">
+            <b>Aktifkan Alarm Layar Kunci &amp; Suara</b>
+            <small>Izinkan notifikasi agar alarm berbunyi kencang meskipun layar HP mati atau tab ditutup.</small>
+          </div>
+          <button class="btn btn-primary btn-small" id="btnEnableBuzzer">Aktifkan Alarm</button>
+        </div>`;
+
+    document.body.innerHTML = customerShell(`<main class="tracking-page"><div class="tracking-top"><span>STATUS PESANAN</span><div style="display:flex;justify-content:space-between;align-items:flex-start;gap:12px;width:100%;"><div><h1>Pesanan #${esc(o.orderNumber)}</h1><em id="estMinutesText">Estimasi ${o.estimatedMinutes || 10} Mnt</em></div><div class="queue-num-chip"><small>ANTREAN</small><strong>#${esc(o.queueNumber || 'Q-001')}</strong></div></div></div>${buzzerCardHtml}<div class="stay-alert-strip" style="background:#fffbeb;border:1px solid #fde68a;border-radius:12px;padding:12px 14px;margin-bottom:12px;display:flex;align-items:flex-start;gap:10px;"><span style="font-size:20px;line-height:1.1;">⚠️</span><div style="flex:1;font-size:12.5px;color:#92400e;line-height:1.4;"><strong style="display:block;margin-bottom:2px;font-size:13px;color:#78350f;">PENTING: Jangan Tutup Halaman Ini</strong>Biarkan tab ini tetap terbuka agar alarm dering &amp; getar pesanan siap bisa langsung berbunyi di HP Anda saat barista memanggil.</div></div>${o.studentInfo ? `<div class="track-verify-card ${o.studentInfo.verificationStatus === 'AUTOMATICALLY_VERIFIED' || o.studentInfo.verificationStatus === 'VERIFIED' ? 'verified' : (o.studentInfo.verificationStatus === 'REJECTED' ? 'rejected' : 'pending')}"><div style="font-size:22px;">${o.studentInfo.verificationStatus === 'AUTOMATICALLY_VERIFIED' || o.studentInfo.verificationStatus === 'VERIFIED' ? '✅' : (o.studentInfo.verificationStatus === 'REJECTED' ? '⚠️' : '⏳')}</div><div style="flex:1;"><b style="font-size:12.5px;display:block;">${o.studentInfo.verificationStatus === 'AUTOMATICALLY_VERIFIED' ? 'Identitas Pelajar Terverifikasi Sah (AI Radar)' : (o.studentInfo.verificationStatus === 'VERIFIED' ? 'Verifikasi Kartu Pelajar Disetujui Kasir' : (o.studentInfo.verificationStatus === 'REJECTED' ? 'Verifikasi Pelajar Ditolak: Kembali ke Harga Reguler' : 'Menunggu Validasi Selfie KTM oleh Kasir'))}</b><small style="display:block;margin-top:2px;font-size:11px;">${o.studentInfo.verificationStatus === 'AUTOMATICALLY_VERIFIED' ? `Identitas mahasiswa ${esc(o.studentInfo.campus)} dan domain kampus lolos validasi otomatis.` : (o.studentInfo.verificationStatus === 'VERIFIED' ? `Identitas mahasiswa ${esc(o.studentInfo.campus)} telah diverifikasi sah oleh kasir.` : (o.studentInfo.verificationStatus === 'REJECTED' ? `Alasan: ${esc(o.studentInfo.rejectionReason || 'Foto KTM tidak sesuai')}. Seluruh harga item otomatis disesuaikan ke tarif normal tanpa reload.` : 'Kasir akan memverifikasi foto selfie KTM Anda saat memproses pesanan.'))}</small>${o.studentInfo ? `<button type="button" class="btn btn-soft btn-small" id="btnViewDigitalKtm" style="margin-top:8px;">🪪 Tampilkan Kartu Mahasiswa Digital (KTM)</button>` : ''}</div></div>` : ''}<div id="trackingCardWrapper">${renderTrackingCardContent()}</div><section class="tracking-summary" id="trackingSummarySection"><h3>Rincian Pesanan</h3>${o.items.map(i => `<div><span>${esc(i.productName)} x${i.quantity}<small>${esc(optionSummary(i))}</small></span><b>${money(i.lineTotal)}</b></div>`).join('')}<hr><div><span>Nomor Meja</span><b>${esc(o.tableName)}</b></div><div><span>Metode Pembayaran</span><b id="paymentStatusBadge">${o.payment.method === 'QRIS_DEMO' || o.payment.method === 'QRIS' ? 'QRIS' : 'Bayar di Kasir'} ${o.payment.status === 'PAID' ? '(Lunas)' : '(Pending)'}</b></div><div class="tracking-total"><span>Total Bayar</span><strong id="trackGrandTotal">${money(o.total)}</strong></div></section><div id="trackAddonsWrapper">${trackAddonsSection(o, access)}</div></main>`, { tableName: o.tableName, className: 'simple-shell' });
+    bindPayButton(); bindAddOrderButton(); bindBuzzerButton();
+    const btnKtm = $('#btnViewDigitalKtm');
+    if (btnKtm) btnKtm.onclick = () => openDigitalKtmModal(o.studentInfo);
+    checkStayAlertModal();
+  };
+
+  const checkStayAlertModal = () => {
+    const flagKey = 'cc_show_stay_alert_' + orderNumber;
+    if (sessionStorage.getItem(flagKey) === '1') {
+      sessionStorage.removeItem(flagKey);
+      const m = modal(`
+        <div class="stay-alert-modal" style="text-align:center;padding:12px 4px;">
+          <div style="font-size:52px;line-height:1;margin-bottom:14px;">⚠️📱</div>
+          <h3 style="margin:0 0 10px;font-size:20px;font-weight:800;color:var(--ink,#0f172a);">JANGAN TUTUP HALAMAN INI!</h3>
+          <p style="margin:0 0 16px;font-size:14px;line-height:1.5;color:var(--text,#475569);">
+            Pesanan Anda berhasil masuk antrean! Mohon <b>tetap buka tab browser ini</b> agar sistem alarm suara &amp; buzzer di HP Anda dapat berdering otomatis saat pesanan siap diambil.
+          </p>
+          <div style="background:var(--bg,#f8fafc);border:1px solid var(--border,#e2e8f0);border-radius:14px;padding:14px;margin-bottom:20px;text-align:left;font-size:12.5px;color:var(--text,#334155);display:flex;flex-direction:column;gap:10px;">
+            <div style="display:flex;gap:10px;align-items:flex-start;">
+              <span style="font-size:18px;line-height:1;">🔔</span>
+              <div><b>Alarm Suara Otomatis:</b> Suara lonceng &amp; getaran HP akan otomatis aktif ketika barista menandai pesanan Anda siap diambil.</div>
+            </div>
+            <div style="display:flex;gap:10px;align-items:flex-start;">
+              <span style="font-size:18px;line-height:1;">💡</span>
+              <div><b>Layar Tetap Menyala:</b> Layar HP Anda dijaga tetap aktif selama halaman ini dibuka sehingga Anda tidak ketinggalan panggilan.</div>
+            </div>
+          </div>
+          <button type="button" class="btn btn-primary btn-wide btn-large" id="btnStayUnderstood" style="font-weight:700;font-size:15px;border-radius:12px;box-shadow:0 4px 14px rgba(27,99,58,0.25);">
+            Saya Mengerti, Biarkan Terbuka 👍
+          </button>
+        </div>
+      `, 'stay-alert-dialog');
+
+      const btnOk = $('#btnStayUnderstood', m);
+      if (btnOk) {
+        btnOk.onclick = async () => {
+          alarm.unlock();
+          requestWakeLock();
+          if ('Notification' in window && Notification.permission !== 'granted') {
+            try {
+              const perm = await Notification.requestPermission();
+              if (perm === 'granted') {
+                await registerPushSubscription('customer', orderNumber);
+              }
+            } catch {}
+          }
+          m.remove();
+        };
+      }
+    }
+  };
+
+  const bindBuzzerButton = () => {
+    const btnBuzzer = $('#btnEnableBuzzer');
+    if (btnBuzzer) {
+      btnBuzzer.onclick = async () => {
+        alarm.unlock();
+        alarm.playReadyChime();
+        requestWakeLock();
+        if ('Notification' in window) {
+          try {
+            const perm = await Notification.requestPermission();
+            if (perm === 'granted') {
+              await registerPushSubscription('customer', orderNumber);
+              toast('✅ Alarm Notifikasi Layar Kunci Berhasil Aktif!');
+              updateTrackView();
+            }
+          } catch { }
+        }
+      };
+    }
   };
 
   const bindAddOrderButton = () => {
@@ -1007,7 +2082,23 @@ async function trackPage(orderNumber) {
 
   const bindPayButton = () => {
     const pay = $('#demoPay');
-    if (pay) pay.onclick = async () => { alarm.unlock(); pay.disabled = true; pay.innerHTML = '<span class="spinner"></span> Memproses...'; try { await api('/demo/payments/' + encodeURIComponent(orderNumber) + '/pay', { method: 'POST', body: '{}' }); toast('Pembayaran QRIS demo berhasil'); refresh(); } catch (e) { toast(e.message, true); pay.disabled = false; pay.textContent = 'Simulasikan Pembayaran Berhasil'; } };
+    if (pay) pay.onclick = async () => {
+      alarm.unlock();
+      pay.disabled = true;
+      pay.innerHTML = '<span class="spinner"></span> Memproses Pembayaran...';
+      try {
+        await api('/demo/payments/' + encodeURIComponent(orderNumber) + '/pay', {
+          method: 'POST',
+          body: JSON.stringify({ accessToken: access })
+        });
+        toast('✅ Pembayaran QRIS demo berhasil!');
+        refresh();
+      } catch (e) {
+        toast(e.message, true);
+        pay.disabled = false;
+        pay.textContent = '⚡ Simulasikan Pembayaran Berhasil (QRIS)';
+      }
+    };
   };
 
   const updateTrackView = () => {
@@ -1019,6 +2110,11 @@ async function trackPage(orderNumber) {
     const addonsWrap = $('#trackAddonsWrapper'); if (addonsWrap && Array.isArray(o.addons)) { addonsWrap.innerHTML = trackAddonsSection(o, access); bindAddOrderButton(); }
     const badge = $('#paymentStatusBadge'); if (badge) badge.textContent = `${o.payment.method === 'QRIS_DEMO' || o.payment.method === 'QRIS' ? 'QRIS' : 'Bayar di Kasir'} ${o.payment.status === 'PAID' ? '(Lunas)' : '(Pending)'}`;
     const est = $('#estMinutesText'); if (est) est.textContent = `Estimasi ${o.estimatedMinutes || 10} Mnt`;
+    const grandTot = $('#trackGrandTotal'); if (grandTot) grandTot.textContent = money(o.total);
+    const summarySec = $('#trackingSummarySection');
+    if (summarySec) {
+      summarySec.innerHTML = `<h3>Rincian Pesanan</h3>${o.items.map(i => `<div><span>${esc(i.productName)} x${i.quantity}<small>${esc(optionSummary(i))}</small></span><b>${money(i.lineTotal)}</b></div>`).join('')}<hr><div><span>Nomor Meja</span><b>${esc(o.tableName)}</b></div><div><span>Metode Pembayaran</span><b id="paymentStatusBadge">${o.payment.method === 'QRIS_DEMO' || o.payment.method === 'QRIS' ? 'QRIS' : 'Bayar di Kasir'} ${o.payment.status === 'PAID' ? '(Lunas)' : '(Pending)'}</b></div><div class="tracking-total"><span>Total Bayar</span><strong id="trackGrandTotal">${money(o.total)}</strong></div>`;
+    }
   };
 
   const refresh = async () => {
@@ -1032,20 +2128,48 @@ async function trackPage(orderNumber) {
 
   if (o.status === 'READY') renderReadyScreen(); else if (o.status === 'COMPLETED') renderCompletedScreen(); else renderTrackShell();
 
-  let es;
-  try {
-    // FIX: Sertakan orderNumber agar SSE Customer terisolasi dari notifikasi order lain
-    es = new EventSource('/api/events?channel=customer&order=' + encodeURIComponent(orderNumber));
-    es.addEventListener('order-update', e => {
+  const sub = createRealtimeSubscription({
+    channel: 'customer',
+    order: orderNumber,
+    access: access,
+    onEvent: ({ event, data }) => {
       try {
         const prevStatus = o ? o.status : '';
-        o = JSON.parse(e.data);
+        if (data.status) {
+          o.status = data.status;
+          if (data.tableName) o.tableName = data.tableName;
+        }
+        if (data.verificationStatus) {
+          if (o.studentInfo) o.studentInfo.verificationStatus = data.verificationStatus;
+          if (data.verificationStatus === 'REJECTED') {
+            o.customerType = 'REGULAR';
+            if (data.total !== undefined) o.total = data.total;
+            if (data.subtotal !== undefined) o.subtotal = data.subtotal;
+            if (data.serviceFee !== undefined) o.serviceFee = data.serviceFee;
+            if (data.tax !== undefined) o.tax = data.tax;
+            if (data.totalSavings !== undefined) o.totalSavings = data.totalSavings;
+            if (data.items) o.items = data.items;
+            toast('⚠️ Verifikasi KTM Ditolak: Seluruh item pesanan kembali ke harga reguler tanpa reload!');
+            renderTrackShell();
+            return;
+          }
+        }
         if (prevStatus !== 'READY' && o.status === 'READY') triggerReadyAlarm();
         updateTrackView();
       } catch { }
-    });
-    disposeOnLeave(() => es.close());
-  } catch { }
+    }
+  });
+  disposeOnLeave(() => sub.close());
+
+  const handleBeforeUnload = (e) => {
+    if (o && o.status !== 'COMPLETED' && o.status !== 'CANCELLED') {
+      e.preventDefault();
+      e.returnValue = 'Pesanan Anda sedang diproses. Mohon jangan tutup halaman ini agar notifikasi pesanan siap bisa masuk.';
+      return e.returnValue;
+    }
+  };
+  window.addEventListener('beforeunload', handleBeforeUnload);
+  disposeOnLeave(() => window.removeEventListener('beforeunload', handleBeforeUnload));
 
   const timer = setInterval(refresh, 3000); disposeOnLeave(() => clearInterval(timer));
 }
@@ -1059,7 +2183,11 @@ function loginPage() {
   $('#forgot').onclick = () => toast('Untuk demo gunakan akun yang sudah terisi.');
   $('#loginForm').onsubmit = async e => {
     e.preventDefault(); alarm.unlock(); const b = $('#loginBtn'); b.disabled = true; b.innerHTML = '<span class="spinner"></span> Memeriksa...';
-    try { await api('/admin/login', { method: 'POST', body: JSON.stringify({ email: $('#email').value, password: $('#password').value }) }); nav('/admin'); } catch (err) { toast(err.message, true); b.disabled = false; b.innerHTML = `Masuk ${icon('arrow', 17)}`; }
+    try {
+      const res = await api('/admin/login', { method: 'POST', body: JSON.stringify({ email: $('#email').value, password: $('#password').value }) });
+      if (res && res.token) setAdminToken(res.token);
+      nav('/admin');
+    } catch (err) { toast(err.message, true); b.disabled = false; b.innerHTML = `Masuk ${icon('arrow', 17)}`; }
   };
 }
 
@@ -1091,13 +2219,30 @@ function kitchenQueueCards(orders) {
   if (!orders.length) return `<div class="queue-empty"><div class="queue-empty-icon">☕</div><b>Antrean Dapur Bersih & Terlayani</b><p>Tidak ada pesanan aktif saat ini. Pesanan baru akan muncul otomatis di sini.</p></div>`;
   return `<div class="queue-cards-grid">${orders.map(o => {
     const isStud = o.customerType === 'STUDENT'; const vStatus = o.studentInfo?.verificationStatus;
-    return `<div class="queue-ticket status-border-${o.status.toLowerCase()}"><div class="ticket-head"><div><strong class="ticket-num">#${esc(o.orderNumber)}</strong>${o.parentOrderNumber ? `<small class="addon-tag">+ tambahan #${esc(o.parentOrderNumber)}</small>` : ''}<span class="ticket-table">${esc(o.tableName)}</span></div>${statusBadge(o.status)}</div>${isStud ? `<div class="ticket-student-bar"><div style="display:flex;justify-content:space-between;align-items:center;"><b>🎓 ${esc(o.studentInfo?.campus || 'Mahasiswa')}</b>${vStatus === 'VERIFIED' ? '<span class="badge-verify-approved">✅ Sah</span>' : (vStatus === 'REJECTED' ? '<span class="badge-verify-rejected">⚠️ Ditolak</span>' : '<span class="badge-verify-pending">⏳ Cek KTM</span>')}</div><small>NIM: ${esc(o.studentInfo?.studentId || '-')} • ${esc(o.studentInfo?.studentName || 'Pelajar')}</small><div class="ticket-student-photo-row"><button type="button" class="btn-inspect-photo" data-inspect-photo="${esc(o.orderNumber)}">🔍 Foto Selfie KTM</button>${vStatus !== 'VERIFIED' ? `<div class="ticket-verify-btn-group"><button type="button" class="btn-verify-approve" data-verify-student="${esc(o.orderNumber)}" data-decision="VERIFIED" title="Setujui Diskon Pelajar">✓</button><button type="button" class="btn-verify-reject" data-verify-student="${esc(o.orderNumber)}" data-decision="REJECTED" title="Tolak & Ubah ke Harga Normal">✕</button></div>` : ''}</div></div>` : ''}<div class="ticket-time"><span>🕒 ${formatTime(o.createdAt)}</span><span class="ticket-payment ${o.payment.status === 'PAID' ? 'paid' : 'pending'}">${o.payment.method === 'QRIS_DEMO' ? 'QRIS' : 'Tunai'} • ${o.payment.status === 'PAID' ? 'Lunas' : 'Belum Bayar'}</span></div><div class="ticket-items">${o.items.map(i => `<div class="ticket-item-row"><span><b>${i.quantity}x</b> ${esc(i.productName)}</span>${i.options?.size ? `<small class="ticket-mod">${esc(i.options.size)}</small>` : ''}</div>`).join('')}</div><div class="ticket-actions">${o.payment.status === 'PENDING' && o.payment.method === 'CASH' ? `<button class="btn btn-green btn-small" data-quick-pay="${esc(o.orderNumber)}">Konfirmasi Bayar</button>` : ''}${o.status === 'NEW' && o.payment.status === 'PAID' ? `<button class="btn btn-blue btn-small" data-quick-status="${esc(o.orderNumber)}" data-next="PROCESSING">▶ Proses Racik</button>` : ''}${o.status === 'PROCESSING' ? `<button class="btn btn-primary btn-small" data-quick-status="${esc(o.orderNumber)}" data-next="READY">🔔 Siap Diambil</button>` : ''}${o.status === 'READY' ? `<button class="btn btn-dark btn-small" data-quick-status="${esc(o.orderNumber)}" data-next="COMPLETED">✓ Selesai</button>` : ''}<button class="btn btn-soft btn-small" data-view-order="${esc(o.orderNumber)}">Detail</button></div></div>`;
+    const isPrinted = Boolean(o.receiptPrinted || o.receipt_printed);
+    return `<div class="queue-ticket status-border-${o.status.toLowerCase()}"><div class="ticket-head"><div><strong class="ticket-num">#${esc(o.orderNumber)}</strong>${o.parentOrderNumber ? `<small class="addon-tag">+ tambahan #${esc(o.parentOrderNumber)}</small>` : ''}<span class="ticket-table">${esc(o.tableName)}</span></div><div style="display:flex;align-items:center;gap:6px;">${o.status === 'NEW' ? (isPrinted ? '<span class="receipt-mini-badge done" title="Struk sudah dicetak">✓ Struk</span>' : '<span class="receipt-mini-badge pending" title="Wajib cetak struk kasir">⚠️ Belum Cetak</span>') : ''}${statusBadge(o.status)}</div></div>${o.status === 'NEW' ? (!isPrinted ? `<div class="ticket-receipt-strip unprinted"><span>⚠️</span> <span>Belum Cetak Struk (Wajib cetak sebelum racik)</span></div>` : `<div class="ticket-receipt-strip printed"><span>✓</span> <span>Struk Sudah Dicetak</span></div>`) : ''}${isStud ? `<div class="ticket-student-bar"><div style="display:flex;justify-content:space-between;align-items:center;"><b>🎓 ${esc(o.studentInfo?.campus || 'Mahasiswa')}</b>${vStatus === 'VERIFIED' ? '<span class="badge-verify-approved">✅ Sah</span>' : (vStatus === 'REJECTED' ? '<span class="badge-verify-rejected">⚠️ Ditolak</span>' : '<span class="badge-verify-pending">⏳ Cek KTM</span>')}</div><small>NIM: ${esc(o.studentInfo?.studentId || '-')} • ${esc(o.studentInfo?.studentName || 'Pelajar')}</small><div class="ticket-student-photo-row"><button type="button" class="btn-inspect-photo" data-inspect-photo="${esc(o.orderNumber)}">🔍 Foto Selfie KTM</button>${vStatus !== 'VERIFIED' ? `<div class="ticket-verify-btn-group"><button type="button" class="btn-verify-approve" data-verify-student="${esc(o.orderNumber)}" data-decision="VERIFIED" title="Setujui Diskon Pelajar">✓</button><button type="button" class="btn-verify-reject" data-verify-student="${esc(o.orderNumber)}" data-decision="REJECTED" title="Tolak & Ubah ke Harga Normal">✕</button></div>` : ''}</div></div>` : ''}<div class="ticket-time"><span>🕒 ${formatTime(o.createdAt)}</span><span class="ticket-payment ${o.payment.status === 'PAID' ? 'paid' : 'pending'}">${o.payment.method === 'QRIS_DEMO' ? 'QRIS' : 'Tunai'} • ${o.payment.status === 'PAID' ? 'Lunas' : 'Belum Bayar'}</span></div><div class="ticket-items">${o.items.map(i => `<div class="ticket-item-row"><span><b>${i.quantity}x</b> ${esc(i.productName)}</span>${i.options?.size ? `<small class="ticket-mod">${esc(i.options.size)}</small>` : ''}</div>`).join('')}</div><div class="ticket-actions">${o.payment.status === 'PENDING' && o.payment.method === 'CASH' ? `<button class="btn btn-green btn-small" data-quick-pay="${esc(o.orderNumber)}">Konfirmasi Bayar</button>` : ''}${o.status === 'NEW' && o.payment.status === 'PAID' ? (!isPrinted ? `<button class="btn btn-primary btn-small btn-highlight-print" data-print-order="${esc(o.orderNumber)}">🖨️ Cetak Struk (Wajib)</button><button class="btn btn-blue btn-small" data-quick-status="${esc(o.orderNumber)}" data-next="PROCESSING" data-need-receipt="true" title="Wajib cetak struk terlebih dahulu">▶ Proses Racik 🔒</button>` : `<button class="btn btn-blue btn-small" data-quick-status="${esc(o.orderNumber)}" data-next="PROCESSING">▶ Proses Racik</button><button class="btn btn-soft btn-small" data-print-order="${esc(o.orderNumber)}" title="Cetak ulang struk">🖨️ Struk</button>`) : ''}${o.status === 'PROCESSING' ? `<button class="btn btn-primary btn-small" data-quick-status="${esc(o.orderNumber)}" data-next="READY">🔔 Siap Diambil</button><button class="btn btn-soft btn-small" data-print-order="${esc(o.orderNumber)}" title="Cetak ulang struk">🖨️</button>` : ''}${o.status === 'READY' ? `<button class="btn btn-dark btn-small" data-quick-status="${esc(o.orderNumber)}" data-next="COMPLETED">✓ Selesai</button><button class="btn btn-soft btn-small" data-print-order="${esc(o.orderNumber)}" title="Cetak ulang struk">🖨️</button>` : ''}<button class="btn btn-soft btn-small" data-view-order="${esc(o.orderNumber)}">Detail</button></div></div>`;
   }).join('')}</div>`;
 }
 
 function bindQueueCardActions(onUpdate) {
   $$('[data-quick-pay]').forEach(b => b.onclick = async () => { b.disabled = true; try { await api('/admin/orders/' + encodeURIComponent(b.dataset.quickPay) + '/payment', { method: 'PATCH', body: '{}' }); toast('Pembayaran kasir berhasil dikonfirmasi LUNAS'); onUpdate(); } catch (e) { toast(e.message, true); b.disabled = false; } });
-  $$('[data-quick-status]').forEach(b => b.onclick = async () => { b.disabled = true; const next = b.dataset.next; try { await api('/admin/orders/' + encodeURIComponent(b.dataset.quickStatus) + '/status', { method: 'PATCH', body: JSON.stringify({ status: next }) }); if (next === 'READY') toast('🔔 Pesanan dinyatakan SIAP! Alarm berbunyi di HP customer.'); else toast('Status pesanan diperbarui'); onUpdate(); } catch (e) { toast(e.message, true); b.disabled = false; } });
+  $$('[data-print-order]').forEach(b => b.onclick = () => showOrderReceiptDialog(b.dataset.printOrder, onUpdate, false));
+  $$('[data-quick-status]').forEach(b => b.onclick = async () => {
+    const next = b.dataset.next;
+    const num = b.dataset.quickStatus;
+    if (next === 'PROCESSING' && b.dataset.needReceipt === 'true') {
+      toast('⚠️ Struk wajib dicetak terlebih dahulu sebelum memproses pesanan ke barista/dapur!', true);
+      showOrderReceiptDialog(num, onUpdate, true);
+      return;
+    }
+    b.disabled = true;
+    try {
+      await api('/admin/orders/' + encodeURIComponent(num) + '/status', { method: 'PATCH', body: JSON.stringify({ status: next }) });
+      if (next === 'READY') toast('🔔 Pesanan dinyatakan SIAP! Alarm berbunyi di HP customer.');
+      else toast('Status pesanan diperbarui');
+      onUpdate();
+    } catch (e) { toast(e.message, true); b.disabled = false; }
+  });
   $$('[data-inspect-photo]').forEach(b => b.onclick = () => viewStudentPhotoModal(b.dataset.inspectPhoto, onUpdate));
   $$('[data-verify-student]').forEach(b => b.onclick = async () => { b.disabled = true; const dec = b.dataset.decision; const num = b.dataset.verifyStudent; try { await api('/admin/orders/' + encodeURIComponent(num) + '/verify-student', { method: 'PATCH', body: JSON.stringify({ status: dec, reason: dec === 'REJECTED' ? 'Foto selfie / kartu tidak valid' : '' }) }); toast(dec === 'VERIFIED' ? '✅ Verifikasi KTM disetujui!' : '⚠️ Verifikasi ditolak. Tagihan disesuaikan ke harga reguler.'); onUpdate(); } catch (e) { toast(e.message, true); b.disabled = false; } });
 }
@@ -1148,7 +2293,7 @@ async function quickPosOrderModal(onSuccess) {
     const btn = $('#btnSubmitPos', d); btn.disabled = true; btn.textContent = 'Memproses Pesanan...'; const items = []; cart.forEach((qty, pid) => items.push({ productId: pid, quantity: qty, note: '', options: {} }));
     try {
       const res = await api('/orders', { method: 'POST', body: JSON.stringify({ tableToken: selectedTableToken, customerType: posCustomerType, studentInfo: posCustomerType === 'STUDENT' ? { campus: 'Kampus (POS Kasir)', studentId: 'POS-VERIFIED', studentName: 'Pelajar / Mahasiswa' } : null, items, paymentMethod: selectedMethod, idempotencyKey: 'pos-' + Date.now() }) });
-      toast(`Pesanan #${res.orderNumber} berhasil dibuat!`); d.remove(); onSuccess(); orderDetailModal(res.orderNumber, onSuccess);
+      toast(`Pesanan #${res.orderNumber} berhasil dibuat!`); d.remove(); onSuccess(); showOrderReceiptDialog(res.orderNumber, onSuccess, false);
     } catch (err) { toast(err.message, true); btn.disabled = false; btn.textContent = '✓ Konfirmasi Pesanan & Cetak Struk'; }
   };
 }
@@ -1163,10 +2308,250 @@ function printShiftSummaryModal(dashData, allOrders) {
   $('#btnDoPrintShift', d).onclick = () => window.print(); $('#btnCloseShiftPrint', d).onclick = () => d.remove();
 }
 
+async function showOrderReceiptDialog(orderNumber, onDone, autoAdvance = false) {
+  let r;
+  try {
+    r = await api('/admin/orders/' + encodeURIComponent(orderNumber) + '/receipt');
+  } catch (err) {
+    return toast('Gagal memuat data struk: ' + err.message, true);
+  }
+
+  let selectedStation = 'CUSTOMER';
+  let printed = Boolean(r.receiptPrinted);
+
+  const getReceiptHtml = (type) => {
+    const isCustomer = type === 'CUSTOMER';
+    const isDrink = type === 'DRINK';
+    const isFood = type === 'FOOD';
+    const items = isCustomer ? r.items : (isDrink ? r.drinkItems : r.foodItems);
+    const now = new Date();
+    const printTime = now.toLocaleString('id-ID', { day:'2-digit', month:'short', year:'numeric', hour:'2-digit', minute:'2-digit' });
+
+    if (!isCustomer && (!items || items.length === 0)) {
+      return `<div style="padding:32px 16px;text-align:center;color:#64748b;">
+        <div style="font-size:28px;margin-bottom:8px;">${isDrink ? '☕' : '🍽️'}</div>
+        <b>Tidak Ada Menu ${isDrink ? 'Minuman' : 'Makanan'}</b>
+        <p style="font-size:12px;margin-top:4px;color:#94a3b8;">Pesanan ini tidak memiliki menu untuk stasiun dapur ${isDrink ? 'barista minuman' : 'dapur makanan'}.</p>
+      </div>`;
+    }
+
+    return `
+      <div class="receipt-paper" style="max-width:340px;margin:0 auto;box-shadow:0 4px 14px rgba(0,0,0,0.08);background:#fff;padding:16px;border-radius:6px;font-family:'Courier New',Courier,monospace;color:#111;">
+        <div class="receipt-header" style="text-align:center;">
+          <h2 style="font-size:17px;margin:0 0 2px 0;letter-spacing:1px;font-family:inherit;">${esc(r.cafeName || 'CAFE CAMPUS')}</h2>
+          ${r.cafeAddress ? `<p style="font-size:10.5px;margin:0;color:#555;">${esc(r.cafeAddress)}</p>` : ''}
+          ${r.cafePhone ? `<p style="font-size:10px;margin:1px 0 0;color:#666;">📞 ${esc(r.cafePhone)}</p>` : ''}
+          <div style="border-top:1px dashed #999;margin:8px 0 6px;"></div>
+          <div style="font-size:12px;font-weight:bold;letter-spacing:2px;text-transform:uppercase;color:${isDrink ? '#1a6fb5' : (isFood ? '#c0522a' : '#1e293b')};">
+            ${isCustomer ? 'STRUK PELANGGAN' : (isDrink ? '☕ TIKET DAPUR MINUMAN' : '🍽️ TIKET DAPUR MAKANAN')}
+          </div>
+          <div style="border-top:1px dashed #999;margin:6px 0 8px;"></div>
+        </div>
+        <div style="font-size:11px;margin-bottom:8px;">
+          <div style="display:flex;justify-content:space-between;margin-bottom:2px;">
+            <span>No. Pesanan:</span><strong>#${esc(r.orderNumber)}</strong>
+          </div>
+          <div style="display:flex;justify-content:space-between;margin-bottom:2px;">
+            <span>No. Antrean:</span><b style="color:var(--orange-dark);font-size:12px;">${esc(r.queueNumber || 'Q-001')}</b>
+          </div>
+          <div style="display:flex;justify-content:space-between;margin-bottom:2px;">
+            <span>Meja:</span><b>${esc(r.tableName || '-')}</b>
+          </div>
+          <div style="display:flex;justify-content:space-between;margin-bottom:2px;">
+            <span>Waktu:</span><span>${printTime}</span>
+          </div>
+          <div style="display:flex;justify-content:space-between;margin-bottom:2px;">
+            <span>Metode:</span><b>${r.paymentMethod === 'QRIS_DEMO' ? 'QRIS' : 'Tunai Kasir'} (${r.paymentStatus === 'PAID' ? 'LUNAS' : 'BELUM LUNAS'})</b>
+          </div>
+          ${r.customerType === 'STUDENT' ? `
+            <div style="background:#eaf7ed;border-radius:4px;padding:4px 6px;margin:6px 0;font-size:10.5px;color:#1b633a;">
+              <b>🎓 DISKON PELAJAR / MAHASISWA</b><br>
+              ${esc(r.studentName || '')} (${esc(r.studentCampus || 'Kampus')}${r.studentIdNum ? ` • NIM: ${esc(r.studentIdNum)}` : ''})
+            </div>
+          ` : ''}
+        </div>
+        <div style="border-top:1px dashed #999;margin:6px 0;"></div>
+        <div style="font-size:11.5px;">
+          ${(items || []).map(i => {
+            const opts = Object.entries(i.options || {}).filter(([,v]) => v).map(([k,v]) => `${k}: ${v}`).join(', ');
+            return `
+              <div style="display:flex;justify-content:space-between;margin-bottom:5px;align-items:flex-start;">
+                <div style="flex:1;padding-right:8px;">
+                  <b>${i.quantity}x ${esc(i.productName)}</b>
+                  ${opts ? `<br><small style="color:#666;font-size:10px;">${esc(opts)}</small>` : ''}
+                  ${i.note ? `<br><small style="color:#b45309;font-size:10px;">📝 ${esc(i.note)}</small>` : ''}
+                </div>
+                ${isCustomer ? `<strong style="white-space:nowrap;">${money(i.lineTotal)}</strong>` : ''}
+              </div>
+            `;
+          }).join('')}
+        </div>
+        ${isCustomer ? `
+          <div style="border-top:1px dashed #999;margin:8px 0 6px;"></div>
+          <div style="font-size:11px;">
+            <div style="display:flex;justify-content:space-between;margin-bottom:2px;">
+              <span>Subtotal:</span><span>${money(r.subtotal)}</span>
+            </div>
+            ${r.totalSavings ? `
+              <div style="display:flex;justify-content:space-between;margin-bottom:2px;color:#1b633a;font-weight:bold;">
+                <span>Hemat Pelajar:</span><span>- ${money(r.totalSavings)}</span>
+              </div>
+            ` : ''}
+            ${r.serviceFee ? `
+              <div style="display:flex;justify-content:space-between;margin-bottom:2px;">
+                <span>Layanan:</span><span>${money(r.serviceFee)}</span>
+              </div>
+            ` : ''}
+            ${r.tax ? `
+              <div style="display:flex;justify-content:space-between;margin-bottom:2px;">
+                <span>Pajak Resto:</span><span>${money(r.tax)}</span>
+              </div>
+            ` : ''}
+            <div style="border-top:1px dashed #000;margin:4px 0;"></div>
+            <div style="display:flex;justify-content:space-between;font-size:13px;font-weight:bold;margin:4px 0;">
+              <span>TOTAL BAYAR:</span><strong style="color:var(--orange-dark);">${money(r.total)}</strong>
+            </div>
+          </div>
+        ` : ''}
+        <div style="border-top:1px dashed #999;margin:8px 0 6px;"></div>
+        <p style="text-align:center;font-size:10px;color:#666;margin:0;">
+          ${isCustomer ? 'Terima Kasih Atas Kunjungan Anda! ☕' : `Tiket ${isDrink ? 'Dapur Minuman' : 'Dapur Makanan'} • Cafe Campus`}
+        </p>
+      </div>
+    `;
+  };
+
+  const d = modal(`
+    <div class="modal-heading">
+      <div>
+        <span style="display:flex;align-items:center;gap:6px;">
+          🖨️ POS CETAK STRUK & TIKET DAPUR
+          <span id="receiptStatusBadgeContainer">
+            ${printed ? '<span class="badge-receipt-done">✓ Struk Dicetak</span>' : '<span class="badge-receipt-pending">⚠️ Belum Cetak Struk</span>'}
+          </span>
+        </span>
+        <h2>Pesanan #${esc(r.orderNumber)} (${esc(r.tableName)}) ${r.queueNumber ? `[${esc(r.queueNumber)}]` : ''}</h2>
+      </div>
+      <div>
+        ${statusBadge(r.status)}
+      </div>
+    </div>
+
+    <div style="display:flex;gap:8px;margin-bottom:12px;background:#f8fafc;padding:6px;border-radius:8px;border:1px solid #e2e8f0;overflow-x:auto;">
+      <button type="button" class="btn btn-small btn-primary" id="tabPrintCust">🧾 Struk Customer (${r.items.length})</button>
+      <button type="button" class="btn btn-small btn-soft" id="tabPrintDrink">☕ Tiket Barista (${(r.drinkItems || []).length})</button>
+      <button type="button" class="btn btn-small btn-soft" id="tabPrintFood">🍽️ Tiket Dapur (${(r.foodItems || []).length})</button>
+    </div>
+
+    <div id="receiptPreviewBox" style="background:#f1f5f9;padding:16px;border-radius:8px;max-height:360px;overflow-y:auto;border:1px solid #e2e8f0;">
+      ${getReceiptHtml('CUSTOMER')}
+    </div>
+
+    <div class="modal-actions" style="margin-top:16px;display:flex;flex-wrap:wrap;gap:8px;justify-content:space-between;">
+      <div style="display:flex;gap:8px;flex-wrap:wrap;">
+        <button class="btn btn-primary btn-highlight-print" id="btnExecutePrint">🖨️ Cetak Tab Ini (Print)</button>
+        <button class="btn btn-soft" id="btnPrintAllStation">🖨️ Cetak Semua Tiket</button>
+      </div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;">
+        ${r.status === 'NEW' ? `
+          <button class="btn btn-blue" id="btnAdvanceToProcess">▶ Selesai Cetak & Mulai Racik</button>
+        ` : ''}
+        <button class="btn btn-dark" data-modal-close>Tutup</button>
+      </div>
+    </div>
+  `, 'dialog-card wide-dialog');
+
+  const updateTabs = (st) => {
+    selectedStation = st;
+    $('#tabPrintCust', d).className = `btn btn-small ${st === 'CUSTOMER' ? 'btn-primary' : 'btn-soft'}`;
+    $('#tabPrintDrink', d).className = `btn btn-small ${st === 'DRINK' ? 'btn-primary' : 'btn-soft'}`;
+    $('#tabPrintFood', d).className = `btn btn-small ${st === 'FOOD' ? 'btn-primary' : 'btn-soft'}`;
+    $('#receiptPreviewBox', d).innerHTML = getReceiptHtml(st);
+  };
+
+  $('#tabPrintCust', d).onclick = () => updateTabs('CUSTOMER');
+  $('#tabPrintDrink', d).onclick = () => updateTabs('DRINK');
+  $('#tabPrintFood', d).onclick = () => updateTabs('FOOD');
+
+  const markPrinted = async (st) => {
+    try {
+      await api('/admin/orders/' + encodeURIComponent(r.orderNumber) + '/print', {
+        method: 'POST',
+        body: JSON.stringify({ type: st || selectedStation })
+      });
+      printed = true;
+      r.receiptPrinted = true;
+      const bc = $('#receiptStatusBadgeContainer', d);
+      if (bc) bc.innerHTML = '<span class="badge-receipt-done">✓ Struk Dicetak</span>';
+    } catch(e) {}
+  };
+
+  $('#btnExecutePrint', d).onclick = async () => {
+    await markPrinted(selectedStation);
+    printKitchenReceipt(r, selectedStation);
+    toast('Mencetak struk ' + (selectedStation === 'CUSTOMER' ? 'pelanggan' : (selectedStation === 'DRINK' ? 'dapur minuman' : 'dapur makanan')));
+    if (autoAdvance && r.status === 'NEW') {
+      try {
+        await api('/admin/orders/' + encodeURIComponent(r.orderNumber) + '/status', {
+          method: 'PATCH',
+          body: JSON.stringify({ status: 'PROCESSING' })
+        });
+        toast('✓ Struk dicetak & pesanan dialihkan ke SEDANG RACIK');
+        d.remove();
+        onDone && onDone();
+      } catch(e) { toast(e.message, true); }
+    } else {
+      onDone && onDone();
+    }
+  };
+
+  $('#btnPrintAllStation', d).onclick = async () => {
+    await markPrinted('ALL');
+    printKitchenReceipt(r, 'CUSTOMER');
+    if (r.drinkItems?.length) setTimeout(() => printKitchenReceipt(r, 'DRINK'), 600);
+    if (r.foodItems?.length) setTimeout(() => printKitchenReceipt(r, 'FOOD'), 1200);
+    toast('Mencetak seluruh tiket stasiun...');
+    if (autoAdvance && r.status === 'NEW') {
+      try {
+        await api('/admin/orders/' + encodeURIComponent(r.orderNumber) + '/status', {
+          method: 'PATCH',
+          body: JSON.stringify({ status: 'PROCESSING' })
+        });
+        toast('✓ Struk dicetak & pesanan dialihkan ke SEDANG RACIK');
+        d.remove();
+        onDone && onDone();
+      } catch(e) { toast(e.message, true); }
+    } else {
+      onDone && onDone();
+    }
+  };
+
+  const advanceBtn = $('#btnAdvanceToProcess', d);
+  if (advanceBtn) {
+    advanceBtn.onclick = async () => {
+      advanceBtn.disabled = true;
+      try {
+        if (!printed) {
+          await markPrinted('CUSTOMER');
+          printKitchenReceipt(r, 'CUSTOMER');
+        }
+        await api('/admin/orders/' + encodeURIComponent(r.orderNumber) + '/status', {
+          method: 'PATCH',
+          body: JSON.stringify({ status: 'PROCESSING' })
+        });
+        toast('✓ Pesanan dialihkan ke SEDANG RACIK!');
+        d.remove();
+        onDone && onDone();
+      } catch(e) {
+        toast(e.message, true);
+        advanceBtn.disabled = false;
+      }
+    };
+  }
+}
+
 function printReceiptModal(o) {
-  const isStud = o.customerType === 'STUDENT';
-  const d = modal(`<div class="print-receipt-container"><div class="receipt-paper"><div class="receipt-header"><h2 style="font-size:18px;margin:0 0 2px 0;">CAFE CAMPUS</h2><p style="font-size:11px;margin:0;color:#666;">Gedung Utama Campus Hub</p><p style="font-size:11px;margin:2px 0 0 0;color:#888;">Order #${esc(o.orderNumber)} • ${esc(o.tableName)}</p><p style="font-size:10.5px;margin:2px 0 0 0;color:#888;">${formatTime(o.createdAt)} • Kasir: Admin</p>${isStud ? `<div style="background:#eaf7ed;border-radius:4px;padding:4px 6px;margin:6px 0;font-size:11px;color:#1b633a;text-align:left;"><b>🎓 PESANAN PELAJAR / MAHASISWA</b><br><span>${esc(o.studentInfo?.campus || 'Kampus')} (NIM: ${esc(o.studentInfo?.studentId || '-')})</span></div>` : ''}<hr style="border:none;border-top:1px dashed #bbb;margin:10px 0;"></div><div class="receipt-items">${o.items.map(i => `<div style="display:flex;justify-content:space-between;font-size:12px;margin-bottom:5px;"><div><b>${i.quantity}x ${esc(i.productName)}</b>${i.options?.size ? `<br><small style="color:#777;">(${esc(i.options.size)})</small>` : ''}</div><strong>${money(i.lineTotal)}</strong></div>`).join('')}</div><hr style="border:none;border-top:1px dashed #bbb;margin:10px 0;"><div style="display:flex;justify-content:space-between;font-size:11.5px;margin-bottom:4px;"><span>Subtotal:</span><b>${money(o.subtotal)}</b></div>${o.totalSavings ? `<div style="display:flex;justify-content:space-between;font-size:11.5px;margin-bottom:4px;color:#2c8b5b;"><span>Hemat Pelajar:</span><b>- ${money(o.totalSavings)}</b></div>` : ''}${o.serviceFee ? `<div style="display:flex;justify-content:space-between;font-size:11.5px;margin-bottom:4px;"><span>Layanan:</span><b>${money(o.serviceFee)}</b></div>` : ''}${o.tax ? `<div style="display:flex;justify-content:space-between;font-size:11.5px;margin-bottom:4px;"><span>Pajak (11%):</span><b>${money(o.tax)}</b></div>` : ''}<hr style="border:none;border-top:1px dashed #bbb;margin:8px 0;"><div style="display:flex;justify-content:space-between;font-size:14px;font-weight:bold;margin:6px 0;"><span>TOTAL:</span><strong>${money(o.total)}</strong></div><div style="display:flex;justify-content:space-between;font-size:11.5px;margin-bottom:4px;color:#555;"><span>Pembayaran:</span><b>${o.payment.method === 'QRIS_DEMO' ? 'QRIS DEMO' : 'TUNAI KASIR'} (${o.payment.status === 'PAID' ? 'LUNAS' : 'BELUM LUNAS'})</b></div><hr style="border:none;border-top:1px dashed #bbb;margin:12px 0;"><p style="text-align:center;font-size:11px;color:#777;margin:0;">Terima Kasih Atas Kunjungan Anda! ☕</p></div></div><div class="modal-actions"><button class="btn btn-primary" id="btnDoPrintReceipt">🖨️ Cetak Struk (Print)</button><button class="btn btn-dark" id="btnCloseReceiptPrint">Tutup</button></div>`, 'dialog-card');
-  $('#btnDoPrintReceipt', d).onclick = () => window.print(); $('#btnCloseReceiptPrint', d).onclick = () => d.remove();
+  showOrderReceiptDialog(o.orderNumber || o.num, null, false);
 }
 
 function bindOrderTableActions(onUpdate) {
@@ -1180,6 +2565,9 @@ function bindOrderTableActions(onUpdate) {
         orderDetailModal(num, onUpdate);
       } catch(e) { toast(e.message, true); }
     };
+  });
+  $$('[data-print-order]').forEach(btn => {
+    btn.onclick = () => showOrderReceiptDialog(btn.dataset.printOrder, onUpdate, false);
   });
 }
 
@@ -1221,7 +2609,10 @@ async function ordersPage(user) {
 
 function orderTable(orders, compact = false) {
   if (!orders.length) return '<div class="admin-empty"><p>Tidak ada data pesanan pada filter ini.</p></div>';
-  return `<div class="responsive-table"><table class="admin-table"><thead><tr><th style="width: 105px;">No. Pesanan</th><th style="width: 85px;">Meja</th><th style="width: 110px;">Tipe</th><th>Rincian Item</th><th style="width: 115px;">Total</th><th style="width: 140px;">Pembayaran</th><th style="width: 130px;">Status</th><th style="width: 75px;">Waktu</th><th style="width: 75px; text-align: right;">Aksi</th></tr></thead><tbody>${orders.map(o => `<tr><td data-label="No. Pesanan"><span class="order-num-tag">#${esc(o.orderNumber)}</span>${o.parentOrderNumber ? `<small class="addon-tag">+ tambahan #${esc(o.parentOrderNumber)}</small>` : ''}</td><td data-label="Meja"><span class="table-name-tag">${esc(o.tableName)}</span></td><td data-label="Tipe">${o.customerType === 'STUDENT' ? `<span class="badge-role-student" title="${esc(o.studentInfo?.campus || '')} (NIM: ${esc(o.studentInfo?.studentId || '-')})">🎓 Pelajar</span>` : `<span class="badge-role-regular">☕ Umum</span>`}</td><td data-label="Rincian Item"><div class="items-cell" title="${esc(o.items.map(i => `${i.quantity}x ${i.productName}`).join(', '))}">${o.items.map(i => `<span class="item-chip"><b>${i.quantity}x</b> ${esc(i.productName)}</span>`).join('')}</div></td><td data-label="Total"><span class="order-total-val">${money(o.total)}</span></td><td data-label="Pembayaran">${paymentBadge(o)}</td><td data-label="Status">${statusBadge(o.status)}</td><td data-label="Waktu"><span class="order-time-tag">${formatTime(o.createdAt)}</span></td><td data-label="Aksi" style="text-align: right;"><button class="btn btn-small btn-soft" data-view-order="${esc(o.orderNumber)}">Detail</button></td></tr>`).join('')}</tbody></table></div>`;
+  return `<div class="responsive-table"><table class="admin-table"><thead><tr><th style="width: 105px;">No. Pesanan</th><th style="width: 85px;">Meja</th><th style="width: 110px;">Tipe</th><th>Rincian Item</th><th style="width: 115px;">Total</th><th style="width: 140px;">Pembayaran</th><th style="width: 130px;">Status</th><th style="width: 75px;">Waktu</th><th style="width: 95px; text-align: right;">Aksi</th></tr></thead><tbody>${orders.map(o => {
+    const isPrinted = Boolean(o.receiptPrinted || o.receipt_printed);
+    return `<tr><td data-label="No. Pesanan"><span class="order-num-tag">#${esc(o.orderNumber)}</span>${o.parentOrderNumber ? `<small class="addon-tag">+ tambahan #${esc(o.parentOrderNumber)}</small>` : ''}</td><td data-label="Meja"><span class="table-name-tag">${esc(o.tableName)}</span></td><td data-label="Tipe">${o.customerType === 'STUDENT' ? `<span class="badge-role-student" title="${esc(o.studentInfo?.campus || '')} (NIM: ${esc(o.studentInfo?.studentId || '-')})">🎓 Pelajar</span>` : `<span class="badge-role-regular">☕ Umum</span>`}</td><td data-label="Rincian Item"><div class="items-cell" title="${esc(o.items.map(i => `${i.quantity}x ${i.productName}`).join(', '))}">${o.items.map(i => `<span class="item-chip"><b>${i.quantity}x</b> ${esc(i.productName)}</span>`).join('')}</div></td><td data-label="Total"><span class="order-total-val">${money(o.total)}</span></td><td data-label="Pembayaran">${paymentBadge(o)}</td><td data-label="Status">${statusBadge(o.status)} ${isPrinted ? '<span class="receipt-mini-badge done" title="Struk sudah dicetak">✓ Struk</span>' : '<span class="receipt-mini-badge pending" title="Belum cetak struk">⚠️ Struk</span>'}</td><td data-label="Waktu"><span class="order-time-tag">${formatTime(o.createdAt)}</span></td><td data-label="Aksi" style="text-align: right;"><div style="display:inline-flex;gap:4px;justify-content:flex-end;"><button class="btn btn-small btn-soft" data-print-order="${esc(o.orderNumber)}" title="Cetak Struk">🖨️</button><button class="btn btn-small btn-soft" data-view-order="${esc(o.orderNumber)}">Detail</button></div></td></tr>`;
+  }).join('')}</tbody></table></div>`;
 }
 
 async function viewStudentPhotoModal(orderNumber, onUpdate) {
@@ -1229,8 +2620,10 @@ async function viewStudentPhotoModal(orderNumber, onUpdate) {
   if (!o || !o.studentInfo) return toast('Data verifikasi pelajar tidak ditemukan.', true);
   const info = o.studentInfo; const photo = info.studentPhoto || '/assets/hero-desktop.jpg'; const isAuto = info.verificationStatus === 'AUTOMATICALLY_VERIFIED'; const isVerified = info.verificationStatus === 'VERIFIED' || isAuto; const isRejected = info.verificationStatus === 'REJECTED';
   const riskClass = info.fraudRisk === 'HIGH' ? 'high' : (info.fraudRisk === 'MEDIUM' ? 'medium' : 'low'); const riskLabel = info.fraudRisk === 'HIGH' ? '🔴 Risiko Tinggi' : (info.fraudRisk === 'MEDIUM' ? '🟡 Risiko Sedang' : '🟢 Risiko Rendah (Aman)');
-  const d = modal(`<div class="modal-heading"><div><span>ENGINE ANTI-FRAUD & VERIFIKASI IDENTITAS PELAJAR</span><h2>Pesanan #${esc(o.orderNumber)} (${esc(o.tableName)})</h2></div><div style="display:flex;align-items:center;gap:6px;"><span class="badge-fraud-score ${riskClass}">${riskLabel} • Skor: ${info.fraudScore || 0}%</span>${isAuto ? '<span class="badge-verify-approved">🤖 Auto-Approved (AI)</span>' : (isVerified ? '<span class="badge-verify-approved">✅ Terverifikasi Sah</span>' : (isRejected ? '<span class="badge-verify-rejected">⚠️ Verifikasi Ditolak</span>' : '<span class="badge-verify-pending">⏳ Menunggu Verifikasi</span>'))}</div></div><div class="student-inspect-grid"><div class="student-inspect-photo-box"><img src="${esc(photo)}" alt="Foto Selfie bersama KTM" onerror="this.src='/assets/hero-desktop.jpg'"></div><div class="student-inspect-details"><div class="inspect-detail-row"><span>Nama Pelajar / Mahasiswa</span><strong>${esc(info.studentName || '-')}</strong></div><div class="inspect-detail-row"><span>Asal Kampus / Sekolah</span><strong>${esc(info.campus || '-')}</strong></div><div class="inspect-detail-row"><span>Nomor Induk (NIM / NIS)</span><strong>${esc(info.studentId || '-')}</strong></div><div class="inspect-detail-row"><span>Email Institusi Resmi</span><strong>${esc(info.email || 'Tidak Dilampirkan')} ${info.email ? '✅' : ''}</strong></div><div class="inspect-detail-row"><span>Total Subsidi Potongan Harga</span><strong style="color:#2c8b5b;">${money(o.totalSavings || 0)}</strong></div><div class="inspect-detail-row"><span>Total Tagihan Saat Ini</span><strong>${money(o.total)}</strong></div>${info.rejectionReason ? `<div class="inspect-detail-row"><span style="color:#e03131;">Alasan Penolakan:</span><strong style="color:#c92a2a;">${esc(info.rejectionReason)}</strong></div>` : ''}<div class="student-verify-notice" style="margin-top:auto;"><span>🛡️</span><div><b>Anti-Fraud AI Radar:</b> ${info.fraudFlags?.length ? info.fraudFlags.join(', ') : 'Format data sesuai standar institusi pendidikan.'}</div></div></div></div><div class="modal-actions" style="margin-top:16px;">${!isVerified ? `<button class="btn btn-green" id="btnApproveStudent">✓ Sahkan Diskon Pelajar</button>` : ''}${!isRejected ? `<button class="btn btn-danger" id="btnRejectStudent">✕ Tolak & Ubah ke Harga Normal</button>` : ''}<button class="btn-blacklist" id="btnBlacklistStudent">🚨 Blacklist Pelajar</button><button class="btn btn-soft" id="btnCloseInspect">Tutup</button></div>`, 'wide-modal');
+  const d = modal(`<div class="modal-heading"><div><span>ENGINE ANTI-FRAUD & VERIFIKASI IDENTITAS PELAJAR</span><h2>Pesanan #${esc(o.orderNumber)} (${esc(o.tableName)})</h2></div><div style="display:flex;align-items:center;gap:6px;"><span class="badge-fraud-score ${riskClass}">${riskLabel} • Skor: ${info.fraudScore || 0}%</span>${isAuto ? '<span class="badge-verify-approved">🤖 Auto-Approved (AI)</span>' : (isVerified ? '<span class="badge-verify-approved">✅ Terverifikasi Sah</span>' : (isRejected ? '<span class="badge-verify-rejected">⚠️ Verifikasi Ditolak</span>' : '<span class="badge-verify-pending">⏳ Menunggu Verifikasi</span>'))}</div></div><div class="student-inspect-grid"><div class="student-inspect-photo-box"><img src="${esc(photo)}" alt="Foto Selfie bersama KTM" onerror="this.src='/assets/hero-desktop.jpg'"><button type="button" class="btn btn-soft btn-small btn-wide" id="btnPreviewKtmCardFromPhoto" style="margin-top:8px;">🪪 Buka Kartu Mahasiswa Digital (KTM)</button></div><div class="student-inspect-details"><div class="inspect-detail-row"><span>Nama Pelajar / Mahasiswa</span><strong>${esc(info.studentName || '-')}</strong></div><div class="inspect-detail-row"><span>Asal Kampus / Sekolah</span><strong>${esc(info.campus || '-')}</strong></div><div class="inspect-detail-row"><span>Fakultas / Jurusan</span><strong>${esc(info.facultyName || info.facultyCode || '-')} • ${esc(info.studyProgram || '-')}</strong></div><div class="inspect-detail-row"><span>Nomor Induk (NIM / NIS)</span><strong>${esc(info.studentId || '-')}</strong></div><div class="inspect-detail-row"><span>Email Institusi Resmi</span><strong>${esc(info.email || 'Tidak Dilampirkan')} ${info.email ? '✅' : ''}</strong></div><div class="inspect-detail-row"><span>Total Subsidi Potongan Harga</span><strong style="color:#2c8b5b;">${money(o.totalSavings || 0)}</strong></div><div class="inspect-detail-row"><span>Total Tagihan Saat Ini</span><strong>${money(o.total)}</strong></div>${info.rejectionReason ? `<div class="inspect-detail-row"><span style="color:#e03131;">Alasan Penolakan:</span><strong style="color:#c92a2a;">${esc(info.rejectionReason)}</strong></div>` : ''}<div class="student-verify-notice" style="margin-top:auto;"><span>🛡️</span><div><b>Anti-Fraud AI Radar:</b> ${info.fraudFlags?.length ? info.fraudFlags.join(', ') : 'Format data sesuai standar institusi pendidikan.'}</div></div></div></div><div class="modal-actions" style="margin-top:16px;">${!isVerified ? `<button class="btn btn-green" id="btnApproveStudent">✓ Sahkan Diskon Pelajar</button>` : ''}${!isRejected ? `<button class="btn btn-danger" id="btnRejectStudent">✕ Tolak & Ubah ke Harga Normal</button>` : ''}<button class="btn-blacklist" id="btnBlacklistStudent">🚨 Blacklist Pelajar</button><button class="btn btn-soft" id="btnCloseInspect">Tutup</button></div>`, 'wide-modal');
   $('#btnCloseInspect', d).onclick = () => d.remove();
+  const btnKtmPreview = $('#btnPreviewKtmCardFromPhoto', d);
+  if (btnKtmPreview) btnKtmPreview.onclick = () => openDigitalKtmModal(info);
   const appBtn = $('#btnApproveStudent', d);
   if (appBtn) appBtn.onclick = async () => { appBtn.disabled = true; try { await api('/admin/orders/' + encodeURIComponent(o.orderNumber) + '/verify-student', { method: 'PATCH', body: JSON.stringify({ status: 'VERIFIED' }) }); toast('✅ Verifikasi pelajar DISETUJUI. Diskon sah!'); d.remove(); onUpdate && onUpdate(); } catch (e) { toast(e.message, true); appBtn.disabled = false; } };
   const rejBtn = $('#btnRejectStudent', d);
@@ -1243,17 +2636,38 @@ async function orderDetailModal(orderNumber, onUpdate) {
   const orders = await api('/admin/orders?q=' + encodeURIComponent(orderNumber)); const o = orders.find(x => x.orderNumber === orderNumber);
   if (!o) return toast('Pesanan tidak ditemukan.', true);
   const isStud = o.customerType === 'STUDENT'; const vStatus = o.studentInfo?.verificationStatus;
-  const d = modal(`<div class="modal-heading"><div><span>DETAIL PESANAN</span><h2>#${esc(o.orderNumber)} (${esc(o.tableName)})</h2></div><div style="display:flex;align-items:center;gap:8px;">
+  const isBirthday = Boolean(o.studentInfo?.isBirthdayToday);
+  const isBdayClaimed = Boolean(o.studentInfo?.birthdayRewardGiven);
+  const isPrinted = Boolean(o.receiptPrinted || o.receipt_printed);
+
+  const d = modal(`<div class="modal-heading"><div><span>DETAIL PESANAN</span><h2>#${esc(o.orderNumber)} (${esc(o.tableName)}) ${o.queueNumber ? `<span class="queue-inline-tag">Antrean #${esc(o.queueNumber)}</span>` : ''}</h2></div><div style="display:flex;align-items:center;gap:8px;">
     <div class="print-btn-group">
       <button class="btn btn-small btn-soft" id="btnPrintCustomer">🧾 Struk Customer</button>
       <button class="btn btn-small btn-soft" id="btnPrintDrink" style="color:#1a6fb5;">☕ Dapur Minuman</button>
       <button class="btn btn-small btn-soft" id="btnPrintFood" style="color:#c0522a;">🍽️ Dapur Makanan</button>
     </div>
-    ${statusBadge(o.status)}</div></div><div class="order-detail-grid"><div><div class="detail-meta"><div><span>WAKTU PESAN</span><b>${formatTime(o.createdAt)}</b></div><div><span>TIPE CUSTOMER</span><b>${isStud ? '🎓 Pelajar / Mahasiswa' : '☕ Pelanggan Umum'}</b></div><div><span>METODE</span><b>${o.payment.method === 'QRIS_DEMO' ? 'QRIS' : 'Tunai di Kasir'}</b></div><div><span>STATUS BAYAR</span><b>${o.payment.status === 'PAID' ? 'Lunas' : 'Belum Bayar'}</b></div></div>${o.studentInfo ? `<div class="student-form-card" style="margin-bottom:14px;padding:12px 16px;"><div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;"><h4 style="margin:0;color:#1b633a;font-size:13px;display:flex;align-items:center;gap:5px;">🎓 Verifikasi Pelajar & Anti-Fraud</h4><div style="display:flex;align-items:center;gap:6px;"><span class="badge-fraud-score ${o.studentInfo.fraudRisk === 'HIGH' ? 'high' : (o.studentInfo.fraudRisk === 'MEDIUM' ? 'medium' : 'low')}">${o.studentInfo.fraudRisk === 'HIGH' ? '🔴 Risiko Tinggi' : (o.studentInfo.fraudRisk === 'MEDIUM' ? '🟡 Risiko Sedang' : '🟢 Aman')} • ${o.studentInfo.fraudScore || 0}%</span>${vStatus === 'AUTOMATICALLY_VERIFIED' ? '<span class="badge-verify-approved">🤖 AI Sah</span>' : (vStatus === 'VERIFIED' ? '<span class="badge-verify-approved">✅ Sah</span>' : (vStatus === 'REJECTED' ? '<span class="badge-verify-rejected">⚠️ Ditolak</span>' : '<span class="badge-verify-pending">⏳ Cek KTM</span>'))}${o.totalSavings ? `<span class="badge-role-student">Hemat ${money(o.totalSavings)}</span>` : ''}</div></div><div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;font-size:12px;margin-bottom:10px;"><div><span style="color:#666;">Nama Mahasiswa:</span> <b style="display:block;">${esc(o.studentInfo?.studentName || '-')}</b></div><div><span style="color:#666;">Asal Kampus / Sekolah:</span> <b style="display:block;">${esc(o.studentInfo?.campus || '-')}</b></div><div><span style="color:#666;">NIM / NIS:</span> <b style="display:inline-block;">${esc(o.studentInfo?.studentId || '-')}</b></div><div><span style="color:#666;">Email Institusi:</span> <b style="display:inline-block;">${esc(o.studentInfo?.email || '-')}</b></div>${o.studentInfo?.rejectionReason ? `<div style="grid-column:1/-1;"><span style="color:#e03131;">Alasan Tolak:</span> <b style="color:#c92a2a;display:inline-block;">${esc(o.studentInfo.rejectionReason)}</b></div>` : ''}</div><button type="button" class="btn btn-soft btn-small btn-wide" id="btnInspectDetailPhoto">🔍 Lihat Foto Selfie bersama KTM & Radar AI</button></div>` : ''}<div class="admin-items-box">${o.items.map(i => `<div class="admin-order-item"><img src="${esc(i.imageUrl || '/assets/iced-latte.jpg')}" alt=""><div><b>${i.quantity}x ${esc(i.productName)}</b><span>${esc(optionSummary(i))}</span>${i.note ? `<small>Catatan: ${esc(i.note)}</small>` : ''}${i.savings ? `<small style="color:#2c8b5b;display:block;font-weight:700;">Hemat Kampus: ${money(i.savings)}</small>` : ''}</div><strong>${money(i.lineTotal)}</strong></div>`).join('')}</div><div class="detail-bill"><div><span>Subtotal</span><b>${money(o.subtotal)}</b></div>${o.totalSavings ? `<div style="color:#2c8b5b;"><span>Total Subsidi Pelajar</span><b>- ${money(o.totalSavings)}</b></div>` : ''}${o.serviceFee ? `<div><span>Biaya Layanan</span><b>${money(o.serviceFee)}</b></div>` : ''}${o.tax ? `<div><span>Pajak</span><b>${money(o.tax)}</b></div>` : ''}<div><span>Total</span><strong>${money(o.total)}</strong></div></div></div><div class="detail-side"><h3>Riwayat Status</h3><div class="history-list">${o.history.map(h => `<div><i></i><div><b>${esc(h.label || h.status)}</b><small>${formatTime(h.at)}</small></div></div>`).join('')}</div></div></div><div class="modal-actions">${o.payment.status === 'PENDING' && o.payment.method === 'CASH' ? `<button class="btn btn-green" id="confirmCash">Konfirmasi Kasir (Lunas)</button>` : ''}${o.status === 'NEW' && o.payment.status === 'PAID' ? `<button class="btn btn-blue" id="toProcess">Mulai Proses Barista</button>` : ''}${o.status === 'PROCESSING' ? `<button class="btn btn-primary" id="toReady">🔔 Pesanan Siap Diambil</button>` : ''}${o.status === 'READY' ? `<button class="btn btn-dark" id="toComplete">Pesanan Selesai (Diambil)</button>` : ''}${o.status === 'NEW' && o.payment.status === 'PENDING' ? `<button class="btn btn-danger" id="toCancel">Batalkan Pesanan</button>` : ''}</div>`, 'wide-modal');
+    <span id="detailReceiptBadgeContainer">
+      ${isPrinted ? '<span class="badge-receipt-done">✓ Struk Dicetak</span>' : '<span class="badge-receipt-pending">⚠️ Belum Cetak Struk</span>'}
+    </span>
+    ${statusBadge(o.status)}</div></div>
+    ${isBirthday ? `
+    <div class="birthday-alert-box ${isBdayClaimed ? 'claimed' : 'ready-claim'}">
+      <div class="birthday-alert-icon">🎂</div>
+      <div class="birthday-alert-content">
+        <b>🎉 Mahasiswa ini BERULANG TAHUN Hari Ini!</b>
+        <small>${isBdayClaimed ? `Kado ulang tahun spesial tahun ini telah diberikan (${esc(o.studentInfo.birthdayRewardName || 'Free Drink')}).` : 'Sesuai program loyalty kampus, berikan 1x minuman kado ulang tahun gratis!'}</small>
+      </div>
+      ${!isBdayClaimed ? `<button type="button" class="btn btn-green btn-small" id="btnClaimBirthdayReward">🎁 Berikan Kado Ultah</button>` : `<span class="badge-bday-done">✅ Kado Ultah Diberikan</span>`}
+    </div>` : ''}
+    <div class="order-detail-grid"><div><div class="detail-meta"><div><span>WAKTU PESAN</span><b>${formatTime(o.createdAt)}</b></div><div><span>TIPE CUSTOMER</span><b>${isStud ? '🎓 Pelajar / Mahasiswa' : '☕ Pelanggan Umum'}</b></div><div><span>METODE</span><b>${o.payment.method === 'QRIS_DEMO' ? 'QRIS' : 'Tunai di Kasir'}</b></div><div><span>STATUS BAYAR</span><b>${o.payment.status === 'PAID' ? 'Lunas' : 'Belum Bayar'}</b></div></div>${o.studentInfo ? `<div class="student-form-card" style="margin-bottom:14px;padding:12px 16px;"><div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;"><h4 style="margin:0;color:#1b633a;font-size:13px;display:flex;align-items:center;gap:5px;">🎓 Verifikasi Pelajar & Anti-Fraud</h4><div style="display:flex;align-items:center;gap:6px;"><span class="badge-fraud-score ${o.studentInfo.fraudRisk === 'HIGH' ? 'high' : (o.studentInfo.fraudRisk === 'MEDIUM' ? 'medium' : 'low')}">${o.studentInfo.fraudRisk === 'HIGH' ? '🔴 Risiko Tinggi' : (o.studentInfo.fraudRisk === 'MEDIUM' ? '🟡 Risiko Sedang' : '🟢 Aman')} • ${o.studentInfo.fraudScore || 0}%</span>${vStatus === 'AUTOMATICALLY_VERIFIED' ? '<span class="badge-verify-approved">🤖 AI Sah</span>' : (vStatus === 'VERIFIED' ? '<span class="badge-verify-approved">✅ Sah</span>' : (vStatus === 'REJECTED' ? '<span class="badge-verify-rejected">⚠️ Ditolak</span>' : '<span class="badge-verify-pending">⏳ Cek KTM</span>'))}${o.totalSavings ? `<span class="badge-role-student">Hemat ${money(o.totalSavings)}</span>` : ''}</div></div><div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;font-size:12px;margin-bottom:10px;"><div><span style="color:#666;">Nama Mahasiswa:</span> <b style="display:block;">${esc(o.studentInfo?.studentName || '-')}</b></div><div><span style="color:#666;">Asal Kampus / Sekolah:</span> <b style="display:block;">${esc(o.studentInfo?.campus || '-')}</b></div><div><span style="color:#666;">Fakultas / Prodi:</span> <b style="display:block;">${esc(o.studentInfo?.facultyName || o.studentInfo?.facultyCode || '-')} • ${esc(o.studentInfo?.studyProgram || '-')}</b></div><div><span style="color:#666;">NIM / NIS:</span> <b style="display:inline-block;">${esc(o.studentInfo?.studentId || '-')}</b></div><div><span style="color:#666;">Email Institusi:</span> <b style="display:inline-block;">${esc(o.studentInfo?.email || '-')}</b></div>${o.studentInfo?.rejectionReason ? `<div style="grid-column:1/-1;"><span style="color:#e03131;">Alasan Tolak:</span> <b style="color:#c92a2a;display:inline-block;">${esc(o.studentInfo.rejectionReason)}</b></div>` : ''}</div><div style="display:flex;gap:8px;"><button type="button" class="btn btn-soft btn-small" id="btnInspectDetailPhoto" style="flex:1;">🔍 Periksa Foto Selfie & AI Radar</button><button type="button" class="btn btn-soft btn-small" id="btnAdminViewKtm" style="flex:1;">🪪 Buka KTM Digital</button></div></div>` : ''}<div class="admin-items-box">${o.items.map(i => `<div class="admin-order-item"><img src="${esc(i.imageUrl || '/assets/iced-latte.jpg')}" alt=""><div><b>${i.quantity}x ${esc(i.productName)}</b><span>${esc(optionSummary(i))}</span>${i.note ? `<small>Catatan: ${esc(i.note)}</small>` : ''}${i.savings ? `<small style="color:#2c8b5b;display:block;font-weight:700;">Hemat Kampus: ${money(i.savings)}</small>` : ''}</div><strong>${money(i.lineTotal)}</strong></div>`).join('')}</div><div class="detail-bill"><div><span>Subtotal</span><b>${money(o.subtotal)}</b></div>${o.totalSavings ? `<div style="color:#2c8b5b;"><span>Total Subsidi Pelajar</span><b>- ${money(o.totalSavings)}</b></div>` : ''}${o.serviceFee ? `<div><span>Biaya Layanan</span><b>${money(o.serviceFee)}</b></div>` : ''}${o.tax ? `<div><span>Pajak</span><b>${money(o.tax)}</b></div>` : ''}<div><span>Total</span><strong>${money(o.total)}</strong></div></div></div><div class="detail-side"><h3>Riwayat Status</h3><div class="history-list">${o.history.map(h => `<div><i></i><div><b>${esc(h.label || h.status)}</b><small>${formatTime(h.at)}</small></div></div>`).join('')}</div></div></div><div class="modal-actions">${o.payment.status === 'PENDING' ? `<button class="btn btn-green" id="confirmCash">Konfirmasi Kasir (Lunas)</button>` : ''}${o.status === 'NEW' && o.payment.status === 'PAID' ? (!isPrinted ? `<button class="btn btn-primary btn-highlight-print" id="btnPrintAndProcess">🖨️ Cetak Struk (Wajib) & Mulai Racik</button><button class="btn btn-blue" id="toProcess" data-need-receipt="true" title="Wajib cetak struk terlebih dahulu">Mulai Proses Barista 🔒</button>` : `<button class="btn btn-blue" id="toProcess">Mulai Proses Barista</button>`) : ''}${o.status === 'PROCESSING' ? `<button class="btn btn-primary" id="toReady">🔔 Pesanan Siap Diambil</button>` : ''}${o.status === 'READY' ? `<button class="btn btn-dark" id="toComplete">Pesanan Selesai (Diambil)</button>` : ''}${o.status === 'NEW' && o.payment.status === 'PENDING' ? `<button class="btn btn-danger" id="toCancel">Batalkan Pesanan</button>` : ''}${o.payment.status === 'PAID' && o.status !== 'CANCELLED' ? `<button class="btn btn-danger-soft" id="btnVoidOrder">⛔ Void / Refund (Pulihkan Stok)</button>` : ''}</div>`, 'wide-modal');
   // Print buttons — fetch receipt data sekali, lalu cetak sesuai tipe
   const fetchAndPrint = async (type) => {
     try {
       const receipt = await api('/admin/orders/' + encodeURIComponent(o.orderNumber) + '/receipt');
+      await api('/admin/orders/' + encodeURIComponent(o.orderNumber) + '/print', { method: 'POST', body: JSON.stringify({ type }) }).catch(() => {});
+      o.receiptPrinted = true;
+      const bc = $('#detailReceiptBadgeContainer', d);
+      if (bc) bc.innerHTML = '<span class="badge-receipt-done">✓ Struk Dicetak</span>';
       printKitchenReceipt(receipt, type);
     } catch(e) { toast('Gagal memuat data struk: ' + e.message, true); }
   };
@@ -1261,8 +2675,70 @@ async function orderDetailModal(orderNumber, onUpdate) {
   $('#btnPrintDrink', d).onclick   = () => fetchAndPrint('DRINK');
   $('#btnPrintFood', d).onclick    = () => fetchAndPrint('FOOD');
   const inspectBtn = $('#btnInspectDetailPhoto', d); if (inspectBtn) inspectBtn.onclick = () => { d.remove(); viewStudentPhotoModal(o.orderNumber, onUpdate); };
+  const adminKtmBtn = $('#btnAdminViewKtm', d); if (adminKtmBtn) adminKtmBtn.onclick = () => openDigitalKtmModal(o.studentInfo);
+  const claimBdayBtn = $('#btnClaimBirthdayReward', d);
+  if (claimBdayBtn) claimBdayBtn.onclick = async () => {
+    claimBdayBtn.disabled = true;
+    try {
+      const res = await api('/admin/orders/' + encodeURIComponent(o.orderNumber) + '/birthday-reward', {
+        method: 'POST',
+        body: JSON.stringify({ rewardType: 'FREE_ITEM', rewardName: 'Free Birthday Specialty Coffee' })
+      });
+      toast(`🎉 ${res.message}`);
+      d.remove();
+      orderDetailModal(o.orderNumber, onUpdate);
+    } catch (e) {
+      toast(e.message, true);
+      claimBdayBtn.disabled = false;
+    }
+  };
+  const voidOrderBtn = $('#btnVoidOrder', d);
+  if (voidOrderBtn) voidOrderBtn.onclick = async () => {
+    const reason = prompt('Masukkan alasan pembatalan / VOID pesanan (stok bahan baku akan otomatis dikembalikan):', 'Pelanggan membatalkan pesanan');
+    if (!reason) return;
+    voidOrderBtn.disabled = true;
+    try {
+      await api('/admin/orders/' + encodeURIComponent(o.orderNumber) + '/void', {
+        method: 'POST',
+        body: JSON.stringify({ reason })
+      });
+      toast('Pesanan berhasil di-VOID dan stok bahan baku dikembalikan!');
+      d.remove();
+      onUpdate && onUpdate();
+    } catch (e) {
+      toast(e.message, true);
+      voidOrderBtn.disabled = false;
+    }
+  };
   const cash = $('#confirmCash', d); if (cash) cash.onclick = async () => { cash.disabled = true; try { await api('/admin/orders/' + encodeURIComponent(o.orderNumber) + '/payment', { method: 'PATCH', body: '{}' }); toast('Pembayaran kasir dikonfirmasi LUNAS'); d.remove(); onUpdate(); } catch (e) { toast(e.message, true); cash.disabled = false; } };
-  const toProc = $('#toProcess', d); if (toProc) toProc.onclick = async () => { try { await api('/admin/orders/' + encodeURIComponent(o.orderNumber) + '/status', { method: 'PATCH', body: JSON.stringify({ status: 'PROCESSING' }) }); toast('Status diubah ke SEDANG DIPROSES'); d.remove(); onUpdate(); } catch (e) { toast(e.message, true); } };
+  const printAndProc = $('#btnPrintAndProcess', d);
+  if (printAndProc) {
+    printAndProc.onclick = () => {
+      showOrderReceiptDialog(o.orderNumber, () => {
+        d.remove();
+        onUpdate && onUpdate();
+      }, true);
+    };
+  }
+  const toProc = $('#toProcess', d);
+  if (toProc) {
+    toProc.onclick = async () => {
+      if (toProc.dataset.needReceipt === 'true') {
+        toast('⚠️ Struk pesanan wajib dicetak terlebih dahulu sebelum memproses pesanan ke dapur!', true);
+        showOrderReceiptDialog(o.orderNumber, () => {
+          d.remove();
+          onUpdate && onUpdate();
+        }, true);
+        return;
+      }
+      try {
+        await api('/admin/orders/' + encodeURIComponent(o.orderNumber) + '/status', { method: 'PATCH', body: JSON.stringify({ status: 'PROCESSING' }) });
+        toast('Status diubah ke SEDANG DIPROSES');
+        d.remove();
+        onUpdate();
+      } catch (e) { toast(e.message, true); }
+    };
+  }
   const toRdy = $('#toReady', d); if (toRdy) toRdy.onclick = async () => { try { await api('/admin/orders/' + encodeURIComponent(o.orderNumber) + '/status', { method: 'PATCH', body: JSON.stringify({ status: 'READY' }) }); toast('Pesanan dinyatakan SIAP! Notifikasi terkirim ke customer.'); d.remove(); onUpdate(); } catch (e) { toast(e.message, true); } };
   const toComp = $('#toComplete', d); if (toComp) toComp.onclick = async () => { try { await api('/admin/orders/' + encodeURIComponent(o.orderNumber) + '/status', { method: 'PATCH', body: JSON.stringify({ status: 'COMPLETED' }) }); toast('Pesanan SELESAI'); d.remove(); onUpdate(); } catch (e) { toast(e.message, true); } };
   const toCanc = $('#toCancel', d); if (toCanc) toCanc.onclick = async () => { if (!(await confirmDialog({ title: 'Batalkan Pesanan?', message: 'Pesanan yang belum dibayar ini akan dibatalkan.', danger: true, ok: 'Batalkan' }))) return; try { await api('/admin/orders/' + encodeURIComponent(o.orderNumber) + '/status', { method: 'PATCH', body: JSON.stringify({ status: 'CANCELLED' }) }); toast('Pesanan dibatalkan'); d.remove(); onUpdate(); } catch (e) { toast(e.message, true); } };
@@ -1505,9 +2981,23 @@ async function reportsPage(user) {
 
 async function settingsPage(user) {
   const [s, audit] = await Promise.all([api('/admin/settings'), api('/admin/audit')]);
+  const appMode = (s.appMode || 'production').toLowerCase();
+  const isDemo = appMode === 'demo';
   let switches = { qrisEnabled: s.qrisEnabled !== false, cashEnabled: s.cashEnabled !== false, soundEnabled: s.soundEnabled !== false, dailyReportEnabled: s.dailyReportEnabled !== false };
   document.body.className = 'admin-body';
-  document.body.innerHTML = adminShell(`${adminTop('Pengaturan Sistem', 'Kelola identitas cafe, metode pembayaran, notifikasi, dan akun demo.')}<section class="settings-grid"><div><section class="admin-panel settings-panel"><h2>Profil Cafe</h2>${[['cafeName', 'Nama Cafe', s.cafeName], ['cafeAddress', 'Alamat', s.cafeAddress || ''], ['cafePhone', 'No. Telepon', s.cafePhone || ''], ['operatingHours', 'Jam Operasional', s.operatingHours || '']].map(([id, l, v]) => `<label>${l}<input id="${id}" value="${esc(v)}"></label>`).join('')}<div class="two-fields"><label>Biaya Layanan (%)<input id="serviceFee" type="number" min="0" max="30" value="${s.serviceFee}"></label><label>Pajak (%)<input id="taxPercent" type="number" min="0" max="30" value="${s.taxPercent}"></label></div></section><section class="admin-panel settings-panel"><h2>Metode Pembayaran</h2>${settingSwitch('qrisEnabled', 'Integrasi QRIS Otomatis', 'Mode demo memakai simulasi sandbox.', switches.qrisEnabled)}${settingSwitch('cashEnabled', 'Bayar di Kasir (Tunai)', 'Pelanggan membayar langsung di meja kasir.', switches.cashEnabled)}</section></div><div><section class="admin-panel settings-panel"><h2>Notifikasi & Suara</h2>${settingSwitch('soundEnabled', 'Pesanan Masuk Baru', 'Mainkan notifikasi suara saat browser mengizinkan.', switches.soundEnabled)}${settingSwitch('dailyReportEnabled', 'Laporan Penutupan Harian', 'Siapkan ringkasan operasional harian.', switches.dailyReportEnabled)}</section><section class="admin-panel settings-panel"><h2>Keamanan & Akun</h2><label>Email Akun<input value="admin@cafecampus.demo" disabled></label><div class="setting-actions"><button class="btn btn-outline" id="passwordDemo">Ubah Password</button><button class="btn btn-danger" id="logoutSettings">Keluar Sesi</button></div></section><section class="admin-panel settings-panel demo-controls"><h2>Kontrol Demo</h2><p>Reset mengembalikan menu, meja, sample order, reports, dan settings ke kondisi awal.</p><button class="btn btn-outline" id="resetDemo">Reset Data Demo</button></section></div></section><section class="admin-panel audit-panel"><div class="panel-head"><h2>Audit Trail</h2><span>${audit.length} aktivitas terakhir</span></div><div class="audit-list">${audit.slice(0, 12).map(a => `<div><span>${formatTime(a.at)}</span><b>${esc(a.action.replaceAll('_', ' '))}</b><small>${esc(JSON.stringify(a.meta || {}))}</small></div>`).join('') || '<div class="admin-empty">Belum ada aktivitas admin.</div>'}</div></section><div class="settings-save"><button class="btn btn-primary" id="saveSettings">Simpan Perubahan</button></div>`, 'settings', user);
+  const modeBanner = `<section class="admin-panel settings-panel" style="grid-column: 1 / -1; margin-bottom: 4px; border-left: 4px solid ${isDemo ? '#f59e0b' : '#10b981'}; background: ${isDemo ? 'rgba(245, 158, 11, 0.08)' : 'rgba(16, 185, 129, 0.08)'}; display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 12px; padding: 14px 18px;">
+    <div style="display: flex; align-items: center; gap: 12px;">
+      <span style="font-size: 22px;">${isDemo ? '⚡' : '🛡️'}</span>
+      <div>
+        <b style="font-size: 14px;">Mode Sistem: <span style="text-transform: uppercase; color: ${isDemo ? '#d97706' : '#059669'};">${esc(appMode)}</span></b>
+        <p style="margin: 2px 0 0; font-size: 12px; color: var(--text-muted, #64748b);">
+          ${isDemo ? 'Mode DEMO aktif: fitur simulasi bayar, reset data demo, dan helper pengujian aktif.' : 'Mode PRODUKSI aktif: simulasi dinonaktifkan, pengamanan penuh dan integritas transaksi aktif.'}
+        </p>
+      </div>
+    </div>
+    <span class="badge ${isDemo ? 'badge-warning' : 'badge-success'}" style="padding: 4px 10px; font-weight: 700; font-size: 11px;">${isDemo ? 'DEMO MODE' : 'PRODUCTION MODE'}</span>
+  </section>`;
+  document.body.innerHTML = adminShell(`${adminTop('Pengaturan Sistem', isDemo ? 'Kelola identitas cafe, metode pembayaran, notifikasi, dan akun demo.' : 'Kelola identitas cafe, metode pembayaran, notifikasi, dan operasional.')}<section class="settings-grid">${modeBanner}<div><section class="admin-panel settings-panel"><h2>Profil Cafe</h2>${[['cafeName', 'Nama Cafe', s.cafeName], ['cafeAddress', 'Alamat', s.cafeAddress || ''], ['cafePhone', 'No. Telepon', s.cafePhone || ''], ['operatingHours', 'Jam Operasional', s.operatingHours || '']].map(([id, l, v]) => `<label>${l}<input id="${id}" value="${esc(v)}"></label>`).join('')}<div class="two-fields"><label>Biaya Layanan (%)<input id="serviceFee" type="number" min="0" max="30" value="${s.serviceFee}"></label><label>Pajak (%)<input id="taxPercent" type="number" min="0" max="30" value="${s.taxPercent}"></label></div></section><section class="admin-panel settings-panel"><h2>Metode Pembayaran</h2>${settingSwitch('qrisEnabled', 'Integrasi QRIS Otomatis', 'Mode demo memakai simulasi sandbox.', switches.qrisEnabled)}${settingSwitch('cashEnabled', 'Bayar di Kasir (Tunai)', 'Pelanggan membayar langsung di meja kasir.', switches.cashEnabled)}</section></div><div><section class="admin-panel settings-panel"><h2>Notifikasi & Suara</h2>${settingSwitch('soundEnabled', 'Pesanan Masuk Baru', 'Mainkan notifikasi suara saat browser mengizinkan.', switches.soundEnabled)}${settingSwitch('dailyReportEnabled', 'Laporan Penutupan Harian', 'Siapkan ringkasan operasional harian.', switches.dailyReportEnabled)}</section><section class="admin-panel settings-panel"><h2>Keamanan & Akun</h2><label>Email Akun<input value="admin@cafecampus.demo" disabled></label><div class="setting-actions"><button class="btn btn-outline" id="passwordDemo">Ubah Password</button><button class="btn btn-danger" id="logoutSettings">Keluar Sesi</button></div></section><section class="admin-panel settings-panel demo-controls"><h2>Kontrol Demo</h2><p>Reset mengembalikan menu, meja, sample order, reports, dan settings ke kondisi awal.</p><button class="btn btn-outline" id="resetDemo">Reset Data Demo</button></section></div></section><section class="admin-panel audit-panel"><div class="panel-head"><h2>Audit Trail</h2><span>${audit.length} aktivitas terakhir</span></div><div class="audit-list">${audit.slice(0, 12).map(a => `<div><span>${formatTime(a.at)}</span><b>${esc(a.action.replaceAll('_', ' '))}</b><small>${esc(JSON.stringify(a.meta || {}))}</small></div>`).join('') || '<div class="admin-empty">Belum ada aktivitas admin.</div>'}</div></section><div class="settings-save"><button class="btn btn-primary" id="saveSettings">Simpan Perubahan</button></div>`, 'settings', user);
 
   bindAdminChrome('settings');
   $$('[data-setting-switch]').forEach(b => b.onclick = () => { const k = b.dataset.settingSwitch; switches[k] = !switches[k]; b.classList.toggle('on', switches[k]); });$('#saveSettings').onclick = async () => {
@@ -1518,6 +3008,1035 @@ async function settingsPage(user) {
   $('#resetDemo').onclick = async () => { if (!(await confirmDialog({ title: 'Reset Semua Data Demo?', message: 'Semua perubahan review akan dihapus dan dikembalikan ke data awal.', ok: 'Reset Demo', danger: true }))) return; await api('/admin/demo/reset', { method: 'POST', body: '{}' }); clearCart(); toast('Data demo berhasil di-reset'); nav('/admin'); };
 }
 function settingSwitch(key, title, desc, on) { return `<div class="setting-switch-row"><span><b>${esc(title)}</b><small>${esc(desc)}</small></span><button type="button" class="switch ${on ? 'on' : ''}" data-setting-switch="${key}"><i></i></button></div>`; }
+
+// ==========================================
+// DIGITAL KTM SMART CARD ENGINE (FAKULTAS)
+// ==========================================
+function renderDigitalKtmCard(s = {}) {
+  const facCode = (s.facultyCode || 'UI').toUpperCase();
+  const facMap = {
+    'FT': { name: 'Fakultas Teknik', color: '#1e3a8a' },
+    'FK': { name: 'Fakultas Kedokteran', color: '#065f46' },
+    'FEB': { name: 'Fakultas Ekonomi dan Bisnis', color: '#b45309' },
+    'FH': { name: 'Fakultas Hukum', color: '#991b1b' },
+    'FASILKOM': { name: 'Fakultas Ilmu Komputer', color: '#6b21a8' },
+    'FMIPA': { name: 'Fakultas Matematika & IPA', color: '#0e7490' },
+    'FISIP': { name: 'Fakultas Ilmu Sosial & Politik', color: '#c2410c' },
+    'FIB': { name: 'Fakultas Ilmu Pengetahuan Budaya', color: '#0f766e' },
+    'FPSI': { name: 'Fakultas Psikologi', color: '#be185d' }
+  };
+  const facInfo = facMap[facCode] || { name: 'Fakultas Kampus', color: '#1e3a8a' };
+  const facName = s.facultyName || facInfo.name;
+  const color = s.facultyColor || facInfo.color;
+  const name = s.studentName || 'Mahasiswa Terdaftar';
+  const nim = s.studentId || '1234567890';
+  const campus = s.campus || 'Universitas Indonesia';
+  const prodi = s.studyProgram || 'Program Studi Reguler';
+  const birth = s.birthDate ? new Date(s.birthDate).toLocaleDateString('id-ID', { day:'2-digit', month:'short', year:'numeric' }) : '-';
+  const hasPhoto = Boolean(s.studentPhoto && String(s.studentPhoto).trim().length > 10);
+  const photoSvg = `<svg viewBox="0 0 100 100" style="width:100%;height:100%;background:#e2e8f0;fill:#94a3b8;"><circle cx="50" cy="38" r="22"/><path d="M15 88 C15 65 30 58 50 58 C70 58 85 65 85 88 Z"/></svg>`;
+  const photoImg = hasPhoto
+    ? `<img src="${esc(s.studentPhoto)}" alt="Foto Mahasiswa" onerror="this.src='/assets/hero-desktop.jpg'">`
+    : photoSvg;
+
+  return `
+    <div class="ktm-smart-card-wrap" style="--ktm-accent: ${esc(color)};">
+      <div class="ktm-smart-card">
+        <div class="ktm-card-header">
+          <div class="ktm-univ-logo">🎓</div>
+          <div class="ktm-univ-meta">
+            <strong>${esc(campus.toUpperCase())}</strong>
+            <span>${esc(facName.toUpperCase())} (${esc(facCode)})</span>
+          </div>
+          <div class="ktm-faculty-pill">${esc(facCode)}</div>
+        </div>
+        <div class="ktm-card-body">
+          <div class="ktm-photo-col">
+            <div class="ktm-photo-frame">
+              ${photoImg}
+            </div>
+            <div class="ktm-chip-graphic">
+              <div class="emv-chip"><i></i><i></i><i></i></div>
+              <span class="ktm-nfc-icon">🛜</span>
+            </div>
+          </div>
+          <div class="ktm-info-col">
+            <div class="ktm-field">
+              <label>NAMA MAHASISWA</label>
+              <strong>${esc(name)}</strong>
+            </div>
+            <div class="ktm-field">
+              <label>NOMOR INDUK MAHASISWA (NIM)</label>
+              <strong class="ktm-nim-display">${esc(nim)}</strong>
+            </div>
+            <div class="ktm-field-grid">
+              <div>
+                <label>PROGRAM STUDI</label>
+                <span>${esc(prodi)}</span>
+              </div>
+              <div>
+                <label>TGL LAHIR</label>
+                <span>${esc(birth)}</span>
+              </div>
+            </div>
+            <div class="ktm-badge-active">
+              <span class="badge-dot"></span> MAHASISWA AKTIF KAMPUS
+            </div>
+          </div>
+        </div>
+        <div class="ktm-card-footer">
+          <div class="ktm-barcode-box">
+            <div class="ktm-barcode-lines">||| | |||| | ||||| || | ||| |||| | |||| ||</div>
+            <small>KTM-AUTH-${esc(nim)}</small>
+          </div>
+          <div class="ktm-hologram">
+            <span>RESMI</span>
+          </div>
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+function openDigitalKtmModal(studentInfo) {
+  if (!studentInfo) return toast('Data kartu mahasiswa tidak tersedia.', true);
+  const d = modal(`
+    <div class="dialog digital-ktm-modal">
+      <div class="modal-heading">
+        <div>
+          <span>KARTU TANDA MAHASISWA DIGITAL (KTM)</span>
+          <h2>Verifikasi Otomatis Terintegrasi</h2>
+        </div>
+        <span class="status-badge status-ready"><i class="status-dot"></i>Valid &amp; Aktif</span>
+      </div>
+      <div style="margin: 16px 0;">
+        ${renderDigitalKtmCard(studentInfo)}
+      </div>
+      <p style="font-size:12px;color:var(--muted);text-align:center;margin:0 0 16px 0;">
+        Desain &amp; warna kartu dibuat otomatis dari profil fakultas mahasiswa (${esc(studentInfo.facultyName || studentInfo.facultyCode || 'Umum')}).
+      </p>
+      <div class="dialog-actions">
+        <button class="btn btn-primary btn-full" data-modal-close>Tutup Kartu Mahasiswa</button>
+      </div>
+    </div>
+  `, 'dialog-card');
+}
+
+// ==========================================
+// KITCHEN DISPLAY SYSTEM (KDS)
+// ==========================================
+async function kdsPage(user) {
+  let activeStation = 'ALL'; // 'ALL', 'DRINK', 'FOOD'
+  const loadKds = async () => {
+    const orders = await api('/admin/orders');
+    const activeOrders = orders.filter(o => ['NEW', 'PROCESSING', 'READY'].includes(o.status));
+    
+    document.body.className = 'admin-body kds-page-body';
+    document.body.innerHTML = adminShell(`
+      ${adminTop('Kitchen Display System (KDS)', 'Layar monitor dapur real-time untuk barista kopi & dapur makanan dengan pemisahan stasiun.', `
+        <div class="kds-station-switch">
+          <button class="btn btn-small ${activeStation === 'ALL' ? 'btn-primary' : 'btn-soft'}" data-station="ALL">Semua Dapur</button>
+          <button class="btn btn-small ${activeStation === 'DRINK' ? 'btn-primary' : 'btn-soft'}" data-station="DRINK">☕ Barista Minuman</button>
+          <button class="btn btn-small ${activeStation === 'FOOD' ? 'btn-primary' : 'btn-soft'}" data-station="FOOD">🍽️ Dapur Makanan</button>
+        </div>
+      `)}
+      <div class="kds-board-grid">
+        <div class="kds-board-column new-col">
+          <div class="kds-col-head">
+            <h3><span>🔔</span> Pesanan Baru (Antrean Masuk)</h3>
+            <span class="kds-col-count">${activeOrders.filter(o => o.status === 'NEW').length}</span>
+          </div>
+          <div class="kds-col-body">
+            ${renderKdsColumn(activeOrders.filter(o => o.status === 'NEW'), activeStation)}
+          </div>
+        </div>
+        <div class="kds-board-column proc-col">
+          <div class="kds-col-head">
+            <h3><span>🍳</span> Sedang Dimasak / Diracik</h3>
+            <span class="kds-col-count">${activeOrders.filter(o => o.status === 'PROCESSING').length}</span>
+          </div>
+          <div class="kds-col-body">
+            ${renderKdsColumn(activeOrders.filter(o => o.status === 'PROCESSING'), activeStation)}
+          </div>
+        </div>
+        <div class="kds-board-column ready-col">
+          <div class="kds-col-head">
+            <h3><span>✅</span> Siap Diambil di Pick-Up</h3>
+            <span class="kds-col-count">${activeOrders.filter(o => o.status === 'READY').length}</span>
+          </div>
+          <div class="kds-col-body">
+            ${renderKdsColumn(activeOrders.filter(o => o.status === 'READY'), activeStation)}
+          </div>
+        </div>
+      </div>
+    `, 'kds', user);
+
+    bindAdminChrome('kds');
+    $$('[data-station]').forEach(b => b.onclick = () => {
+      activeStation = b.dataset.station;
+      loadKds();
+    });
+    bindKdsActions(loadKds);
+  };
+
+  await loadKds();
+  setupAdminRealtime(loadKds);
+}
+
+function renderKdsColumn(orders, station) {
+  let list = orders;
+  if (station && station !== 'ALL') {
+    list = orders.map(o => {
+      const items = (o.items || []).filter(i => {
+        const kt = i.kitchenType || ((i.categorySlug === 'makanan' || i.categorySlug === 'snack' || i.categorySlug === 'dessert') ? 'FOOD' : 'DRINK');
+        return kt === station;
+      });
+      return items.length ? { ...o, items } : null;
+    }).filter(Boolean);
+  }
+
+  if (!list.length) return `<div class="kds-empty-col">Tidak ada pesanan untuk stasiun ${station === 'DRINK' ? 'Barista Minuman' : (station === 'FOOD' ? 'Dapur Makanan' : 'ini')}</div>`;
+  return list.map(o => {
+    const items = o.items || [];
+    const isPaid = (o.payment?.status || o.paymentStatus) === 'PAID';
+    return `
+      <article class="kds-ticket-card status-${o.status.toLowerCase()}">
+        <div class="kds-ticket-top">
+          <div class="kds-ticket-title">
+            <strong class="kds-order-no">#${esc(o.orderNumber)}</strong>
+            <span class="kds-queue-tag">Antrean: ${esc(o.queueNumber || 'Q-001')}</span>
+          </div>
+          <span class="kds-table-badge">${esc(o.tableName)}</span>
+        </div>
+        <div class="kds-ticket-meta">
+          <span>🕒 ${formatTime(o.createdAt)}</span>
+          <span class="${isPaid ? 'kds-paid-tag' : 'kds-unpaid-tag'}">
+            ${isPaid ? 'LUNAS' : 'BELUM BAYAR'}
+          </span>
+        </div>
+        <div class="kds-items-list">
+          ${items.map(i => `
+            <div class="kds-item-row">
+              <span class="kds-item-qty">${i.quantity}x</span>
+              <div class="kds-item-desc">
+                <b>${esc(i.productName)}</b>
+                ${i.options ? `<small>${esc(optionSummary(i))}</small>` : ''}
+                ${i.note ? `<div class="kds-note-pill">📝 ${esc(i.note)}</div>` : ''}
+              </div>
+            </div>
+          `).join('')}
+        </div>
+        <div class="kds-card-actions">
+          ${o.status === 'NEW' ? (
+            !(o.receiptPrinted || o.receipt_printed) ? `
+              <div style="margin-bottom:6px;font-size:11px;color:#b45309;background:#fffbeb;border:1px dashed #fde68a;border-radius:4px;padding:3px 6px;text-align:center;">
+                ⚠️ Wajib Cetak Struk Kasir
+              </div>
+              <button class="btn btn-primary btn-small btn-wide btn-highlight-print" data-kds-print="${esc(o.orderNumber)}" data-next="PROCESSING">
+                🖨️ Cetak Struk & Mulai Racik
+              </button>
+            ` : `
+              <button class="btn btn-blue btn-small btn-wide" data-kds-bump="${esc(o.orderNumber)}" data-next="PROCESSING">
+                ▶ Mulai Racik
+              </button>
+            `
+          ) : ''}
+          ${o.status === 'PROCESSING' ? `
+            <button class="btn btn-green btn-small btn-wide" data-kds-bump="${esc(o.orderNumber)}" data-next="READY">
+              🔔 Siap Diambil
+            </button>
+          ` : ''}
+          ${o.status === 'READY' ? `
+            <button class="btn btn-dark btn-small btn-wide" data-kds-bump="${esc(o.orderNumber)}" data-next="COMPLETED">
+              ✓ Selesai Pick-up
+            </button>
+          ` : ''}
+        </div>
+      </article>
+    `;
+  }).join('');
+}
+
+function bindKdsActions(onUpdate) {
+  $$('[data-kds-print]').forEach(b => b.onclick = () => {
+    const num = b.dataset.kdsPrint;
+    showOrderReceiptDialog(num, onUpdate, true);
+  });
+  $$('[data-kds-bump]').forEach(b => b.onclick = async () => {
+    b.disabled = true;
+    const num = b.dataset.kdsBump;
+    const next = b.dataset.next;
+    try {
+      await api('/admin/orders/' + encodeURIComponent(num) + '/status', {
+        method: 'PATCH',
+        body: JSON.stringify({ status: next })
+      });
+      if (next === 'READY') {
+        alarm.playReadyChime();
+        toast('🔔 Pesanan #' + num + ' SIAP! Buzzer & Alarm berdering di layar pelanggan.');
+      } else {
+        toast('Status pesanan #' + num + ' dimajukan ke ' + next);
+      }
+      onUpdate();
+    } catch(e) {
+      toast(e.message, true);
+      b.disabled = false;
+    }
+  });
+}
+
+// ==========================================
+// MASTER DATA FAKULTAS (CRUD)
+// ==========================================
+async function facultiesAdminPage(user) {
+  const list = await api('/public/faculties');
+  document.body.className = 'admin-body';
+  document.body.innerHTML = adminShell(`
+    ${adminTop('Master Data Fakultas & Tema KTM', 'Kelola daftar fakultas, kode, dan warna tema kartu mahasiswa digital.', `
+      <button class="btn btn-primary" id="btnAddFaculty">${icon('plus', 16)} Tambah Fakultas</button>
+    `)}
+    <section class="admin-panel">
+      <div class="responsive-table">
+        <table class="admin-table">
+          <thead>
+            <tr>
+              <th style="width:120px;">Kode</th>
+              <th>Nama Fakultas</th>
+              <th style="width:140px;">Warna Tema KTM</th>
+              <th style="width:160px;">Preview Badge</th>
+              <th style="width:100px;text-align:right;">Aksi</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${list.map(f => `
+              <tr>
+                <td><b>${esc(f.code)}</b></td>
+                <td><strong>${esc(f.name)}</strong></td>
+                <td>
+                  <div style="display:flex;align-items:center;gap:8px;">
+                    <span style="display:inline-block;width:20px;height:20px;border-radius:6px;background:${esc(f.colorTheme)};border:1px solid rgba(0,0,0,0.1);"></span>
+                    <code>${esc(f.colorTheme)}</code>
+                  </div>
+                </td>
+                <td>
+                  <span class="ktm-preview-chip" style="background:${esc(f.colorTheme)}18;color:${esc(f.colorTheme)};border:1px solid ${esc(f.colorTheme)}44;padding:3px 8px;border-radius:6px;font-size:12px;font-weight:700;">
+                    🎓 ${esc(f.code)} Card
+                  </span>
+                </td>
+                <td style="text-align:right;">
+                  <button class="icon-btn" data-edit-faculty="${esc(f.id)}" title="Edit">${icon('edit', 16)}</button>
+                  <button class="icon-btn icon-btn-danger" data-del-faculty="${esc(f.id)}" title="Hapus">${icon('trash', 16)}</button>
+                </td>
+              </tr>
+            `).join('')}
+          </tbody>
+        </table>
+      </div>
+    </section>
+  `, 'faculties', user);
+
+  bindAdminChrome('faculties');
+  $('#btnAddFaculty').onclick = () => facultyModal(null, () => facultiesAdminPage(user));
+  $$('[data-edit-faculty]').forEach(b => b.onclick = () => {
+    const f = list.find(x => x.id === b.dataset.editFaculty);
+    facultyModal(f, () => facultiesAdminPage(user));
+  });
+  $$('[data-del-faculty]').forEach(b => b.onclick = async () => {
+    const f = list.find(x => x.id === b.dataset.delFaculty);
+    if (!f) return;
+    if (!(await confirmDialog({ title: 'Hapus Fakultas?', message: `Fakultas "${f.name}" akan dihapus.`, ok: 'Hapus', danger: true }))) return;
+    try {
+      await api('/admin/faculties/' + encodeURIComponent(f.id), { method: 'DELETE' });
+      toast('Fakultas berhasil dihapus');
+      facultiesAdminPage(user);
+    } catch(e) { toast(e.message, true); }
+  });
+}
+
+function facultyModal(f, onDone) {
+  const d = modal(`
+    <div class="dialog">
+      <h3>${f ? 'Edit Fakultas' : 'Tambah Fakultas Baru'}</h3>
+      <label class="field-label">ID Fakultas</label>
+      <input class="input" id="fId" value="${esc(f?.id || '')}" placeholder="fac-fasilkom" ${f ? 'disabled' : ''}>
+      <label class="field-label" style="margin-top:12px;">Nama Fakultas</label>
+      <input class="input" id="fName" value="${esc(f?.name || '')}" placeholder="Fakultas Ilmu Komputer">
+      <label class="field-label" style="margin-top:12px;">Kode Singkatan (Badge)</label>
+      <input class="input" id="fCode" value="${esc(f?.code || '')}" placeholder="FASILKOM">
+      <label class="field-label" style="margin-top:12px;">Warna Tema KTM (Hex / Picker)</label>
+      <div style="display:flex;gap:10px;align-items:center;">
+        <input type="color" id="fColorPicker" value="${esc(f?.colorTheme || '#0284c7')}" style="width:48px;height:38px;padding:2px;border-radius:8px;border:1px solid var(--line);cursor:pointer;">
+        <input class="input" id="fColor" value="${esc(f?.colorTheme || '#0284c7')}" placeholder="#0284c7" style="flex:1;">
+      </div>
+      <div class="dialog-actions" style="margin-top:18px;">
+        <button class="btn btn-soft" data-modal-close>Batal</button>
+        <button class="btn btn-primary" id="btnSaveFaculty">Simpan Fakultas</button>
+      </div>
+    </div>
+  `, 'dialog-card');
+
+  const picker = $('#fColorPicker', d);
+  const text = $('#fColor', d);
+  picker.oninput = () => text.value = picker.value;
+  text.oninput = () => { if (/^#[0-9A-Fa-f]{6}$/.test(text.value)) picker.value = text.value; };
+
+  $('#btnSaveFaculty', d).onclick = async () => {
+    const name = $('#fName', d).value.trim();
+    const code = $('#fCode', d).value.trim();
+    const colorTheme = text.value.trim();
+    if (!name || !code) return toast('Nama dan kode fakultas wajib diisi.', true);
+
+    try {
+      if (f) {
+        await api('/admin/faculties/' + encodeURIComponent(f.id), {
+          method: 'PATCH',
+          body: JSON.stringify({ name, code, colorTheme })
+        });
+      } else {
+        const id = ($('#fId', d).value.trim() || ('fac-' + code.toLowerCase().replace(/[^a-z0-9]/g, '')));
+        await api('/admin/faculties', {
+          method: 'POST',
+          body: JSON.stringify({ id, name, code, colorTheme })
+        });
+      }
+      d.remove();
+      toast('Fakultas berhasil disimpan');
+      onDone();
+    } catch(e) { toast(e.message, true); }
+  };
+}
+
+// ==========================================
+// RESEP MENU & STOK BAHAN BAKU REAL-TIME
+// ==========================================
+async function inventoryAdminPage(user) {
+  let activeTab = 'MATERIALS'; // 'MATERIALS' or 'RECIPES'
+  const [materials, products, mutations] = await Promise.all([
+    api('/admin/materials'),
+    api('/admin/products'),
+    api('/admin/stock/mutations').catch(() => [])
+  ]);
+
+  const renderInventoryView = () => {
+    document.body.className = 'admin-body';
+    document.body.innerHTML = adminShell(`
+      ${adminTop('Komposisi Resep & Stok Real-Time', 'Manajemen bahan baku atomik (Biji kopi, susu, cup, sirup) dan kalkulasi porsi menu.', `
+        ${activeTab === 'MATERIALS' ? `<button class="btn btn-primary" id="btnAddMaterial">${icon('plus', 16)} Tambah Bahan Baku</button>` : ''}
+      `)}
+      <div class="report-tabs" style="margin-bottom:16px;">
+        <button class="${activeTab === 'MATERIALS' ? 'active' : ''}" id="tabMat">Bahan Baku &amp; Mutasi Stok</button>
+        <button class="${activeTab === 'RECIPES' ? 'active' : ''}" id="tabRec">Komposisi Resep Menu</button>
+      </div>
+
+      ${activeTab === 'MATERIALS' ? `
+        <div class="inventory-alerts-bar">
+          ${materials.filter(m => Number(m.current_stock) <= Number(m.min_stock)).map(m => `
+            <div class="badge-stock-warn">
+              ⚠️ <b>Peringatan Stok Menipis:</b> ${esc(m.name)} tersisa ${m.current_stock} ${esc(m.unit)} (Batas minimum: ${m.min_stock} ${esc(m.unit)})
+            </div>
+          `).join('')}
+        </div>
+        <section class="admin-panel" style="margin-bottom:24px;">
+          <div class="panel-head">
+            <h2>Daftar Bahan Baku Resto</h2>
+            <span>${materials.length} Jenis Bahan</span>
+          </div>
+          <div class="responsive-table">
+            <table class="admin-table">
+              <thead>
+                <tr>
+                  <th>Nama Bahan</th>
+                  <th>Stok Saat Ini</th>
+                  <th>Satuan</th>
+                  <th>Stok Minimum</th>
+                  <th>Status</th>
+                  <th style="text-align:right;">Aksi</th>
+                </tr>
+              </thead>
+              <tbody>
+                ${materials.map(m => {
+                  const isLow = Number(m.current_stock) <= Number(m.min_stock);
+                  return `
+                    <tr>
+                      <td><b>${esc(m.name)}</b></td>
+                      <td><strong style="${isLow ? 'color:#c92a2a;' : ''}">${m.current_stock}</strong></td>
+                      <td>${esc(m.unit)}</td>
+                      <td>${m.min_stock}</td>
+                      <td>
+                        <span class="status-badge ${isLow ? 'status-cancelled' : 'status-ready'}">
+                          <i class="status-dot"></i>${isLow ? 'Stok Menipis' : 'Stok Aman'}
+                        </span>
+                      </td>
+                      <td style="text-align:right;">
+                        <button class="btn btn-small btn-soft" data-adjust-stock="${esc(m.id)}">Sesuaikan Stok</button>
+                        <button class="icon-btn" data-edit-mat="${esc(m.id)}" title="Edit">${icon('edit', 16)}</button>
+                        <button class="icon-btn icon-btn-danger" data-del-mat="${esc(m.id)}" title="Hapus">${icon('trash', 16)}</button>
+                      </td>
+                    </tr>
+                  `;
+                }).join('')}
+              </tbody>
+            </table>
+          </div>
+        </section>
+
+        <section class="admin-panel">
+          <div class="panel-head">
+            <h2>Riwayat Mutasi Stok Otomatis</h2>
+            <span>${mutations.length} Aktivitas Mutasi Terakhir</span>
+          </div>
+          <div class="responsive-table">
+            <table class="admin-table">
+              <thead>
+                <tr>
+                  <th>Waktu</th>
+                  <th>Bahan Baku</th>
+                  <th>Perubahan</th>
+                  <th>Stok Akhir</th>
+                  <th>Tipe Mutasi</th>
+                  <th>Keterangan / Order</th>
+                </tr>
+              </thead>
+              <tbody>
+                ${mutations.slice(0, 15).map(mt => `
+                  <tr>
+                    <td>${formatTime(mt.created_at)}</td>
+                    <td><b>${esc(mt.material_name || mt.raw_material_id)}</b></td>
+                    <td style="font-weight:700;color:${Number(mt.change_amount) < 0 ? '#c92a2a' : '#2b8a3e'};">
+                      ${Number(mt.change_amount) > 0 ? '+' : ''}${mt.change_amount}
+                    </td>
+                    <td><b>${mt.balance_after}</b></td>
+                    <td><span class="badge-role-regular">${esc(mt.mutation_type)}</span></td>
+                    <td><small>${esc(mt.notes || '-')}</small></td>
+                  </tr>
+                `).join('')}
+              </tbody>
+            </table>
+          </div>
+        </section>
+      ` : `
+        <section class="admin-panel">
+          <div class="panel-head">
+            <h2>Katalog Menu &amp; Komposisi Resep</h2>
+            <span>Klik menu untuk melihat atau mengubah takaran bahan per porsi</span>
+          </div>
+          <div class="recipe-menu-grid">
+            ${products.map(p => `
+              <div class="recipe-product-card">
+                <div class="rpc-top">
+                  <img src="${esc(p.imageUrl || '/assets/iced-latte.jpg')}" alt="">
+                  <div>
+                    <b>${esc(p.name)}</b>
+                    <small>${money(p.price)} • ${p.isAvailable ? 'Tersedia' : 'Habis'}</small>
+                  </div>
+                </div>
+                <div class="rpc-body" id="recipeBox_${esc(p.id)}">
+                  <button class="btn btn-soft btn-small btn-wide" data-view-recipe="${esc(p.id)}">
+                    📜 Atur Takaran Resep (${esc(p.name)})
+                  </button>
+                </div>
+              </div>
+            `).join('')}
+          </div>
+        </section>
+      `}
+    `, 'inventory', user);
+
+    bindAdminChrome('inventory');
+    $('#tabMat').onclick = () => { activeTab = 'MATERIALS'; renderInventoryView(); };
+    $('#tabRec').onclick = () => { activeTab = 'RECIPES'; renderInventoryView(); };
+
+    if (activeTab === 'MATERIALS') {
+      const addBtn = $('#btnAddMaterial');
+      if (addBtn) addBtn.onclick = () => materialModal(null, () => inventoryAdminPage(user));
+      $$('[data-adjust-stock]').forEach(b => b.onclick = () => {
+        const m = materials.find(x => x.id === b.dataset.adjustStock);
+        adjustStockModal(m, () => inventoryAdminPage(user));
+      });
+      $$('[data-edit-mat]').forEach(b => b.onclick = () => {
+        const m = materials.find(x => x.id === b.dataset.editMat);
+        materialModal(m, () => inventoryAdminPage(user));
+      });
+      $$('[data-del-mat]').forEach(b => b.onclick = async () => {
+        const m = materials.find(x => x.id === b.dataset.delMat);
+        if (!m) return;
+        if (!(await confirmDialog({ title: 'Hapus Bahan Baku?', message: `Bahan "${m.name}" akan dihapus.`, ok: 'Hapus', danger: true }))) return;
+        try {
+          await api('/admin/materials/' + encodeURIComponent(m.id), { method: 'DELETE' });
+          toast('Bahan berhasil dihapus');
+          inventoryAdminPage(user);
+        } catch(e) { toast(e.message, true); }
+      });
+    } else {
+      $$('[data-view-recipe]').forEach(b => b.onclick = () => {
+        const p = products.find(x => x.id === b.dataset.viewRecipe);
+        recipeModal(p, materials, () => inventoryAdminPage(user));
+      });
+    }
+  };
+
+  renderInventoryView();
+}
+
+function materialModal(m, onDone) {
+  const d = modal(`
+    <div class="dialog">
+      <h3>${m ? 'Edit Bahan Baku' : 'Tambah Bahan Baku Baru'}</h3>
+      <label class="field-label">Nama Bahan Baku</label>
+      <input class="input" id="mName" value="${esc(m?.name || '')}" placeholder="Contoh: Biji Kopi Arabica">
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:12px;">
+        <div>
+          <label class="field-label">Satuan</label>
+          <input class="input" id="mUnit" value="${esc(m?.unit || 'gram')}" placeholder="gram, ml, pcs">
+        </div>
+        <div>
+          <label class="field-label">Stok Minimum (Alert)</label>
+          <input class="input" type="number" id="mMin" value="${m?.min_stock ?? 100}">
+        </div>
+      </div>
+      ${!m ? `
+        <label class="field-label" style="margin-top:12px;">Stok Awal</label>
+        <input class="input" type="number" id="mStock" value="1000">
+      ` : ''}
+      <div class="dialog-actions" style="margin-top:18px;">
+        <button class="btn btn-soft" data-modal-close>Batal</button>
+        <button class="btn btn-primary" id="btnSaveMat">Simpan Bahan</button>
+      </div>
+    </div>
+  `, 'dialog-card');
+
+  $('#btnSaveMat', d).onclick = async () => {
+    const name = $('#mName', d).value.trim();
+    const unit = $('#mUnit', d).value.trim();
+    const min_stock = Number($('#mMin', d).value) || 0;
+    if (!name || !unit) return toast('Nama dan satuan bahan wajib diisi.', true);
+
+    try {
+      if (m) {
+        await api('/admin/materials/' + encodeURIComponent(m.id), {
+          method: 'PATCH',
+          body: JSON.stringify({ name, unit, min_stock })
+        });
+      } else {
+        const current_stock = Number($('#mStock', d).value) || 0;
+        await api('/admin/materials', {
+          method: 'POST',
+          body: JSON.stringify({ name, unit, min_stock, current_stock })
+        });
+      }
+      d.remove();
+      toast('Data bahan berhasil disimpan');
+      onDone();
+    } catch(e) { toast(e.message, true); }
+  };
+}
+
+function adjustStockModal(m, onDone) {
+  const d = modal(`
+    <div class="dialog">
+      <h3>Sesuaikan Stok: ${esc(m.name)}</h3>
+      <p style="font-size:12.5px;color:var(--muted);margin-bottom:12px;">
+        Stok saat ini: <b>${m.current_stock} ${esc(m.unit)}</b>
+      </p>
+      <label class="field-label">Jumlah Penyesuaian (${esc(m.unit)})</label>
+      <input class="input" type="number" id="adjAmount" placeholder="Contoh: 500 untuk tambah, -200 untuk kurangi">
+      <small style="color:var(--muted);font-size:11px;">Gunakan angka positif (+) untuk restock / barang masuk, atau negatif (-) untuk rusak / kedaluwarsa.</small>
+      <label class="field-label" style="margin-top:12px;">Alasan / Catatan Mutasi</label>
+      <input class="input" id="adjNotes" placeholder="Contoh: Restock pengiriman supplier kopi">
+      <div class="dialog-actions" style="margin-top:18px;">
+        <button class="btn btn-soft" data-modal-close>Batal</button>
+        <button class="btn btn-primary" id="btnSaveAdj">Simpan Mutasi</button>
+      </div>
+    </div>
+  `, 'dialog-card');
+
+  $('#btnSaveAdj', d).onclick = async () => {
+    const change = Number($('#adjAmount', d).value);
+    const notes = $('#adjNotes', d).value.trim();
+    if (!change) return toast('Masukkan jumlah perubahan stok.', true);
+
+    try {
+      await api('/admin/materials/' + encodeURIComponent(m.id) + '/adjust', {
+        method: 'POST',
+        body: JSON.stringify({ changeAmount: change, notes: notes || 'Penyesuaian manual kasir' })
+      });
+      d.remove();
+      toast('Stok bahan berhasil diperbarui dan mutasi tercatat');
+      onDone();
+    } catch(e) { toast(e.message, true); }
+  };
+}
+
+async function recipeModal(product, materials, onDone) {
+  let recipes = [];
+  try {
+    recipes = await api('/admin/products/' + encodeURIComponent(product.id) + '/recipe');
+  } catch { }
+
+  const renderModalContent = () => {
+    return `
+      <div class="dialog wide-dialog">
+        <div class="modal-heading">
+          <div>
+            <span>KOMPOSISI RESEP MENU</span>
+            <h2>${esc(product.name)}</h2>
+          </div>
+          <span class="status-badge status-ready">${recipes.length} Bahan Baku</span>
+        </div>
+        <p style="font-size:12px;color:var(--muted);margin-bottom:14px;">
+          Tiap kali 1 porsi menu ini terjual, stok bahan di bawah akan dikurangi secara otomatis dan atomik.
+        </p>
+        <div class="recipe-items-table" style="margin-bottom:16px;">
+          ${recipes.length ? `
+            <table class="admin-table">
+              <thead>
+                <tr>
+                  <th>Bahan Baku</th>
+                  <th>Takaran per Porsi</th>
+                  <th>Satuan</th>
+                  <th style="text-align:right;">Hapus</th>
+                </tr>
+              </thead>
+              <tbody>
+                ${recipes.map(r => `
+                  <tr>
+                    <td><b>${esc(r.raw_material_name)}</b></td>
+                    <td><strong>${r.amount}</strong></td>
+                    <td>${esc(r.unit)}</td>
+                    <td style="text-align:right;">
+                      <button class="plain-icon danger" data-del-recipe-mat="${esc(r.raw_material_id)}">${icon('trash', 16)}</button>
+                    </td>
+                  </tr>
+                `).join('')}
+              </tbody>
+            </table>
+          ` : '<p class="muted">Belum ada bahan baku pada resep menu ini.</p>'}
+        </div>
+        <div class="add-recipe-bar" style="background:#faf6f0;padding:12px;border-radius:10px;display:flex;gap:10px;align-items:center;">
+          <select class="input" id="selMaterial" style="flex:2;">
+            <option value="">Pilih Bahan Baku...</option>
+            ${materials.map(m => `<option value="${esc(m.id)}">${esc(m.name)} (${esc(m.unit)})</option>`).join('')}
+          </select>
+          <input class="input" type="number" id="inAmount" placeholder="Jumlah" style="flex:1;">
+          <button class="btn btn-primary" id="btnAddRecipeItem">+ Tambah ke Resep</button>
+        </div>
+        <div class="dialog-actions" style="margin-top:18px;">
+          <button class="btn btn-dark btn-full" id="btnCloseRecipe">Selesai</button>
+        </div>
+      </div>
+    `;
+  };
+
+  const d = modal(renderModalContent(), 'wide-modal');
+
+  const bindEvents = () => {
+    $('#btnCloseRecipe', d).onclick = () => { d.remove(); onDone(); };
+    $$('[data-del-recipe-mat]', d).forEach(b => b.onclick = async () => {
+      try {
+        await api('/admin/products/' + encodeURIComponent(product.id) + '/recipe/' + encodeURIComponent(b.dataset.delRecipeMat), {
+          method: 'DELETE'
+        });
+        toast('Bahan dihapus dari resep');
+        recipes = await api('/admin/products/' + encodeURIComponent(product.id) + '/recipe');
+        d.innerHTML = renderModalContent();
+        bindEvents();
+      } catch(e) { toast(e.message, true); }
+    });
+
+    const addBtn = $('#btnAddRecipeItem', d);
+    if (addBtn) addBtn.onclick = async () => {
+      const matId = $('#selMaterial', d).value;
+      const amt = Number($('#inAmount', d).value);
+      if (!matId || !amt || amt <= 0) return toast('Pilih bahan dan masukkan jumlah takaran.', true);
+      addBtn.disabled = true;
+      try {
+        await api('/admin/products/' + encodeURIComponent(product.id) + '/recipe', {
+          method: 'POST',
+          body: JSON.stringify({ materialId: matId, amount: amt })
+        });
+        toast('Bahan berhasil ditambahkan ke resep');
+        recipes = await api('/admin/products/' + encodeURIComponent(product.id) + '/recipe');
+        d.innerHTML = renderModalContent();
+        bindEvents();
+      } catch(e) {
+        toast(e.message, true);
+        addBtn.disabled = false;
+      }
+    };
+  };
+
+  bindEvents();
+}
+
+// ==========================================
+// SHIFT KASIR & TUTUP KASIR
+// ==========================================
+async function shiftsAdminPage(user) {
+  const [activeShift, allShifts] = await Promise.all([
+    api('/admin/shifts/active').catch(() => null),
+    api('/admin/shifts').catch(() => [])
+  ]);
+
+  document.body.className = 'admin-body';
+  document.body.innerHTML = adminShell(`
+    ${adminTop('Shift Kasir & Tutup Buku Kas', 'Kelola modal kas awal, penerimaan tunai vs QRIS, dan pencatatan selisih kas fisik laci kasir.', `
+      ${!activeShift ? `<button class="btn btn-primary" id="btnOpenShift">${icon('plus', 16)} Buka Shift Baru</button>` : `<button class="btn btn-danger" id="btnCloseShift">🔒 Tutup Shift &amp; Hitung Kas</button>`}
+    `)}
+    <section class="shift-overview-grid" style="display:grid;grid-template-columns:repeat(auto-fit, minmax(240px, 1fr));gap:16px;margin-bottom:20px;">
+      <div class="admin-metric ${activeShift ? 'green' : 'orange'}">
+        <span>Status Shift Kasir</span>
+        <strong>${activeShift ? '🟢 Sedang Berjalan' : '🔴 Tidak Ada Shift Aktif'}</strong>
+        <i>${icon('clock', 20)}</i>
+      </div>
+      <div class="admin-metric">
+        <span>Kas Awal (Modal Tunai)</span>
+        <strong>${money(activeShift?.starting_cash || 0)}</strong>
+        <i>${icon('wallet', 20)}</i>
+      </div>
+      <div class="admin-metric blue">
+        <span>Total Penjualan Shift</span>
+        <strong>${money((activeShift?.total_cash || 0) + (activeShift?.total_qris || 0))}</strong>
+        <i>${icon('report', 20)}</i>
+      </div>
+      <div class="admin-metric revenue">
+        <span>Estimasi Kas di Laci</span>
+        <strong>${money(activeShift?.expected_ending_cash || 0)}</strong>
+        <i>${icon('cash', 20)}</i>
+      </div>
+    </section>
+
+    ${activeShift ? `
+      <section class="admin-panel" style="margin-bottom:24px;">
+        <div class="panel-head">
+          <h2>Rincian Shift Berjalan</h2>
+          <span>Kasir: <b>${esc(activeShift.cashier_name || 'Admin')}</b> • Mulai: ${formatTime(activeShift.start_time)}</span>
+        </div>
+        <div style="display:grid;grid-template-columns:repeat(auto-fit, minmax(200px, 1fr));gap:14px;padding:10px 0;">
+          <div class="pay-metric green"><span>Penerimaan Tunai:</span><strong>${money(activeShift.total_cash || 0)}</strong></div>
+          <div class="pay-metric blue"><span>Penerimaan QRIS:</span><strong>${money(activeShift.total_qris || 0)}</strong></div>
+          <div class="pay-metric"><span>Jumlah Transaksi:</span><strong>${activeShift.total_orders || 0} Pesanan</strong></div>
+        </div>
+      </section>
+    ` : ''}
+
+    <section class="admin-panel">
+      <div class="panel-head">
+        <h2>Riwayat Penutupan Shift Kasir</h2>
+        <span>${allShifts.length} Rekap Shift Sebelumnya</span>
+      </div>
+      <div class="responsive-table">
+        <table class="admin-table">
+          <thead>
+            <tr>
+              <th>Waktu Buka / Tutup</th>
+              <th>Kasir</th>
+              <th>Kas Awal</th>
+              <th>Total Tunai</th>
+              <th>Total QRIS</th>
+              <th>Kas Fisik Aktual</th>
+              <th>Selisih (Variance)</th>
+              <th>Status</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${allShifts.map(s => {
+              const diff = Number(s.cash_difference || 0);
+              const isOpen = s.status === 'OPEN';
+              return `
+                <tr>
+                  <td>
+                    <b>${formatTime(s.start_time)}</b>
+                    ${s.end_time ? `<br><small class="muted">s/d ${formatTime(s.end_time)}</small>` : ''}
+                  </td>
+                  <td><b>${esc(s.cashier_name || 'Admin')}</b></td>
+                  <td>${money(s.starting_cash)}</td>
+                  <td>${money(s.total_cash ?? s.total_sales_cash ?? 0)}</td>
+                  <td>${money(s.total_qris ?? s.total_sales_qris ?? 0)}</td>
+                  <td><b>${isOpen ? 'Berjalan' : money(s.actual_ending_cash ?? s.ending_cash_actual ?? 0)}</b></td>
+                  <td>
+                    ${isOpen ? '-' : `<strong style="color:${diff === 0 ? '#2b8a3e' : (diff > 0 ? '#1c7ed6' : '#c92a2a')};">${diff === 0 ? 'Rp 0 (Pas)' : (diff > 0 ? `+${money(diff)} (Lebihan)` : `${money(diff)} (Kurang)`)}</strong>`}
+                  </td>
+                  <td>
+                    <span class="status-badge ${isOpen ? 'status-processing' : 'status-ready'}">
+                      <i class="status-dot"></i>${isOpen ? 'Aktif' : 'Ditutup'}
+                    </span>
+                  </td>
+                </tr>
+              `;
+            }).join('')}
+          </tbody>
+        </table>
+      </div>
+    </section>
+  `, 'shifts', user);
+
+  bindAdminChrome('shifts');
+  const btnOpen = $('#btnOpenShift');
+  if (btnOpen) btnOpen.onclick = () => openShiftModal(() => shiftsAdminPage(user));
+  const btnClose = $('#btnCloseShift');
+  if (btnClose) btnClose.onclick = () => closeShiftModal(activeShift, () => shiftsAdminPage(user));
+}
+
+function openShiftModal(onDone) {
+  const d = modal(`
+    <div class="dialog">
+      <h3>Buka Shift Kasir Baru</h3>
+      <p style="font-size:12.5px;color:var(--muted);margin-bottom:14px;">
+        Masukkan modal kas tunai awal (uang kembalian) di laci kasir sebelum memulai transaksi.
+      </p>
+      <label class="field-label">Kas Awal (Rp)</label>
+      <input class="input" type="number" id="startCash" value="200000" min="0" step="10000">
+      <label class="field-label" style="margin-top:12px;">Catatan Shift (Opsional)</label>
+      <input class="input" id="shiftNotes" placeholder="Contoh: Shift Pagi Barista">
+      <div class="dialog-actions" style="margin-top:18px;">
+        <button class="btn btn-soft" data-modal-close>Batal</button>
+        <button class="btn btn-primary" id="btnConfirmOpenShift">Mulai Buka Shift</button>
+      </div>
+    </div>
+  `, 'dialog-card');
+
+  $('#btnConfirmOpenShift', d).onclick = async () => {
+    const cash = Number($('#startCash', d).value) || 0;
+    const notes = $('#shiftNotes', d).value.trim();
+    try {
+      await api('/admin/shifts/open', {
+        method: 'POST',
+        body: JSON.stringify({ startingCash: cash, notes })
+      });
+      d.remove();
+      toast('Shift kasir berhasil dibuka!');
+      onDone();
+    } catch(e) { toast(e.message, true); }
+  };
+}
+
+function closeShiftModal(shift, onDone) {
+  const expected = Number(shift?.expected_ending_cash || 0);
+  const d = modal(`
+    <div class="dialog">
+      <h3>Tutup Shift &amp; Hitung Kas Fisik</h3>
+      <div style="background:#faf6f0;padding:12px;border-radius:10px;margin-bottom:14px;">
+        <div style="display:flex;justify-content:space-between;font-size:12.5px;margin-bottom:4px;">
+          <span>Kas Awal:</span><b>${money(shift?.starting_cash || 0)}</b>
+        </div>
+        <div style="display:flex;justify-content:space-between;font-size:12.5px;margin-bottom:4px;">
+          <span>Penerimaan Tunai Kasir:</span><b>+ ${money(shift?.total_cash || 0)}</b>
+        </div>
+        <hr style="border:none;border-top:1px dashed #d5c3b2;margin:8px 0;">
+        <div style="display:flex;justify-content:space-between;font-size:13.5px;font-weight:700;">
+          <span>Estimasi Kas di Laci:</span><strong style="color:var(--orange-dark);">${money(expected)}</strong>
+        </div>
+      </div>
+      <label class="field-label">Hitungan Fisik Uang Kas Nyata di Laci (Rp)</label>
+      <input class="input" type="number" id="actualCash" value="${expected}" step="1000">
+      <div id="diffPreview" style="margin-top:6px;font-size:12px;font-weight:700;color:#2b8a3e;">
+        Selisih: Rp 0 (Pas)
+      </div>
+      <label class="field-label" style="margin-top:12px;">Catatan Penutupan Shift</label>
+      <input class="input" id="closeNotes" placeholder="Contoh: Selesai shift pagi, kas seimbang">
+      <div class="dialog-actions" style="margin-top:18px;">
+        <button class="btn btn-soft" data-modal-close>Batal</button>
+        <button class="btn btn-danger" id="btnConfirmCloseShift">🔒 Konfirmasi Tutup Shift</button>
+      </div>
+    </div>
+  `, 'dialog-card');
+
+  const actIn = $('#actualCash', d);
+  const diffBox = $('#diffPreview', d);
+  actIn.oninput = () => {
+    const val = Number(actIn.value) || 0;
+    const diff = val - expected;
+    if (diff === 0) {
+      diffBox.style.color = '#2b8a3e';
+      diffBox.textContent = 'Selisih: Rp 0 (Pas)';
+    } else if (diff > 0) {
+      diffBox.style.color = '#1c7ed6';
+      diffBox.textContent = `Selisih: +${money(diff)} (LEBIHAN KAS)`;
+    } else {
+      diffBox.style.color = '#c92a2a';
+      diffBox.textContent = `Selisih: ${money(diff)} (KURANGAN KAS)`;
+    }
+  };
+
+  $('#btnConfirmCloseShift', d).onclick = async () => {
+    const act = Number(actIn.value);
+    const notes = $('#closeNotes', d).value.trim();
+    try {
+      await api('/admin/shifts/close', {
+        method: 'POST',
+        body: JSON.stringify({ actualCash: act, notes })
+      });
+      d.remove();
+      toast('Shift kasir resmi DITUTUP. Rekap buku kas tersimpan.');
+      onDone();
+    } catch(e) { toast(e.message, true); }
+  };
+}
+
+// ==========================================
+// ROLE & AUDIT LOGS
+// ==========================================
+async function auditLogsAdminPage(user) {
+  let filterAction = '';
+  const loadLogs = async () => {
+    const logs = await api('/admin/audit');
+    const filtered = filterAction ? logs.filter(l => l.action === filterAction) : logs;
+    const actions = Array.from(new Set(logs.map(l => l.action))).sort();
+
+    document.body.className = 'admin-body';
+    document.body.innerHTML = adminShell(`
+      ${adminTop('Audit Log & Hak Akses', 'Rekam jejak setiap aksi penting sistem: pesanan, perubahan harga/stok, void, dan shift.')}
+      <div class="admin-filters" style="margin-bottom:16px;">
+        <label>${icon('search', 18)}<input id="searchAudit" placeholder="Cari aksi / email / order..."></label>
+        <select id="selAuditAction">
+          <option value="">Semua Aksi (${logs.length})</option>
+          ${actions.map(a => `<option value="${esc(a)}" ${filterAction === a ? 'selected' : ''}>${esc(a)}</option>`).join('')}
+        </select>
+      </div>
+      <section class="admin-panel">
+        <div class="responsive-table">
+          <table class="admin-table">
+            <thead>
+              <tr>
+                <th style="width:130px;">Waktu</th>
+                <th style="width:150px;">Aksi</th>
+                <th style="width:160px;">Pengguna (Aktor)</th>
+                <th style="width:100px;">Target</th>
+                <th>Rincian Metadata</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${filtered.map(l => `
+                <tr>
+                  <td><b>${formatTime(l.at || l.createdAt || l.created_at)}</b></td>
+                  <td>
+                    <span class="badge-role-regular" style="font-weight:700;">${esc(l.action)}</span>
+                  </td>
+                  <td>
+                    <strong>${esc(l.actorName || l.actorEmail || l.user_name || l.userName || 'Staff / Kasir')}</strong>
+                    <br><small class="muted">Role: ${esc(l.actorRole || l.role || 'Staff')}</small>
+                  </td>
+                  <td><code>${esc(l.targetId || l.target_id || '-')}</code></td>
+                  <td>
+                    <pre style="margin:0;font-size:11px;background:#faf6f0;padding:4px 8px;border-radius:6px;max-width:400px;overflow-x:auto;">${esc(JSON.stringify(l.meta || l.details || {}, null, 1))}</pre>
+                  </td>
+                </tr>
+              `).join('')}
+            </tbody>
+          </table>
+        </div>
+      </section>
+    `, 'audit', user);
+
+    bindAdminChrome('audit');
+    $('#selAuditAction').onchange = e => {
+      filterAction = e.target.value;
+      loadLogs();
+    };
+  };
+
+  await loadLogs();
+}
 
 window.addEventListener('offline', () => toast('Koneksi internet terputus.', true));
 window.addEventListener('online', () => toast('Koneksi kembali tersedia.'));

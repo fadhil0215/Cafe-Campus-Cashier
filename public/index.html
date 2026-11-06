@@ -23,16 +23,20 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="/styles.css">
+  <link rel="stylesheet" href="/styles.css?v=20261018_v7">
+  <link rel="stylesheet" href="/liquid-glass.css?v=20261106_lg1">
   <link rel="manifest" href="/manifest.json">
 </head>
 <body>
   <noscript>JavaScript diperlukan untuk menjalankan sistem Cafe Campus.</noscript>
-  <script src="/app.min.js"></script>
+  <script src="/app.min.js?v=20261018_v7"></script>
+  <script src="/liquid-fx.js?v=20261106_lg1" defer></script>
   <script>
     if ('serviceWorker' in navigator) {
       window.addEventListener('load', () => {
-        navigator.serviceWorker.register('/sw.js').catch(()=>{});
+        navigator.serviceWorker.register('/sw.js', { scope: '/' }).then(reg => {
+          reg.update();
+        }).catch(()=>{});
       });
     }
   </script>

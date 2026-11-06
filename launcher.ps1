@@ -104,7 +104,7 @@ function Get-PortableNode {
 
 function Test-DemoServer([string]$NodeExe) {
     try {
-        & $NodeExe -e "const u=process.argv[1];const c=new AbortController();setTimeout(()=>c.abort(),700);fetch(u,{signal:c.signal,cache:'no-store'}).then(r=>process.exit(r.ok?0:2)).catch(()=>process.exit(3));" "$Url/api/health" *> $null
+        & $NodeExe -e "const u=process.argv[1];const c=new AbortController();setTimeout(()=>c.abort(),1500);fetch(u,{signal:c.signal,cache:'no-store'}).then(r=>process.exit(r.ok?0:2)).catch(()=>process.exit(3));" "$Url/api/health" *> $null
         return ($LASTEXITCODE -eq 0)
     } catch { return $false }
 }
@@ -127,6 +127,9 @@ function Start-Demo([string]$NodeExe) {
         return
     }
 
+    Write-Host '[MIGRATE] Memastikan migrasi database v7 siap...' -ForegroundColor Cyan
+    try { & $NodeExe (Join-Path $Root 'run-migration.mjs') *> $null } catch {}
+
     Write-Host '[START] Menjalankan server demo...' -ForegroundColor Cyan
     $lanIp = Get-LanIPv4
     $env:HOST = '0.0.0.0'
@@ -142,7 +145,7 @@ function Start-Demo([string]$NodeExe) {
     Set-Content -Path (Join-Path $RuntimeRoot 'server.pid') -Value $proc.Id -Encoding Ascii
 
     $ready = $false
-    for ($i=0; $i -lt 24; $i++) {
+    for ($i=0; $i -lt 40; $i++) {
         Start-Sleep -Milliseconds 250
         if ($proc.HasExited) { break }
         if (Test-DemoServer $NodeExe) { $ready = $true; break }

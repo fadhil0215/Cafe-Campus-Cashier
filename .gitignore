@@ -1,6 +1,7 @@
 # Dependencies & Portable Runtimes
 node_modules/
 .runtime/
+cloudflared.exe
 
 # Logs & Process IDs
 logs/

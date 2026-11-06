@@ -1,7 +1,7 @@
 import { spawn } from 'node:child_process';
 import assert from 'node:assert/strict';
 const PORT=4188, host=`http://127.0.0.1:${PORT}`, base=`${host}/api`;
-const child=spawn(process.execPath,['server.mjs'],{cwd:new URL('.',import.meta.url),env:{...process.env,PORT:String(PORT),HOST:'127.0.0.1'},stdio:['ignore','pipe','pipe']});
+const child=spawn(process.execPath,['server.mjs'],{cwd:new URL('.',import.meta.url),env:{...process.env,APP_MODE:process.env.APP_MODE||'demo',PORT:String(PORT),HOST:'127.0.0.1'},stdio:['ignore','pipe','pipe']});
 let cookie='';
 const sleep=ms=>new Promise(r=>setTimeout(r,ms));
 async function call(path,{method='GET',body,admin=false,expect=200}={}){const h={'Content-Type':'application/json'};if(admin&&cookie)h.Cookie=cookie;const r=await fetch(base+path,{method,headers:h,body:body===undefined?undefined:JSON.stringify(body)});if(r.headers.get('set-cookie'))cookie=r.headers.get('set-cookie').split(';')[0];let d={};try{d=await r.json()}catch{}assert.equal(r.status,expect,`${method} ${path}: expected ${expect}, got ${r.status} ${JSON.stringify(d)}`);return d}
