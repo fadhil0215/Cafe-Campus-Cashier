@@ -55,39 +55,49 @@ describe('Meja & Produk Baru Cafe Campus', () => {
         assert.equal(rows.length, 39, 'Total meja aktif harus persis 39 meja');
     });
 
-    test('5 Menu produk baru Cafe Campus terdaftar dengan data flyer yang valid', async () => {
+    test('12 Menu produk baru Cafe Campus terdaftar dengan data flyer yang valid', async () => {
         const [rows] = await pool.query(`
             SELECT id, name, price, student_price, image_url, sort_order, is_available 
             FROM products 
-            WHERE id IN ('prod-mocca-blue', 'prod-nasgor-bp', 'prod-bekal-nugas', 'prod-nasi-kulit', 'prod-bakmi-matah')
+            WHERE id IN (
+                'prod-mocca-blue', 'prod-spanish-latte', 'prod-oat-latte', 'prod-ubee-latte',
+                'prod-nasgor-bp', 'prod-bekal-nugas', 'prod-nasi-kulit', 'prod-bakmi-matah',
+                'prod-burger-classic', 'prod-burger-cheesy', 'prod-toast-butter', 'prod-toast-moo'
+            )
             ORDER BY sort_order ASC
         `);
 
-        assert.equal(rows.length, 5, 'Harus ada 5 menu baru terdaftar');
+        assert.equal(rows.length, 12, 'Harus ada 12 menu promo baru terdaftar');
 
-        const mocca = rows.find(r => r.id === 'prod-mocca-blue');
-        assert.ok(mocca, 'Mocca Blue harus ada');
-        assert.equal(Number(mocca.student_price), 16000, 'Harga pelajar Mocca Blue 16K');
-        assert.equal(mocca.image_url, '/assets/mocca-blue.jpg');
+        const spanish = rows.find(r => r.id === 'prod-spanish-latte');
+        assert.ok(spanish, 'Spanish Latte harus ada');
+        assert.equal(Number(spanish.student_price), 16000, 'Harga pelajar Spanish Latte 16K');
+        assert.equal(spanish.image_url, '/assets/spanish-latte.jpg');
 
-        const nasgor = rows.find(r => r.id === 'prod-nasgor-bp');
-        assert.ok(nasgor, 'Nasi Goreng Banyak Pikiran harus ada');
-        assert.equal(Number(nasgor.student_price), 19000, 'Harga pelajar Nasi Goreng Banyak Pikiran 19K');
-        assert.equal(nasgor.image_url, '/assets/nasi-goreng-banyak-pikiran.jpg');
+        const oat = rows.find(r => r.id === 'prod-oat-latte');
+        assert.ok(oat, 'Oat Latte harus ada');
+        assert.equal(Number(oat.student_price), 16000, 'Harga pelajar Oat Latte 16K');
+        assert.equal(oat.image_url, '/assets/oat-latte.jpg');
 
-        const bekal = rows.find(r => r.id === 'prod-bekal-nugas');
-        assert.ok(bekal, 'Bekal Nugas harus ada');
-        assert.equal(Number(bekal.student_price), 23000, 'Harga pelajar Bekal Nugas 23K');
-        assert.equal(bekal.image_url, '/assets/bekal-nugas.jpg');
+        const ubee = rows.find(r => r.id === 'prod-ubee-latte');
+        assert.ok(ubee, 'Ubee Latte harus ada');
+        assert.equal(Number(ubee.student_price), 16000, 'Harga pelajar Ubee Latte 16K');
+        assert.equal(ubee.image_url, '/assets/ubee-latte.jpg');
 
-        const kulit = rows.find(r => r.id === 'prod-nasi-kulit');
-        assert.ok(kulit, 'Nasi Kulit Daun Jeruk harus ada');
-        assert.equal(Number(kulit.student_price), 20000, 'Harga pelajar Nasi Kulit Daun Jeruk 20K');
-        assert.equal(kulit.image_url, '/assets/nasi-kulit-daun-jeruk.jpg');
+        const classicBurger = rows.find(r => r.id === 'prod-burger-classic');
+        assert.ok(classicBurger, 'Classic Campus Burger harus ada');
+        assert.equal(Number(classicBurger.student_price), 16000, 'Harga pelajar Classic Campus Burger 16K');
 
-        const bakmi = rows.find(r => r.id === 'prod-bakmi-matah');
-        assert.ok(bakmi, 'Bakmi Goreng Sambal Matah harus ada');
-        assert.equal(Number(bakmi.student_price), 23000, 'Harga pelajar Bakmi Goreng Sambal Matah 23K');
-        assert.equal(bakmi.image_url, '/assets/bakmi-goreng-sambal-matah.jpg');
+        const cheesyBurger = rows.find(r => r.id === 'prod-burger-cheesy');
+        assert.ok(cheesyBurger, 'Cheesy Campus Burger harus ada');
+        assert.equal(Number(cheesyBurger.student_price), 18000, 'Harga pelajar Cheesy Campus Burger 18K');
+
+        const butterToast = rows.find(r => r.id === 'prod-toast-butter');
+        assert.ok(butterToast, 'Butter Boom Toast harus ada');
+        assert.equal(Number(butterToast.student_price), 15000, 'Harga pelajar Butter Boom Toast 15K');
+
+        const mooToast = rows.find(r => r.id === 'prod-toast-moo');
+        assert.ok(mooToast, 'Moo Toast harus ada');
+        assert.equal(Number(mooToast.student_price), 15000, 'Harga pelajar Moo Toast 15K');
     });
 });

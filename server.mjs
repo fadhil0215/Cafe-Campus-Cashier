@@ -3696,24 +3696,31 @@ const ensureSchema = async () => {
             if (!prodTob.length) {
                 await conn.query("ALTER TABLE products ADD COLUMN is_tobacco TINYINT(1) DEFAULT 0");
             }
-            await conn.query("UPDATE products SET student_price = 22000.00, sort_order = 6 WHERE id = 'prod-1'");
-            await conn.query("UPDATE products SET sort_order = 7 WHERE id = 'prod-2'");
-            await conn.query("UPDATE products SET sort_order = 8 WHERE id = 'prod-3'");
-            await conn.query("UPDATE products SET sort_order = 9 WHERE id = 'prod-4'");
-            await conn.query("UPDATE products SET sort_order = 10 WHERE id = 'prod-5'");
-            await conn.query("UPDATE products SET sort_order = 11 WHERE id = 'prod-6'");
-            await conn.query("UPDATE products SET sort_order = 12 WHERE id = 'prod-7'");
-            await conn.query("UPDATE products SET sort_order = 13 WHERE id = 'prod-8'");
-            await conn.query("UPDATE products SET sort_order = 14 WHERE id = 'prod-9'");
-            await conn.query("UPDATE products SET sort_order = 15 WHERE id = 'prod-10'");
+            await conn.query("UPDATE products SET student_price = 22000.00, sort_order = 13 WHERE id = 'prod-1'");
+            await conn.query("UPDATE products SET sort_order = 14 WHERE id = 'prod-2'");
+            await conn.query("UPDATE products SET sort_order = 15 WHERE id = 'prod-3'");
+            await conn.query("UPDATE products SET sort_order = 16 WHERE id = 'prod-4'");
+            await conn.query("UPDATE products SET sort_order = 17 WHERE id = 'prod-5'");
+            await conn.query("UPDATE products SET sort_order = 18 WHERE id = 'prod-6'");
+            await conn.query("UPDATE products SET sort_order = 19 WHERE id = 'prod-7'");
+            await conn.query("UPDATE products SET sort_order = 20 WHERE id = 'prod-8'");
+            await conn.query("UPDATE products SET sort_order = 21 WHERE id = 'prod-9'");
+            await conn.query("UPDATE products SET sort_order = 22 WHERE id = 'prod-10'");
 
             // 3b. Promotional Products from Cafe Campus
             const promoProducts = [
                 ['prod-mocca-blue', 'cat-1', 'Mocca Blue', 'Bold espresso, rich chocolate, and a sweet blueberry twist. Sounds unexpected, tastes unforgettable!', 19000.00, 16000.00, '🫐', '/assets/mocca-blue.jpg', 1, 1, 1, 1, 0],
-                ['prod-nasgor-bp', 'cat-3', 'Nasi Goreng Banyak Pikiran', 'Nasi goreng gurih yang dimasak dengan penuh rasa, dipadukan telur mata sapi yang lembut dan creamy, serta kerupuk renyah yang melengkapi setiap suapan. Hangat, sederhana, dan pas untuk nemenin kamu yang lagi banyak pikiran!', 22000.00, 19000.00, '🍳', '/assets/nasi-goreng-banyak-pikiran.jpg', 1, 0, 2, 1, 0],
-                ['prod-bekal-nugas', 'cat-3', 'Bekal Nugas', 'Seporsi nasi putih hangat disajikan bersama fried chicken renyah keemasan, scrambled egg lembut & creamy, serta jukut bayam segar. Pas untuk bekal nugas kapan saja. (Tersedia opsi Sambal Matah / Sambal Bawang).', 26000.00, 23000.00, '🍱', '/assets/bekal-nugas.jpg', 1, 0, 3, 1, 0],
-                ['prod-nasi-kulit', 'cat-3', 'Nasi Kulit Daun Jeruk', 'Nasi hangat dengan kulit ayam crispy gurih & renyah dipadukan aroma segar daun jeruk yang menggugah selera. Bikin susah berhenti makan!', 23000.00, 20000.00, '🍗', '/assets/nasi-kulit-daun-jeruk.jpg', 1, 0, 4, 1, 0],
-                ['prod-bakmi-matah', 'cat-3', 'Bakmi Goreng Sambal Matah', 'Bakmi goreng hangat dengan bumbu gurih yang meresap sempurna, dipadukan sambal matah segar yang pedas, dan wangi. Bikin setiap suapan terasa spesial!', 26000.00, 23000.00, '🍜', '/assets/bakmi-goreng-sambal-matah.jpg', 1, 0, 5, 1, 0]
+                ['prod-spanish-latte', 'cat-1', 'Spanish Latte', 'A perfect blend of espresso, caramel, and fresh milk. Creamy, smooth, with a sweet caramel touch in every sip.', 19000.00, 16000.00, '☕', '/assets/spanish-latte.jpg', 1, 1, 2, 1, 0],
+                ['prod-oat-latte', 'cat-1', 'Oat Latte', 'Perpaduan espresso yang bold dan oat milk yang creamy, dengan rasa kopi yang smooth dan hint manis alami. Lebih aman buat lambung.', 19000.00, 16000.00, '🌾', '/assets/oat-latte.jpg', 1, 1, 3, 1, 0],
+                ['prod-ubee-latte', 'cat-2', 'Ubee Latte', 'Sweet, creamy, and full of purple goodness! Perpaduan susu, creamer, dan sensasi ubi ungu manis yang lembut di mulut siap jadi moodbooster baru kamu.', 19000.00, 16000.00, '🍠', '/assets/ubee-latte.jpg', 1, 1, 4, 1, 0],
+                ['prod-nasgor-bp', 'cat-3', 'Nasi Goreng Banyak Pikiran', 'Nasi goreng gurih yang dimasak dengan penuh rasa, dipadukan telur mata sapi yang lembut dan creamy, serta kerupuk renyah yang melengkapi setiap suapan. Hangat, sederhana, dan pas untuk nemenin kamu yang lagi banyak pikiran!', 22000.00, 19000.00, '🍳', '/assets/nasi-goreng-banyak-pikiran.jpg', 1, 0, 5, 1, 0],
+                ['prod-bekal-nugas', 'cat-3', 'Bekal Nugas', 'Seporsi nasi putih hangat disajikan bersama fried chicken renyah keemasan, scrambled egg lembut & creamy, serta jukut bayam segar. Pas untuk bekal nugas kapan saja. (Tersedia opsi Sambal Matah / Sambal Bawang).', 26000.00, 23000.00, '🍱', '/assets/bekal-nugas.jpg', 1, 0, 6, 1, 0],
+                ['prod-nasi-kulit', 'cat-3', 'Nasi Kulit Daun Jeruk', 'Nasi hangat dengan kulit ayam crispy gurih & renyah dipadukan aroma segar daun jeruk yang menggugah selera. Bikin susah berhenti makan!', 23000.00, 20000.00, '🍗', '/assets/nasi-kulit-daun-jeruk.jpg', 1, 0, 7, 1, 0],
+                ['prod-bakmi-matah', 'cat-3', 'Bakmi Goreng Sambal Matah', 'Bakmi goreng hangat dengan bumbu gurih yang meresap sempurna, dipadukan sambal matah segar yang pedas, dan wangi. Bikin setiap suapan terasa spesial!', 26000.00, 23000.00, '🍜', '/assets/bakmi-goreng-sambal-matah.jpg', 1, 0, 8, 1, 0],
+                ['prod-burger-classic', 'cat-3', 'Classic Campus Burger', 'Perpaduan roti lembut dengan homemade patty juicy, dilengkapi selada segar, timun, tomat, dan saus spesial. Sederhana, klasik, dan selalu jadi favorit.', 19000.00, 16000.00, '🍔', '/assets/classic-burger.jpg', 1, 0, 9, 1, 0],
+                ['prod-burger-cheesy', 'cat-3', 'Cheesy Campus Burger', 'Lelehan keju creamy yang menyelimuti homemade patty juicy, berpadu dengan roti lembut dan sayuran segar. Setiap gigitan penuh rasa gurih yang bikin susah berhenti!', 21000.00, 18000.00, '🧀', '/assets/cheesy-burger.jpg', 1, 0, 10, 1, 0],
+                ['prod-toast-butter', 'cat-4', 'Butter Boom Toast', 'Toast gurih dengan aroma mentega, butter crumble yang renyah, dan siraman susu kental manis yang lumer di setiap gigitan. Sweet, Buttery, Crispy.', 18000.00, 15000.00, '🍞', '/assets/butter-boom-toast.jpg', 1, 0, 11, 1, 0],
+                ['prod-toast-moo', 'cat-4', 'Moo Toast', 'Toast tebal dengan mentega yang harum, berpadu saus susu creamy yang melimpah dan taburan cokelat manis yang bikin susah berhenti makan. Sweet, Soft, Addictive.', 18000.00, 15000.00, '🥛', '/assets/moo-toast.jpg', 1, 0, 12, 1, 0]
             ];
             for (const [id, category_id, name, description, price, student_price, emoji, image_url, is_available, customizable, sort_order, is_active, is_tobacco] of promoProducts) {
                 await conn.query(`
@@ -3728,8 +3735,8 @@ const ensureSchema = async () => {
             }
 
             const tobaccoProducts = [
-                ['prod-cig-1', 'cat-rokok', 'Marlboro Filter Black', 'Rokok filter premium (Khusus usia 21+ tahun, tanpa diskon mahasiswa).', 42000.00, 42000.00, '🚬', '/assets/croissant.jpg', 1, 0, 16, 1, 1],
-                ['prod-cig-2', 'cat-rokok', 'Esse Change Grape', 'Rokok mild kapsul rasa anggur (Khusus usia 21+ tahun, tanpa diskon mahasiswa).', 40000.00, 40000.00, '🚬', '/assets/croissant.jpg', 1, 0, 17, 1, 1]
+                ['prod-cig-1', 'cat-rokok', 'Marlboro Filter Black', 'Rokok filter premium (Khusus usia 21+ tahun, tanpa diskon mahasiswa).', 42000.00, 42000.00, '🚬', '/assets/croissant.jpg', 1, 0, 23, 1, 1],
+                ['prod-cig-2', 'cat-rokok', 'Esse Change Grape', 'Rokok mild kapsul rasa anggur (Khusus usia 21+ tahun, tanpa diskon mahasiswa).', 40000.00, 40000.00, '🚬', '/assets/croissant.jpg', 1, 0, 24, 1, 1]
             ];
             for (const [id, category_id, name, description, price, student_price, emoji, image_url, is_available, customizable, sort_order, is_active, is_tobacco] of tobaccoProducts) {
                 await conn.query(`

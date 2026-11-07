@@ -157,23 +157,30 @@ CREATE TABLE `products` (
 -- Data untuk: `products`
 INSERT INTO `products` (`id`, `category_id`, `name`, `description`, `price`, `student_price`, `emoji`, `image_url`, `is_available`, `customizable`, `sort_order`, `is_active`, `is_tobacco`) VALUES
 ('prod-mocca-blue', 'cat-1', 'Mocca Blue', 'Bold espresso, rich chocolate, and a sweet blueberry twist. Sounds unexpected, tastes unforgettable!', 19000.00, 16000.00, '🫐', '/assets/mocca-blue.jpg', 1, 1, 1, 1, 0),
-('prod-nasgor-bp', 'cat-3', 'Nasi Goreng Banyak Pikiran', 'Nasi goreng gurih yang dimasak dengan penuh rasa, dipadukan telur mata sapi yang lembut dan creamy, serta kerupuk renyah yang melengkapi setiap suapan. Hangat, sederhana, dan pas untuk nemenin kamu yang lagi banyak pikiran!', 22000.00, 19000.00, '🍳', '/assets/nasi-goreng-banyak-pikiran.jpg', 1, 0, 2, 1, 0),
-('prod-bekal-nugas', 'cat-3', 'Bekal Nugas', 'Seporsi nasi putih hangat disajikan bersama fried chicken renyah keemasan, scrambled egg lembut & creamy, serta jukut bayam segar. Pas untuk bekal nugas kapan saja. (Tersedia opsi Sambal Matah / Sambal Bawang).', 26000.00, 23000.00, '🍱', '/assets/bekal-nugas.jpg', 1, 0, 3, 1, 0),
-('prod-nasi-kulit', 'cat-3', 'Nasi Kulit Daun Jeruk', 'Nasi hangat dengan kulit ayam crispy gurih & renyah dipadukan aroma segar daun jeruk yang menggugah selera. Bikin susah berhenti makan!', 23000.00, 20000.00, '🍗', '/assets/nasi-kulit-daun-jeruk.jpg', 1, 0, 4, 1, 0),
-('prod-bakmi-matah', 'cat-3', 'Bakmi Goreng Sambal Matah', 'Bakmi goreng hangat dengan bumbu gurih yang meresap sempurna, dipadukan sambal matah segar yang pedas, dan wangi. Bikin setiap suapan terasa spesial!', 26000.00, 23000.00, '🍜', '/assets/bakmi-goreng-sambal-matah.jpg', 1, 0, 5, 1, 0),
-('prod-1', 'cat-1', 'Iced Latte Gula Aren', 'Kopi susu lokal spesial dengan gula aren premium.', 28000.00, 22000.00, '☕', '/assets/iced-latte.jpg', 1, 1, 6, 1, 0),
-('prod-2', 'cat-4', 'Croissant Cokelat', 'Pastry hangat & renyah isi cokelat lembut.', 25000.00, 20000.00, '🥐', '/assets/croissant.jpg', 1, 0, 7, 1, 0),
-('prod-3', 'cat-2', 'Uji Matcha Latte', 'Matcha Jepang autentik kualitas premium.', 32000.00, 25000.00, '🍵', '/assets/matcha.jpg', 1, 1, 8, 1, 0),
-('prod-4', 'cat-5', 'Waffle Gelato', 'Waffle mentega hangat dipadu gelato vanilla.', 35000.00, 28000.00, '🧇', '/assets/waffle.jpg', 1, 0, 9, 1, 0),
-('prod-5', 'cat-1', 'Double Espresso', 'Racikan kopi murni yang intens dan kaya aroma.', 20000.00, 15000.00, '☕', '/assets/espresso.jpg', 1, 0, 10, 1, 0),
-('prod-6', 'cat-2', 'Premium Iced Chocolate', 'Cokelat hitam murni dipadu susu segar.', 30000.00, 24000.00, '🍫', '/assets/chocolate.jpg', 1, 1, 11, 1, 0),
-('prod-7', 'cat-3', 'Nasi Goreng Kampus', 'Nasi goreng gurih dengan telur, ayam, dan acar.', 35000.00, 28000.00, '🍛', '/assets/nasi-goreng.jpg', 1, 0, 12, 1, 0),
-('prod-8', 'cat-3', 'Chicken Rice Bowl', 'Ayam crispy saus lada hitam dengan nasi hangat.', 38000.00, 30000.00, '🥣', '/assets/rice-bowl.jpg', 1, 0, 13, 1, 0),
-('prod-9', 'cat-4', 'French Fries', 'Kentang goreng renyah dengan saus pilihan.', 20000.00, 16000.00, '🍟', '/assets/french-fries.jpg', 1, 0, 14, 1, 0),
-('prod-10', 'cat-5', 'Brownies Gelato', 'Brownies cokelat hangat dengan gelato vanilla.', 32000.00, 26000.00, '🍰', '/assets/brownies.jpg', 1, 0, 15, 1, 0),
-('prod-cig-1', 'cat-rokok', 'Marlboro Filter Black', 'Rokok filter premium (Khusus usia 21+ tahun, tanpa diskon mahasiswa).', 42000.00, 42000.00, '🚬', '/assets/croissant.jpg', 1, 0, 16, 1, 1),
-('prod-cig-2', 'cat-rokok', 'Esse Change Grape', 'Rokok mild kapsul rasa anggur (Khusus usia 21+ tahun, tanpa diskon mahasiswa).', 40000.00, 40000.00, '🚬', '/assets/croissant.jpg', 1, 0, 17, 1, 1)
-ON DUPLICATE KEY UPDATE `price`=VALUES(`price`), `student_price`=VALUES(`student_price`), `is_tobacco`=VALUES(`is_tobacco`);
+('prod-spanish-latte', 'cat-1', 'Spanish Latte', 'A perfect blend of espresso, caramel, and fresh milk. Creamy, smooth, with a sweet caramel touch in every sip.', 19000.00, 16000.00, '☕', '/assets/spanish-latte.jpg', 1, 1, 2, 1, 0),
+('prod-oat-latte', 'cat-1', 'Oat Latte', 'Perpaduan espresso yang bold dan oat milk yang creamy, dengan rasa kopi yang smooth dan hint manis alami. Lebih aman buat lambung.', 19000.00, 16000.00, '🌾', '/assets/oat-latte.jpg', 1, 1, 3, 1, 0),
+('prod-ubee-latte', 'cat-2', 'Ubee Latte', 'Sweet, creamy, and full of purple goodness! Perpaduan susu, creamer, dan sensasi ubi ungu manis yang lembut di mulut siap jadi moodbooster baru kamu.', 19000.00, 16000.00, '🍠', '/assets/ubee-latte.jpg', 1, 1, 4, 1, 0),
+('prod-nasgor-bp', 'cat-3', 'Nasi Goreng Banyak Pikiran', 'Nasi goreng gurih yang dimasak dengan penuh rasa, dipadukan telur mata sapi yang lembut dan creamy, serta kerupuk renyah yang melengkapi setiap suapan. Hangat, sederhana, dan pas untuk nemenin kamu yang lagi banyak pikiran!', 22000.00, 19000.00, '🍳', '/assets/nasi-goreng-banyak-pikiran.jpg', 1, 0, 5, 1, 0),
+('prod-bekal-nugas', 'cat-3', 'Bekal Nugas', 'Seporsi nasi putih hangat disajikan bersama fried chicken renyah keemasan, scrambled egg lembut & creamy, serta jukut bayam segar. Pas untuk bekal nugas kapan saja. (Tersedia opsi Sambal Matah / Sambal Bawang).', 26000.00, 23000.00, '🍱', '/assets/bekal-nugas.jpg', 1, 0, 6, 1, 0),
+('prod-nasi-kulit', 'cat-3', 'Nasi Kulit Daun Jeruk', 'Nasi hangat dengan kulit ayam crispy gurih & renyah dipadukan aroma segar daun jeruk yang menggugah selera. Bikin susah berhenti makan!', 23000.00, 20000.00, '🍗', '/assets/nasi-kulit-daun-jeruk.jpg', 1, 0, 7, 1, 0),
+('prod-bakmi-matah', 'cat-3', 'Bakmi Goreng Sambal Matah', 'Bakmi goreng hangat dengan bumbu gurih yang meresap sempurna, dipadukan sambal matah segar yang pedas, dan wangi. Bikin setiap suapan terasa spesial!', 26000.00, 23000.00, '🍜', '/assets/bakmi-goreng-sambal-matah.jpg', 1, 0, 8, 1, 0),
+('prod-burger-classic', 'cat-3', 'Classic Campus Burger', 'Perpaduan roti lembut dengan homemade patty juicy, dilengkapi selada segar, timun, tomat, dan saus spesial. Sederhana, klasik, dan selalu jadi favorit.', 19000.00, 16000.00, '🍔', '/assets/classic-burger.jpg', 1, 0, 9, 1, 0),
+('prod-burger-cheesy', 'cat-3', 'Cheesy Campus Burger', 'Lelehan keju creamy yang menyelimuti homemade patty juicy, berpadu dengan roti lembut dan sayuran segar. Setiap gigitan penuh rasa gurih yang bikin susah berhenti!', 21000.00, 18000.00, '🧀', '/assets/cheesy-burger.jpg', 1, 0, 10, 1, 0),
+('prod-toast-butter', 'cat-4', 'Butter Boom Toast', 'Toast gurih dengan aroma mentega, butter crumble yang renyah, dan siraman susu kental manis yang lumer di setiap gigitan. Sweet, Buttery, Crispy.', 18000.00, 15000.00, '🍞', '/assets/butter-boom-toast.jpg', 1, 0, 11, 1, 0),
+('prod-toast-moo', 'cat-4', 'Moo Toast', 'Toast tebal dengan mentega yang harum, berpadu saus susu creamy yang melimpah dan taburan cokelat manis yang bikin susah berhenti makan. Sweet, Soft, Addictive.', 18000.00, 15000.00, '🥛', '/assets/moo-toast.jpg', 1, 0, 12, 1, 0),
+('prod-1', 'cat-1', 'Iced Latte Gula Aren', 'Kopi susu lokal spesial dengan gula aren premium.', 28000.00, 22000.00, '☕', '/assets/iced-latte.jpg', 1, 1, 13, 1, 0),
+('prod-2', 'cat-4', 'Croissant Cokelat', 'Pastry hangat & renyah isi cokelat lembut.', 25000.00, 20000.00, '🥐', '/assets/croissant.jpg', 1, 0, 14, 1, 0),
+('prod-3', 'cat-2', 'Uji Matcha Latte', 'Matcha Jepang autentik kualitas premium.', 32000.00, 25000.00, '🍵', '/assets/matcha.jpg', 1, 1, 15, 1, 0),
+('prod-4', 'cat-5', 'Waffle Gelato', 'Waffle mentega hangat dipadu gelato vanilla.', 35000.00, 28000.00, '🧇', '/assets/waffle.jpg', 1, 0, 16, 1, 0),
+('prod-5', 'cat-1', 'Double Espresso', 'Racikan kopi murni yang intens dan kaya aroma.', 20000.00, 15000.00, '☕', '/assets/espresso.jpg', 1, 0, 17, 1, 0),
+('prod-6', 'cat-2', 'Premium Iced Chocolate', 'Cokelat hitam murni dipadu susu segar.', 30000.00, 24000.00, '🍫', '/assets/chocolate.jpg', 1, 1, 18, 1, 0),
+('prod-7', 'cat-3', 'Nasi Goreng Kampus', 'Nasi goreng gurih dengan telur, ayam, dan acar.', 35000.00, 28000.00, '🍛', '/assets/nasi-goreng.jpg', 1, 0, 19, 1, 0),
+('prod-8', 'cat-3', 'Chicken Rice Bowl', 'Ayam crispy saus lada hitam dengan nasi hangat.', 38000.00, 30000.00, '🥣', '/assets/rice-bowl.jpg', 1, 0, 20, 1, 0),
+('prod-9', 'cat-4', 'French Fries', 'Kentang goreng renyah dengan saus pilihan.', 20000.00, 16000.00, '🍟', '/assets/french-fries.jpg', 1, 0, 21, 1, 0),
+('prod-10', 'cat-5', 'Brownies Gelato', 'Brownies cokelat hangat dengan gelato vanilla.', 32000.00, 26000.00, '🍰', '/assets/brownies.jpg', 1, 0, 22, 1, 0),
+('prod-cig-1', 'cat-rokok', 'Marlboro Filter Black', 'Rokok filter premium (Khusus usia 21+ tahun, tanpa diskon mahasiswa).', 42000.00, 42000.00, '🚬', '/assets/croissant.jpg', 1, 0, 23, 1, 1),
+('prod-cig-2', 'cat-rokok', 'Esse Change Grape', 'Rokok mild kapsul rasa anggur (Khusus usia 21+ tahun, tanpa diskon mahasiswa).', 40000.00, 40000.00, '🚬', '/assets/croissant.jpg', 1, 0, 24, 1, 1)
+ON DUPLICATE KEY UPDATE `price`=VALUES(`price`), `student_price`=VALUES(`student_price`), `is_tobacco`=VALUES(`is_tobacco`), `sort_order`=VALUES(`sort_order`);
 
 -- --------------------------------------------------------
 -- Struktur Tabel: `raw_materials` (Bahan Baku & Inventaris)
