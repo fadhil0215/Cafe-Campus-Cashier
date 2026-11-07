@@ -18,12 +18,12 @@ try{
  const table=await call('/public/tables/demo-table-12');assert.equal(table.name,'Meja 12');ok('Valid QR resolves correct table');
  rr=await fetch(host+'/qr/demo-table-12.svg');assert.equal(rr.status,200);assert.match(rr.headers.get('content-type')||'',/image\/svg\+xml/);assert.ok((await rr.text()).length>500);ok('Dynamic table QR generated');
  const settings=await call('/public/settings');assert.equal(settings.demoMode,true);assert.equal(settings.serviceFee,5);assert.equal(settings.taxPercent,11);assert.equal(settings.qrisEnabled,true);assert.equal(settings.cashEnabled,true);ok('Public checkout configuration matches design');
- const products=await call('/public/products');const available=products.filter(p=>p.isAvailable),sold=products.find(p=>!p.isAvailable),iced=products.find(p=>p.name==='Iced Latte Gula Aren');assert.ok(available.length>=5&&sold&&iced?.customizable);assert.equal(iced.price,28000);assert.equal(iced.studentPrice,22000);ok('Catalog, dual student pricing, sold-out and customizable drink seed');
+ const products=await call('/public/products');const available=products.filter(p=>p.isAvailable),sold=products.find(p=>!p.isAvailable),iced=products.find(p=>p.name==='Spanish Latte')||products.find(p=>p.customizable);assert.ok(available.length>=5&&sold&&iced?.customizable);assert.equal(iced.price,18000);assert.equal(iced.studentPrice,16000);ok('Catalog, dual student pricing, sold-out and customizable drink seed');
  await call('/orders',{method:'POST',body:{tableToken:'demo-table-12',items:[{productId:sold.id,quantity:1}],paymentMethod:'CASH',idempotencyKey:'sold-'+run},expect:409});ok('Sold-out product blocked server-side');
  
  // Regular customer order test
  const regularPayload={tableToken:'demo-table-12',customerType:'REGULAR',items:[{productId:iced.id,quantity:2,note:'Espresso extra light',options:{size:'Large',sweetness:'Less',ice:'Sedikit Es'}}],paymentMethod:'CASH',idempotencyKey:'reg-'+run};
- const regOrder=await call('/orders',{method:'POST',body:regularPayload,expect:201});const regFull=await call('/orders/'+regOrder.orderNumber+'?access='+encodeURIComponent(regOrder.accessToken));assert.equal(regFull.customerType,'REGULAR');assert.equal(regFull.items[0].price,33000);assert.equal(regFull.items[0].regularPrice,33000);assert.equal(regFull.totalSavings,0);assert.equal(regFull.subtotal,66000);ok('Regular customer priced at standard rate');
+ const regOrder=await call('/orders',{method:'POST',body:regularPayload,expect:201});const regFull=await call('/orders/'+regOrder.orderNumber+'?access='+encodeURIComponent(regOrder.accessToken));assert.equal(regFull.customerType,'REGULAR');assert.equal(regFull.items[0].price,23000);assert.equal(regFull.items[0].regularPrice,23000);assert.equal(regFull.totalSavings,0);assert.equal(regFull.subtotal,46000);ok('Regular customer priced at standard rate');
 
   // 1. Edu Email OTP verification tests
   await call('/public/student/send-otp',{method:'POST',body:{email:'fraudster@gmail.com'},expect:400});ok('Non-edu email domain rejected for student verification');
@@ -31,7 +31,7 @@ try{
   await call('/public/student/verify-otp',{method:'POST',body:{email:'rian.ardiansyah@ui.ac.id',code:'0000'},expect:400});ok('Invalid OTP rejected');
   const vOtpRes=await call('/public/student/verify-otp',{method:'POST',body:{email:'rian.ardiansyah@ui.ac.id',code:otpRes.demoOtp},expect:200});assert.equal(vOtpRes.verified,true);ok('Valid OTP marks campus email verified');  // 2. Student customer order with edu email & selfie photo (AI Auto-evaluation test)
   const studentPayload={tableToken:'demo-table-12',customerType:'STUDENT',studentInfo:{campus:'Universitas Indonesia',studentId:'2306781001',studentName:'Rian Ardiansyah',email:'rian.ardiansyah@ui.ac.id',studentPhoto:'data:image/jpeg;base64,mockselfiephotodata'},items:[{productId:iced.id,quantity:2,note:'Extra sweet',options:{size:'Large',sweetness:'Normal',ice:'Normal'}}],paymentMethod:'CASH',idempotencyKey:'stud-'+run};
-  const studOrder=await call('/orders',{method:'POST',body:studentPayload,expect:201});const studFull=await call('/orders/'+studOrder.orderNumber+'?access='+encodeURIComponent(studOrder.accessToken));assert.equal(studFull.customerType,'STUDENT');assert.equal(studFull.studentInfo.campus,'Universitas Indonesia');assert.equal(studFull.studentInfo.studentId,'2306781001');assert.equal(studFull.studentInfo.verificationStatus,'AUTOMATICALLY_VERIFIED');assert.equal(studFull.studentInfo.fraudRisk,'LOW');assert.ok(studFull.studentInfo.studentPhoto.includes('mockselfie'));assert.equal(studFull.items[0].price,27000);assert.equal(studFull.items[0].regularPrice,33000);assert.equal(studFull.items[0].savings,12000);assert.equal(studFull.subtotal,54000);assert.equal(studFull.totalSavings,12000);assert.equal(studFull.total,62937);ok('Student customer order attaches selfie photo & passes AI automatic verification');
+  const studOrder=await call('/orders',{method:'POST',body:studentPayload,expect:201});const studFull=await call('/orders/'+studOrder.orderNumber+'?access='+encodeURIComponent(studOrder.accessToken));assert.equal(studFull.customerType,'STUDENT');assert.equal(studFull.studentInfo.campus,'Universitas Indonesia');assert.equal(studFull.studentInfo.studentId,'2306781001');assert.equal(studFull.studentInfo.verificationStatus,'AUTOMATICALLY_VERIFIED');assert.equal(studFull.studentInfo.fraudRisk,'LOW');assert.ok(studFull.studentInfo.studentPhoto.includes('mockselfie'));assert.equal(studFull.items[0].price,21000);assert.equal(studFull.items[0].regularPrice,23000);assert.equal(studFull.items[0].savings,4000);assert.equal(studFull.subtotal,42000);assert.equal(studFull.totalSavings,4000);assert.equal(studFull.total,48951);ok('Student customer order attaches selfie photo & passes AI automatic verification');
 
   // 3. Anti-Sybil Daily Quota Limit Test (Second order with same NIM blocked today)
   const quotaAbusePayload={tableToken:'demo-table-05',customerType:'STUDENT',studentInfo:{campus:'Universitas Indonesia',studentId:'2306781001',studentName:'Rian Ardiansyah',email:'rian.ardiansyah@ui.ac.id',studentPhoto:'data:image/jpeg;base64,mockselfiephotodata'},items:[{productId:iced.id,quantity:1}],paymentMethod:'CASH',idempotencyKey:'quota-'+run};
@@ -49,14 +49,14 @@ try{
 
   // 5. Anti-fraud test: create a suspicious student order (no edu email) and reject it (revert to regular price)
   const fakeStudentPayload={tableToken:'demo-table-02',customerType:'STUDENT',studentInfo:{campus:'Fake College',studentId:'000000',studentName:'Fake User',email:'fake@yahoo.com',studentPhoto:'data:image/jpeg;base64,invalidphoto'},items:[{productId:iced.id,quantity:2,options:{size:'Large'}}],paymentMethod:'CASH',idempotencyKey:'fake-'+run};
-  const fakeOrder=await call('/orders',{method:'POST',body:fakeStudentPayload,expect:201});assert.equal(fakeOrder.totalSavings,12000);
+  const fakeOrder=await call('/orders',{method:'POST',body:fakeStudentPayload,expect:201});assert.equal(fakeOrder.totalSavings,4000);
   let vRejected=await call('/admin/orders/'+fakeOrder.orderNumber+'/verify-student',{method:'PATCH',admin:true,body:{status:'REJECTED',reason:'Foto selfie bukan kartu mahasiswa'}});
   assert.equal(vRejected.studentInfo.verificationStatus,'REJECTED');
   assert.equal(vRejected.customerType,'REGULAR');
   assert.equal(vRejected.totalSavings,0);
-  assert.equal(vRejected.items[0].price,33000);
-  assert.equal(vRejected.subtotal,66000);
-  assert.equal(vRejected.total,76923);
+  assert.equal(vRejected.items[0].price,23000);
+  assert.equal(vRejected.subtotal,46000);
+  assert.equal(vRejected.total,53613);
   ok('Admin rejects fake student KTM and automatically reverts order to regular price');
 
   // 6. Blacklist API Test

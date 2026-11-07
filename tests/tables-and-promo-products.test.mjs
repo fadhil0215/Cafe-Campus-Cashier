@@ -100,4 +100,14 @@ describe('Meja & Produk Baru Cafe Campus', () => {
         assert.ok(mooToast, 'Moo Toast harus ada');
         assert.equal(Number(mooToast.student_price), 15000, 'Harga pelajar Moo Toast 15K');
     });
+
+    test('Semua 65 menu produk resmi terdaftar aktif dan menu lama dinonaktifkan', async () => {
+        const [activeRows] = await pool.query('SELECT id, name FROM products WHERE is_active = 1');
+        assert.equal(activeRows.length, 65, 'Harus persis 65 menu resmi Cafe Campus yang aktif');
+
+        const [inactiveRows] = await pool.query("SELECT id, name, is_active FROM products WHERE id IN ('prod-1','prod-2','prod-3','prod-4','prod-5','prod-6','prod-7','prod-8','prod-9','prod-10','prod-cig-1','prod-cig-2')");
+        for (const row of inactiveRows) {
+            assert.equal(row.is_active, 0, `Produk lama ${row.id} (${row.name}) harus dinonaktifkan`);
+        }
+    });
 });

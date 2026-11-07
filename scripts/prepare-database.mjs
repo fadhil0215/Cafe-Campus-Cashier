@@ -4,6 +4,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { getDatabaseConfig } from '../config/db.mjs';
+import { realCafeProducts } from '../config/real-menu-products.mjs';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -171,31 +172,21 @@ try {
     `, [t.id, t.number, t.name, t.token]);
   }
 
-  // Sync promotional products
-  const promoProducts = [
-    ['prod-mocca-blue', 'cat-1', 'Mocca Blue', 'Bold espresso, rich chocolate, and a sweet blueberry twist. Sounds unexpected, tastes unforgettable!', 19000.00, 16000.00, '🫐', '/assets/mocca-blue.jpg', 1, 1, 1, 1, 0],
-    ['prod-spanish-latte', 'cat-1', 'Spanish Latte', 'A perfect blend of espresso, caramel, and fresh milk. Creamy, smooth, with a sweet caramel touch in every sip.', 19000.00, 16000.00, '☕', '/assets/spanish-latte.jpg', 1, 1, 2, 1, 0],
-    ['prod-oat-latte', 'cat-1', 'Oat Latte', 'Perpaduan espresso yang bold dan oat milk yang creamy, dengan rasa kopi yang smooth dan hint manis alami. Lebih aman buat lambung.', 19000.00, 16000.00, '🌾', '/assets/oat-latte.jpg', 1, 1, 3, 1, 0],
-    ['prod-ubee-latte', 'cat-2', 'Ubee Latte', 'Sweet, creamy, and full of purple goodness! Perpaduan susu, creamer, dan sensasi ubi ungu manis yang lembut di mulut siap jadi moodbooster baru kamu.', 19000.00, 16000.00, '🍠', '/assets/ubee-latte.jpg', 1, 1, 4, 1, 0],
-    ['prod-nasgor-bp', 'cat-3', 'Nasi Goreng Banyak Pikiran', 'Nasi goreng gurih yang dimasak dengan penuh rasa, dipadukan telur mata sapi yang lembut dan creamy, serta kerupuk renyah. Hangat, sederhana, dan pas untuk nemenin kamu yang lagi banyak pikiran!', 22000.00, 19000.00, '🍳', '/assets/nasi-goreng-banyak-pikiran.jpg', 1, 0, 5, 1, 0],
-    ['prod-bekal-nugas', 'cat-3', 'Bekal Nugas', 'Seporsi nasi putih hangat disajikan bersama fried chicken renyah keemasan, scrambled egg lembut & creamy, serta jukut bayam segar. Pas untuk bekal nugas kapan saja. (Tersedia opsi Sambal Matah / Sambal Bawang).', 26000.00, 23000.00, '🍱', '/assets/bekal-nugas.jpg', 1, 0, 6, 1, 0],
-    ['prod-nasi-kulit', 'cat-3', 'Nasi Kulit Daun Jeruk', 'Nasi hangat dengan kulit ayam crispy gurih & renyah dipadukan aroma segar daun jeruk yang menggugah selera. Bikin susah berhenti makan!', 23000.00, 20000.00, '🍗', '/assets/nasi-kulit-daun-jeruk.jpg', 1, 0, 7, 1, 0],
-    ['prod-bakmi-matah', 'cat-3', 'Bakmi Goreng Sambal Matah', 'Bakmi goreng hangat dengan bumbu gurih yang meresap sempurna, dipadukan sambal matah segar yang pedas, dan wangi. Bikin setiap suapan terasa spesial!', 26000.00, 23000.00, '🍜', '/assets/bakmi-goreng-sambal-matah.jpg', 1, 0, 8, 1, 0],
-    ['prod-burger-classic', 'cat-3', 'Classic Campus Burger', 'Perpaduan roti lembut dengan homemade patty juicy, dilengkapi selada segar, timun, tomat, dan saus spesial. Sederhana, klasik, dan selalu jadi favorit.', 19000.00, 16000.00, '🍔', '/assets/classic-burger.jpg', 1, 0, 9, 1, 0],
-    ['prod-burger-cheesy', 'cat-3', 'Cheesy Campus Burger', 'Lelehan keju creamy yang menyelimuti homemade patty juicy, berpadu dengan roti lembut dan sayuran segar. Setiap gigitan penuh rasa gurih yang bikin susah berhenti!', 21000.00, 18000.00, '🧀', '/assets/cheesy-burger.jpg', 1, 0, 10, 1, 0],
-    ['prod-toast-butter', 'cat-4', 'Butter Boom Toast', 'Toast gurih dengan aroma mentega, butter crumble yang renyah, dan siraman susu kental manis yang lumer di setiap gigitan. Sweet, Buttery, Crispy.', 18000.00, 15000.00, '🍞', '/assets/butter-boom-toast.jpg', 1, 0, 11, 1, 0],
-    ['prod-toast-moo', 'cat-4', 'Moo Toast', 'Toast tebal dengan mentega yang harum, berpadu saus susu creamy yang melimpah dan taburan cokelat manis yang bikin susah berhenti makan. Sweet, Soft, Addictive.', 18000.00, 15000.00, '🥛', '/assets/moo-toast.jpg', 1, 0, 12, 1, 0]
-  ];
-  for (const [id, category_id, name, description, price, student_price, emoji, image_url, is_available, customizable, sort_order, is_active, is_tobacco] of promoProducts) {
+  // Deactivate all old / dummy products so only real menu products are available
+  const realProductIds = realCafeProducts.map(p => p.id);
+  await connection.query(`UPDATE products SET is_active = 0, is_available = 0 WHERE id NOT IN (${realProductIds.map(id => `'${id}'`).join(',')})`);
+
+  // Sync all 65 official Cafe Campus menu products
+  for (const p of realCafeProducts) {
     await connection.query(`
       INSERT INTO products (id, category_id, name, description, price, student_price, emoji, image_url, is_available, customizable, sort_order, is_active, is_tobacco)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, 0)
       ON DUPLICATE KEY UPDATE 
-        name=VALUES(name), description=VALUES(description), price=VALUES(price), 
+        category_id=VALUES(category_id), name=VALUES(name), description=VALUES(description), price=VALUES(price), 
         student_price=VALUES(student_price), emoji=VALUES(emoji), image_url=VALUES(image_url), 
         is_available=VALUES(is_available), customizable=VALUES(customizable), sort_order=VALUES(sort_order), 
-        is_active=1
-    `, [id, category_id, name, description, price, student_price, emoji, image_url, is_available, customizable, sort_order, is_active, is_tobacco]);
+        is_active=1, is_tobacco=0
+    `, [p.id, p.cat, p.name, p.desc, p.price, p.studPrice, p.emoji, p.img, p.avail, p.custom, p.sort]);
   }
 
   await connection.query('SELECT 1');
