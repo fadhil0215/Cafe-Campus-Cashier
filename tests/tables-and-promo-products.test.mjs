@@ -12,7 +12,7 @@ describe('Meja & Produk Baru Cafe Campus', () => {
             SELECT table_number, name, public_token, is_active 
             FROM cafe_tables 
             WHERE is_active = 1
-            ORDER BY 
+            ORDER BY
               CASE 
                 WHEN table_number LIKE 'B%' THEN 1
                 WHEN table_number LIKE '10%' THEN 2

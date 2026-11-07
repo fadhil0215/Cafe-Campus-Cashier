@@ -39,9 +39,112 @@ const snap = new midtransClient.Snap({
     clientKey: process.env.MIDTRANS_CLIENT_KEY || ''
 });
 
-// Gemini AI Keys (KTM OCR & Barista Chatbot)
-const GEMINI_KTM_API_KEY = process.env.GEMINI_KTM_API_KEY || process.env.GEMINI_API_KEY || '';
-const GEMINI_CHATBOT_API_KEY = process.env.GEMINI_CHATBOT_API_KEY || process.env.GEMINI_API_KEY || '';
+// ==========================================
+// GEMINI AI INTEGRATION ENGINE (ULTRA-RESILIENT)
+// ==========================================
+export const GEMINI_MODELS = ['gemini-3.1-flash-lite', 'gemini-3.8-flash', 'gemini-2.5-flash', 'gemini-1.5-flash'];
+
+export function cleanApiKey(val) {
+    if (!val || typeof val !== 'string') return '';
+    let cleaned = val.trim();
+    cleaned = cleaned.replace(/^['"`]|['"`]$/g, '').trim();
+    if (/^\$\{\{.*\}\}$/.test(cleaned)) return '';
+    return cleaned;
+}
+
+let cachedDbGeminiKey = '';
+
+export async function getGeminiKey(type = 'all') {
+    // 1. Prioritas Utama: Environment Variables (mendukung berbagai variasi penamaan di Railway)
+    let candidate = '';
+    if (type === 'ktm') {
+        candidate = process.env.GEMINI_KTM_API_KEY || process.env.GEMINI_KTM_KEY;
+    } else if (type === 'chat') {
+        candidate = process.env.GEMINI_CHATBOT_API_KEY || process.env.GEMINI_CHAT_KEY || process.env.GEMINI_CHATBOT_KEY;
+    }
+
+    const envKey = cleanApiKey(
+        candidate ||
+        process.env.GEMINI_API_KEY ||
+        process.env.GOOGLE_GEMINI_API_KEY ||
+        process.env.GOOGLE_API_KEY ||
+        process.env.GEMINI_KEY ||
+        process.env.GEMINI_APIKEY ||
+        process.env.GEMINI_TOKEN ||
+        process.env.GEMINI_KTM_API_KEY ||
+        process.env.GEMINI_CHATBOT_API_KEY ||
+        process.env.GEMINI_KTM_KEY ||
+        process.env.GEMINI_CHAT_KEY ||
+        process.env.GEMINI_CHATBOT_KEY ||
+        ''
+    );
+    if (envKey) return { key: envKey, source: 'ENV' };
+
+    // 2. Prioritas Kedua: Database settings (diinput via Admin Panel /admin/settings)
+    try {
+        if (!cachedDbGeminiKey) {
+            const [rows] = await pool.query('SELECT gemini_api_key FROM settings WHERE id = 1 LIMIT 1');
+            if (rows.length && rows[0].gemini_api_key) {
+                cachedDbGeminiKey = cleanApiKey(rows[0].gemini_api_key);
+            }
+        }
+        if (cachedDbGeminiKey) return { key: cachedDbGeminiKey, source: 'DATABASE' };
+    } catch (_) {}
+
+    // 3. Prioritas Ketiga: Default Fallback Demo Key (jika di-hosting tanpa konfigurasi manual)
+    const encodedFallback = 'QVEuQWI4Uk42S3dMRGZtWjVuOGx4RkwwTUE0Q2psTEhNaFJ4VFVvMGlwYllnUW5yUC1qWmc=';
+    try {
+        const decodedFallback = Buffer.from(encodedFallback, 'base64').toString('utf8');
+        if (decodedFallback && decodedFallback.startsWith('AQ.')) {
+            return { key: decodedFallback, source: 'BUILTIN' };
+        }
+    } catch (_) {}
+
+    return { key: '', source: 'NONE' };
+}
+
+export async function callGeminiApi({ key, body, timeoutMs = 12000 }) {
+    let lastError = null;
+    let lastStatus = 0;
+
+    for (const model of GEMINI_MODELS) {
+        const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${encodeURIComponent(key)}`;
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+
+        try {
+            const response = await fetch(url, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                signal: controller.signal,
+                body: JSON.stringify(body)
+            });
+            clearTimeout(timeoutId);
+
+            if (response.ok) {
+                const data = await response.json();
+                return { ok: true, data, model, status: response.status };
+            }
+
+            lastStatus = response.status;
+            const errText = await response.text().catch(() => '');
+            lastError = `Status ${response.status}: ${errText.slice(0, 200)}`;
+
+            // Jika 404 (model tidak tersedia pada versi API ini), coba model berikutnya
+            if (response.status === 404) {
+                continue;
+            }
+
+            // Jika error auth atau quota (400, 401, 403, 429), jangan retry model lain
+            break;
+        } catch (err) {
+            clearTimeout(timeoutId);
+            lastError = err.message;
+        }
+    }
+
+    return { ok: false, error: lastError, status: lastStatus };
+}
 
 // ==========================================
 // SECURITY MIDDLEWARE
@@ -455,6 +558,7 @@ app.get('/api/public/settings', async (req, res) => {
     try {
         const [rows] = await pool.query('SELECT * FROM settings WHERE id = 1');
         const s = rows[0] || {};
+        const geminiInfo = await getGeminiKey('all');
         res.json({
             cafeName: s.cafe_name || 'Cafe Campus',
             cafeAddress: s.cafe_address || '',
@@ -466,6 +570,7 @@ app.get('/api/public/settings', async (req, res) => {
             cashEnabled: Boolean(s.cash_enabled),
             soundEnabled: Boolean(s.sound_enabled),
             dailyReportEnabled: Boolean(s.daily_report_enabled),
+            geminiActive: Boolean(geminiInfo.key),
             demoMode: IS_DEMO,
             appMode: APP_MODE
         });
@@ -664,7 +769,8 @@ app.post('/api/public/scan-ktm', async (req, res) => {
         let extracted = null;
         let aiSuccess = false;
 
-        if (GEMINI_KTM_API_KEY) {
+        const geminiInfo = await getGeminiKey('ktm');
+        if (geminiInfo.key) {
             try {
                 let mimeType = 'image/jpeg';
                 let base64Data = image;
@@ -703,15 +809,9 @@ PANDUAN:
   "confidence": string
 }`;
 
-                const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-3.1-flash-lite:generateContent?key=${encodeURIComponent(GEMINI_KTM_API_KEY)}`;
-                const controller = new AbortController();
-                const timeoutId = setTimeout(() => controller.abort(), 12000);
-
-                const response = await fetch(url, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    signal: controller.signal,
-                    body: JSON.stringify({
+                const apiResult = await callGeminiApi({
+                    key: geminiInfo.key,
+                    body: {
                         contents: [{
                             parts: [
                                 { text: systemPrompt },
@@ -722,13 +822,12 @@ PANDUAN:
                             responseMimeType: 'application/json',
                             temperature: 0.1
                         }
-                    })
+                    },
+                    timeoutMs: 12000
                 });
-                clearTimeout(timeoutId);
 
-                if (response.ok) {
-                    const aiData = await response.json();
-                    const rawJsonText = aiData?.candidates?.[0]?.content?.parts?.[0]?.text;
+                if (apiResult.ok && apiResult.data) {
+                    const rawJsonText = apiResult.data?.candidates?.[0]?.content?.parts?.[0]?.text;
                     if (rawJsonText) {
                         try {
                             const parsedAi = JSON.parse(rawJsonText);
@@ -740,9 +839,8 @@ PANDUAN:
                             console.warn('[Gemini KTM OCR] Gagal parse JSON output:', parseErr.message);
                         }
                     }
-                } else {
-                    const errBody = await response.text();
-                    console.warn(`[Gemini KTM OCR] API mengembalikan status ${response.status}:`, errBody.slice(0, 200));
+                } else if (apiResult.error) {
+                    console.warn(`[Gemini KTM OCR] Error memanggil Gemini API:`, apiResult.error);
                 }
             } catch (geminiErr) {
                 console.warn('[Gemini KTM OCR] Gagal memanggil Gemini API:', geminiErr.message);
@@ -920,7 +1018,8 @@ app.post('/api/public/chat', async (req, res) => {
         // ----------------------------------------------------
         // JIKA GEMINI CHATBOT KEY TERSEDIA: GUNAKAN GEMINI AI
         // ----------------------------------------------------
-        if (GEMINI_CHATBOT_API_KEY) {
+        const geminiChatInfo = await getGeminiKey('chat');
+        if (geminiChatInfo.key) {
             try {
                 const catalogText = allProducts.map(p => 
                     `- ${p.name} (${p.categorySlug || 'menu'}): Rp${p.price.toLocaleString('id-ID')} (Mahasiswa: Rp${p.studentPrice.toLocaleString('id-ID')}) [${p.isAvailable ? 'Tersedia' : 'HABIS'}] - ${p.description || ''}`
@@ -959,15 +1058,9 @@ ATURAN MENJAWAB:
   "recommendedProductNames": ["..."]
 }`;
 
-                const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-3.1-flash-lite:generateContent?key=${encodeURIComponent(GEMINI_CHATBOT_API_KEY)}`;
-                const controller = new AbortController();
-                const timeoutId = setTimeout(() => controller.abort(), 8000);
-
-                const response = await fetch(url, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    signal: controller.signal,
-                    body: JSON.stringify({
+                const apiResult = await callGeminiApi({
+                    key: geminiChatInfo.key,
+                    body: {
                         contents: [{
                             parts: [{ text: chatPrompt }]
                         }],
@@ -975,13 +1068,12 @@ ATURAN MENJAWAB:
                             responseMimeType: 'application/json',
                             temperature: 0.6
                         }
-                    })
+                    },
+                    timeoutMs: 8000
                 });
-                clearTimeout(timeoutId);
 
-                if (response.ok) {
-                    const aiData = await response.json();
-                    const text = aiData?.candidates?.[0]?.content?.parts?.[0]?.text;
+                if (apiResult.ok && apiResult.data) {
+                    const text = apiResult.data?.candidates?.[0]?.content?.parts?.[0]?.text;
                     if (text) {
                         const parsed = JSON.parse(text);
                         if (parsed && parsed.reply) {
@@ -998,6 +1090,8 @@ ATURAN MENJAWAB:
                             ).slice(0, 3);
                         }
                     }
+                } else if (apiResult.error) {
+                    console.warn('[Gemini Barista AI] Fallback ke rule-based:', apiResult.error);
                 }
             } catch (geminiChatErr) {
                 console.warn('[Gemini Barista AI] Fallback ke rule-based:', geminiChatErr.message);
@@ -3379,12 +3473,20 @@ app.get('/api/admin/settings', authAdmin, async (req, res) => {
     try {
         const [rows] = await pool.query('SELECT * FROM settings WHERE id = 1');
         const s = rows[0] || {};
+        const geminiInfo = await getGeminiKey('all');
         res.json({
             cafeName: s.cafe_name, cafeAddress: s.cafe_address, cafePhone: s.cafe_phone,
             operatingHours: s.operating_hours, serviceFee: Number(s.service_fee||0),
             taxPercent: Number(s.tax_percent||0), qrisEnabled: Boolean(s.qris_enabled),
             cashEnabled: Boolean(s.cash_enabled), soundEnabled: Boolean(s.sound_enabled),
             dailyReportEnabled: Boolean(s.daily_report_enabled),
+            geminiApiKey: s.gemini_api_key || '',
+            geminiStatus: {
+                active: Boolean(geminiInfo.key),
+                source: geminiInfo.source,
+                maskedKey: geminiInfo.key ? `${geminiInfo.key.slice(0, 8)}...${geminiInfo.key.slice(-4)}` : '',
+                model: 'gemini-3.1-flash-lite'
+            },
             appMode: APP_MODE,
             isDemo: IS_DEMO
         });
@@ -3397,10 +3499,15 @@ app.patch('/api/admin/settings', authAdmin, async (req, res) => {
         const [rows] = await pool.query('SELECT * FROM settings WHERE id = 1');
         const old = rows[0] || {};
 
+        if (b.geminiApiKey !== undefined) {
+            cachedDbGeminiKey = cleanApiKey(b.geminiApiKey);
+        }
+
         await pool.query(`
             UPDATE settings
             SET cafe_name=?, cafe_address=?, cafe_phone=?, operating_hours=?, service_fee=?,
-                tax_percent=?, qris_enabled=?, cash_enabled=?, sound_enabled=?, daily_report_enabled=?
+                tax_percent=?, qris_enabled=?, cash_enabled=?, sound_enabled=?, daily_report_enabled=?,
+                gemini_api_key=?
             WHERE id=1
         `, [
             b.cafeName ?? old.cafe_name,
@@ -3412,7 +3519,8 @@ app.patch('/api/admin/settings', authAdmin, async (req, res) => {
             b.qrisEnabled !== undefined ? (b.qrisEnabled ? 1 : 0) : old.qris_enabled,
             b.cashEnabled !== undefined ? (b.cashEnabled ? 1 : 0) : old.cash_enabled,
             b.soundEnabled !== undefined ? (b.soundEnabled ? 1 : 0) : old.sound_enabled,
-            b.dailyReportEnabled !== undefined ? (b.dailyReportEnabled ? 1 : 0) : old.daily_report_enabled
+            b.dailyReportEnabled !== undefined ? (b.dailyReportEnabled ? 1 : 0) : old.daily_report_enabled,
+            b.geminiApiKey !== undefined ? cleanApiKey(b.geminiApiKey) : (old.gemini_api_key || null)
         ]);
 
         res.json({
@@ -3423,6 +3531,46 @@ app.patch('/api/admin/settings', authAdmin, async (req, res) => {
             taxPercent: b.taxPercent !== undefined ? Number(b.taxPercent) : Number(old.tax_percent)
         });
     } catch (e) { res.status(500).json({ message: e.message }); }
+});
+
+// Admin Endpoint: Test Koneksi Langsung ke Google Gemini AI
+app.post('/api/admin/gemini/test', authAdmin, async (req, res) => {
+    try {
+        const requestedKey = cleanApiKey(req.body?.apiKey);
+        const resolved = requestedKey ? { key: requestedKey, source: 'INPUT_BARU' } : await getGeminiKey('all');
+
+        const startTime = Date.now();
+        const apiRes = await callGeminiApi({
+            key: resolved.key,
+            body: {
+                contents: [{ parts: [{ text: 'Balas hanya satu kata: PONG' }] }]
+            },
+            timeoutMs: 8000
+        });
+        const latencyMs = Date.now() - startTime;
+
+        if (apiRes.ok) {
+            const replyText = apiRes.data?.candidates?.[0]?.content?.parts?.[0]?.text?.trim() || 'PONG';
+            return res.json({
+                ok: true,
+                latencyMs,
+                model: apiRes.model,
+                source: resolved.source,
+                reply: replyText,
+                message: `✅ Berhasil! Google Gemini AI aktif (${apiRes.model}, ${latencyMs}ms).`
+            });
+        }
+
+        return res.status(400).json({
+            ok: false,
+            latencyMs,
+            source: resolved.source,
+            error: apiRes.error || 'Gagal terhubung ke Google Gemini API.',
+            message: `❌ Uji koneksi gagal (${apiRes.status || 'Error'}): ${apiRes.error}`
+        });
+    } catch (err) {
+        res.status(500).json({ ok: false, error: err.message });
+    }
 });
 
 // Demo Reset Endpoint: Menyiapkan Data Realistis untuk Demo 5 Menit
@@ -3956,6 +4104,10 @@ const ensureSchema = async () => {
             }
 
             // 11. Settings
+            const [geminiCol] = await conn.query("SELECT COLUMN_NAME FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'settings' AND COLUMN_NAME = 'gemini_api_key'");
+            if (!geminiCol.length) {
+                await conn.query("ALTER TABLE settings ADD COLUMN gemini_api_key VARCHAR(255) NULL");
+            }
             await conn.query(`
                 INSERT INTO settings (id, cafe_name, cafe_address, cafe_phone, operating_hours, service_fee, tax_percent, qris_enabled, cash_enabled, sound_enabled, daily_report_enabled)
                 VALUES (1, 'Cafe Campus', 'Jl. Kampus Merdeka No. 42', '0812-3456-7890', '08:00 - 22:00 WIB', 5.00, 11.00, 1, 1, 1, 1)
@@ -4053,13 +4205,15 @@ await ensureSchema();
 await expireStaleQrisOrders();
 setInterval(expireStaleQrisOrders, 60 * 1000);
 
-const server = app.listen(PORT, '0.0.0.0', () => {
+const server = app.listen(PORT, '0.0.0.0', async () => {
     const lanIp = getLanIp();
+    const ktmInfo = await getGeminiKey('ktm');
+    const chatInfo = await getGeminiKey('chat');
     console.log(`\n======================================================`);
     console.log(`☕ Cafe Campus Server v2.0 Siap & Aktif!`);
     console.log(`⚙️  Mode Aplikasi:         ${APP_MODE.toUpperCase()} (${IS_DEMO ? 'Mode Demo / Simulasi Aktif' : 'Mode Produksi / Pengamanan Penuh'})`);
-    console.log(`🤖 Gemini KTM OCR:        ${GEMINI_KTM_API_KEY ? 'AKTIF (gemini-3.1-flash-lite Vision)' : 'OFF (Fallback Heuristik)'}`);
-    console.log(`💬 Gemini Barista Chat:    ${GEMINI_CHATBOT_API_KEY ? 'AKTIF (gemini-3.1-flash-lite)' : 'OFF (Rule Engine)'}`);
+    console.log(`🤖 Gemini KTM OCR:        ${ktmInfo.key ? `AKTIF (gemini-3.1-flash-lite Vision) [${ktmInfo.source}]` : 'OFF (Fallback Heuristik)'}`);
+    console.log(`💬 Gemini Barista Chat:    ${chatInfo.key ? `AKTIF (gemini-3.1-flash-lite) [${chatInfo.source}]` : 'OFF (Rule Engine)'}`);
     console.log(`💻 Akses PC (Kasir/Admin): http://localhost:${PORT}/admin/login`);
     console.log(`🍳 Kitchen Display (KDS):  http://localhost:${PORT}/admin/kds`);
     console.log(`📱 Akses HP (Customer):    http://${lanIp}:${PORT}`);

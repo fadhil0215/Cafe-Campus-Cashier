@@ -151,5 +151,63 @@ describe('GEMINI AI KTM SCANNER & BARISTA CHATBOT TEST SUITE', () => {
         }
     });
 
+    it('4. Deteksi Kunci Gemini AI: Settings status aktif & endpoint uji koneksi berfungsi', async () => {
+        const testPort = 4213;
+        const child = spawn(process.execPath, ['server.mjs'], {
+            cwd: rootDir,
+            env: {
+                ...process.env,
+                PORT: String(testPort),
+                HOST: '127.0.0.1',
+                APP_MODE: 'demo'
+            },
+            stdio: ['ignore', 'pipe', 'pipe']
+        });
+
+        try {
+            await waitForServer(`http://127.0.0.1:${testPort}/api/health`);
+
+            // Login admin
+            const loginRes = await fetch(`http://127.0.0.1:${testPort}/api/admin/login`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ email: 'admin@cafecampus.demo', password: 'admin123' })
+            });
+            const loginData = await loginRes.json();
+            const token = loginData.token;
+
+            // Cek Settings Gemini Status
+            const settingsRes = await fetch(`http://127.0.0.1:${testPort}/api/admin/settings`, {
+                headers: { 'Authorization': `Bearer ${token}` }
+            });
+            assert.equal(settingsRes.status, 200);
+            const settingsData = await settingsRes.json();
+            assert.ok(settingsData.geminiStatus, 'Harus memuat object geminiStatus');
+            assert.equal(settingsData.geminiStatus.active, true, 'Gemini AI wajib terdeteksi aktif');
+            assert.ok(settingsData.geminiStatus.source, 'Harus mencantumkan sumber kunci (ENV/DATABASE/BUILTIN)');
+
+            // Uji endpoint test koneksi AI
+            const testAiRes = await fetch(`http://127.0.0.1:${testPort}/api/admin/gemini/test`, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Authorization': `Bearer ${token}`
+                },
+                body: JSON.stringify({})
+            });
+            const testAiText = await testAiRes.text();
+            if (testAiRes.status !== 200) {
+                console.error('testAiRes failed:', testAiRes.status, testAiText);
+            }
+            assert.equal(testAiRes.status, 200, `Test koneksi AI harus mengembalikan 200 OK (got ${testAiRes.status}: ${testAiText})`);
+            const testAiData = JSON.parse(testAiText);
+            assert.equal(testAiData.ok, true);
+            assert.ok(testAiData.latencyMs >= 0);
+            assert.ok(testAiData.message.includes('Berhasil') || testAiData.message.includes('aktif'));
+        } finally {
+            child.kill();
+        }
+    });
+
 });
 

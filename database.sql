@@ -413,6 +413,7 @@ CREATE TABLE `settings` (
   `cash_enabled` tinyint(1) DEFAULT '1',
   `sound_enabled` tinyint(1) DEFAULT '1',
   `daily_report_enabled` tinyint(1) DEFAULT '1',
+  `gemini_api_key` varchar(255) DEFAULT NULL,
   PRIMARY KEY (`id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 

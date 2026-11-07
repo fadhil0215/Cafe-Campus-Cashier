@@ -78,6 +78,15 @@ try {
     if (rows.length === 0) await connection.query(alterSql);
   }
 
+  // Safe migration for settings.gemini_api_key
+  const [geminiColRows] = await connection.query(
+    `SELECT COLUMN_NAME FROM information_schema.COLUMNS
+      WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'settings' AND COLUMN_NAME = 'gemini_api_key'`
+  );
+  if (geminiColRows.length === 0) {
+    await connection.query('ALTER TABLE settings ADD COLUMN gemini_api_key VARCHAR(255) NULL DEFAULT NULL');
+  }
+
   const [postSetupTableRows] = await connection.query(
     `SELECT TABLE_NAME AS tableName FROM information_schema.TABLES
       WHERE TABLE_SCHEMA = DATABASE() AND TABLE_TYPE = 'BASE TABLE'`
