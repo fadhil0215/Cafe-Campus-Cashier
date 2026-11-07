@@ -453,7 +453,12 @@ async function api(path, opt = {}) {
     };
     const r = await fetch('/api' + path, { ...opt, headers });
     let d = {}; try { d = await r.json() } catch { }
-    if (!r.ok) throw new Error(d.message || 'Terjadi kendala. Silakan coba lagi.');
+    if (!r.ok) {
+      const err = new Error(d.message || d.error || 'Terjadi kendala. Silakan coba lagi.');
+      err.data = d;
+      err.status = r.status;
+      throw err;
+    }
     return d;
   } catch (e) {
     if (e instanceof TypeError) throw new Error('Koneksi ke server terputus.');
@@ -1457,31 +1462,16 @@ async function openLiveCameraModal(onCapture) {
 }
 
 function parseKtmFromScan(photoData, faculties = [], existingInfo = null) {
-  if (existingInfo && existingInfo.studentId && existingInfo.studentName) {
-    return {
-      ...existingInfo,
-      studentPhoto: photoData || existingInfo.studentPhoto,
-      emailVerified: true
-    };
+  if (existingInfo && existingInfo.studentId && existingInfo.studentName && existingInfo.campus) {
+    if (!/\b(smp|smpn|sma|sman|smk|smkn|sd|peserta didik)\b/i.test(existingInfo.campus)) {
+      return {
+        ...existingInfo,
+        studentPhoto: photoData || existingInfo.studentPhoto,
+        emailVerified: true
+      };
+    }
   }
-  const defaultFac = faculties[0] || { id: 'fac-cs', name: 'Fakultas Ilmu Komputer', code: 'FASILKOM', colorTheme: '#6b21a8' };
-  const randomNim = `${Math.floor(2106000000 + Math.random() * 999999)}`;
-  return {
-    studentName: 'Mahasiswa Terverifikasi',
-    campus: 'Universitas Indonesia',
-    studentId: randomNim,
-    facultyId: defaultFac.id,
-    facultyCode: defaultFac.code,
-    facultyName: defaultFac.name,
-    facultyColor: defaultFac.colorTheme || defaultFac.color || '#6b21a8',
-    studyProgram: 'Sistem Informasi',
-    birthDate: '2004-05-14',
-    email: `mahasiswa.${randomNim.slice(-4)}@ui.ac.id`,
-    emailVerified: true,
-    studentPhoto: photoData,
-    confidence: '99.4%',
-    isAiScanned: true
-  };
+  return null;
 }
 
 function renderExtractedKtmCard(info) {
@@ -1736,32 +1726,71 @@ async function checkoutPage() {
         clearTimeout(t2);
         if (curHud) curHud.style.display = 'none';
 
-        const parsed = (res && res.data) ? res.data : parseKtmFromScan(studentPhotoData, faculties, c.studentInfo);
-        c.studentInfo = parsed;
-        setCart(c);
+        if (res && res.data && res.data.isValidKtm !== false) {
+          const parsed = res.data;
+          c.studentInfo = parsed;
+          setCart(c);
 
-        if (extractedBox) {
-          extractedBox.innerHTML = renderExtractedKtmCard(parsed);
-          extractedBox.style.display = 'block';
-          bindEditBtn();
+          if (extractedBox) {
+            extractedBox.innerHTML = renderExtractedKtmCard(parsed);
+            extractedBox.style.display = 'block';
+            bindEditBtn();
+          }
+          toast(`✅ Scan KTM Berhasil! ${parsed.studentName || 'Mahasiswa'} (${parsed.campus || 'Kampus'}) terverifikasi.`);
+        } else {
+          throw new Error(res.message || res.error || 'Kartu tidak valid');
         }
-        toast(`✅ Scan KTM Berhasil! ${parsed.studentName || 'Mahasiswa'} (${parsed.campus || 'Kampus'}) terverifikasi.`);
       } catch (err) {
         clearTimeout(t1);
         clearTimeout(t2);
         if (curHud) curHud.style.display = 'none';
 
-        console.warn('Scan KTM fallback:', err);
-        const parsed = parseKtmFromScan(studentPhotoData, faculties, c.studentInfo);
-        c.studentInfo = parsed;
-        setCart(c);
+        const errData = err.data || {};
+        const isRejection = err.status === 422 || errData.isValidKtm === false || /bukan kartu tanda mahasiswa|bukan ktm|kartu ditolak|kartu pelajar|peserta didik|sekolah/i.test(err.message);
 
-        if (extractedBox) {
-          extractedBox.innerHTML = renderExtractedKtmCard(parsed);
-          extractedBox.style.display = 'block';
-          bindEditBtn();
+        if (isRejection) {
+          // Kartu BUKAN KTM Mahasiswa -> DITOLAK
+          c.studentInfo = null;
+          setCart(c);
+
+          const rejectionMsg = errData.message || errData.error || err.message;
+          const detectedTitle = errData.detectedTitle || errData.cardType || 'Kartu Bukan KTM';
+
+          if (extractedBox) {
+            extractedBox.innerHTML = `
+              <div class="ktm-rejected-card" style="background:#fff1f2; border:1.5px solid #f43f5e; border-radius:14px; padding:18px; margin:16px 0; box-shadow:0 4px 12px rgba(244,63,94,0.12); animation:pulse 0.3s ease;">
+                <div style="display:flex; align-items:flex-start; gap:14px;">
+                  <span style="font-size:28px; line-height:1;">⛔</span>
+                  <div style="flex:1;">
+                    <h4 style="margin:0 0 6px 0; color:#9f1239; font-size:15px; font-weight:700;">Pemindaian Ditolak: Khusus KTM Mahasiswa</h4>
+                    <p style="margin:0 0 10px 0; font-size:13px; color:#881337; line-height:1.5;">${esc(rejectionMsg)}</p>
+                    <div style="background:#ffe4e6; border-radius:8px; padding:8px 12px; font-size:11.5px; color:#9f1239; display:flex; flex-direction:column; gap:4px;">
+                      <div>📋 <b>Kartu Terdeteksi:</b> ${esc(detectedTitle)}</div>
+                      <div>🎓 <b>Ketentuan:</b> Diskon dan harga mahasiswa HANYA berlaku untuk Mahasiswa aktif Perguruan Tinggi / Universitas resmi.</div>
+                    </div>
+                    <div style="margin-top:14px; display:flex; gap:8px;">
+                      <button type="button" class="btn btn-outline" id="btnRetryKtm" style="border-color:#e11d48; color:#e11d48; font-size:12.5px; padding:8px 16px;">📸 Pindai Ulang KTM Mahasiswa Asli</button>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            `;
+            extractedBox.style.display = 'block';
+
+            const retryBtn = $('#btnRetryKtm', extractedBox);
+            if (retryBtn) {
+              retryBtn.onclick = () => {
+                if (btnCamera) btnCamera.click();
+              };
+            }
+          }
+
+          toast(`⛔ ${rejectionMsg}`, true);
+          return;
         }
-        toast('✅ Scan KTM selesai (Mode Verifikasi Cepat). Silakan periksa data.');
+
+        console.warn('Scan KTM technical error:', err);
+        toast(`Gagal memindai KTM: ${err.message}. Silakan coba lagi.`, true);
       }
     };
 
@@ -1812,8 +1841,8 @@ async function checkoutPage() {
     let studentData = null;
 
     if (isStud && !addTo) {
-      if (!studentPhotoData || !c.studentInfo || !c.studentInfo.studentId) {
-        return toast('Harap foto atau upload Kartu Tanda Mahasiswa (KTM) terlebih dahulu untuk verifikasi diskon.', true);
+      if (!studentPhotoData || !c.studentInfo || !c.studentInfo.studentId || c.studentInfo.isValidKtm === false) {
+        return toast('⛔ Harap foto atau upload Kartu Tanda Mahasiswa (KTM) Perguruan Tinggi resmi terlebih dahulu untuk verifikasi diskon.', true);
       }
       studentData = {
         studentName: c.studentInfo.studentName || 'Mahasiswa Terverifikasi',

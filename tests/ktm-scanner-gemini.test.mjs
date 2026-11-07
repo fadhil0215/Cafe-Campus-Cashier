@@ -110,8 +110,50 @@ describe('GEMINI AI KTM SCANNER & BARISTA CHATBOT TEST SUITE', () => {
         }
     });
 
-    it('3. Barista AI Chatbot merespons dengan konteks menu Cafe Campus, WiFi, dan Diskon', async () => {
+    it('3. Endpoint /api/public/scan-ktm menolak kartu non-KTM (Kartu Pelajar SMP/SMA/KTP) dengan HTTP 422', async () => {
         const testPort = 4212;
+        const child = spawn(process.execPath, ['server.mjs'], {
+            cwd: rootDir,
+            env: {
+                ...process.env,
+                PORT: String(testPort),
+                HOST: '127.0.0.1',
+                APP_MODE: 'demo'
+            },
+            stdio: ['ignore', 'pipe', 'pipe']
+        });
+
+        try {
+            await waitForServer(`http://127.0.0.1:${testPort}/api/health`);
+
+            // Panggilan dengan identitas bertema sekolah SMP
+            const dummyPng = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=';
+            const scanRejectRes = await fetch(`http://127.0.0.1:${testPort}/api/public/scan-ktm`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    image: dummyPng,
+                    existingInfo: {
+                        studentName: 'Fadhil Putra Santoso',
+                        campus: 'SMP Negeri 3 Cibinong',
+                        studentId: '5848220134',
+                        studyProgram: 'Umum'
+                    }
+                })
+            });
+
+            assert.equal(scanRejectRes.status, 422, 'Kartu pelajar SMP harus ditolak dengan HTTP 422');
+            const rejectData = await scanRejectRes.json();
+            assert.equal(rejectData.ok, false);
+            assert.equal(rejectData.isValidKtm, false);
+            assert.ok(rejectData.message.includes('bukan') || rejectData.message.includes('sekolah') || rejectData.message.includes('Mahasiswa') || rejectData.message.includes('KTM'));
+        } finally {
+            child.kill();
+        }
+    });
+
+    it('4. Barista AI Chatbot merespons dengan konteks menu Cafe Campus, WiFi, dan Diskon', async () => {
+        const testPort = 4214;
         const child = spawn(process.execPath, ['server.mjs'], {
             cwd: rootDir,
             env: {
@@ -151,8 +193,8 @@ describe('GEMINI AI KTM SCANNER & BARISTA CHATBOT TEST SUITE', () => {
         }
     });
 
-    it('4. Deteksi Kunci Gemini AI: Settings status aktif & endpoint uji koneksi berfungsi', async () => {
-        const testPort = 4213;
+    it('5. Deteksi Kunci Gemini AI: Settings status aktif & endpoint uji koneksi berfungsi', async () => {
+        const testPort = 4215;
         const child = spawn(process.execPath, ['server.mjs'], {
             cwd: rootDir,
             env: {
