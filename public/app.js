@@ -1746,7 +1746,7 @@ async function checkoutPage() {
         if (curHud) curHud.style.display = 'none';
 
         const errData = err.data || {};
-        const isRejection = err.status === 422 || errData.isValidKtm === false || /bukan kartu tanda mahasiswa|bukan ktm|kartu ditolak|kartu pelajar|peserta didik|sekolah/i.test(err.message);
+        const isRejection = err.status === 422 || errData.isValidKtm === false || /bukan kartu tanda mahasiswa|bukan ktm|kartu ditolak|kartu pelajar|peserta didik|sekolah|kis|bpjs/i.test(err.message);
 
         if (isRejection) {
           // Kartu BUKAN KTM Mahasiswa -> DITOLAK

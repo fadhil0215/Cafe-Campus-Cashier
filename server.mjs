@@ -42,7 +42,14 @@ const snap = new midtransClient.Snap({
 // ==========================================
 // GEMINI AI INTEGRATION ENGINE (ULTRA-RESILIENT)
 // ==========================================
-export const GEMINI_MODELS = ['gemini-3.1-flash-lite', 'gemini-3.8-flash', 'gemini-2.5-flash', 'gemini-1.5-flash'];
+export const GEMINI_MODELS = [
+    'gemini-3.5-flash-lite',
+    'gemini-3.5-flash',
+    'gemini-3.6-flash',
+    'gemini-3-flash-preview',
+    'gemini-3.1-flash-lite',
+    'gemini-3.8-flash'
+];
 
 export function cleanApiKey(val) {
     if (!val || typeof val !== 'string') return '';
@@ -130,16 +137,23 @@ export async function callGeminiApi({ key, body, timeoutMs = 12000 }) {
             const errText = await response.text().catch(() => '');
             lastError = `Status ${response.status}: ${errText.slice(0, 200)}`;
 
-            // Jika 404 (model tidak tersedia pada versi API ini), coba model berikutnya
-            if (response.status === 404) {
+            // Jika 404 (deprecated/not found), 503 (high demand spike), 500 (internal), 429 (rate limit):
+            // Lanjutkan mencoba model alternatif berikutnya!
+            if (response.status === 404 || response.status === 503 || response.status === 500 || response.status === 429) {
                 continue;
             }
 
-            // Jika error auth atau quota (400, 401, 403, 429), jangan retry model lain
+            // Jika error auth kredensial (401, 403), hentikan loop
+            if (response.status === 401 || response.status === 403) {
+                break;
+            }
+
+            // Error request client (400)
             break;
         } catch (err) {
             clearTimeout(timeoutId);
             lastError = err.message;
+            continue;
         }
     }
 
@@ -754,8 +768,8 @@ app.post('/api/public/student/verify-otp', otpVerifyLimiter, (req, res) => {
 
 // Heuristic patterns for non-university cards (Strict University KTM Only)
 export const SCHOOL_KEYWORDS_REGEX = /\b(smp|smpn|sma|sman|smk|smkn|mts|mtsn|sd|sdn|sekolah menengah|peserta didik|kartu pelajar|dinas pendidikan|nis|nisn|pramuka|osis|madrasah ibtidaiyah|madrasah tsanawiyah|madrasah aliyah)\b/i;
-export const GOV_ID_REGEX = /\b(kartu tanda penduduk|nik|warga negara|golongan darah|surat izin mengemudi|kepolisian negara|golongan sim|paspor)\b/i;
-export const UNIVERSITY_KEYWORDS_REGEX = /\b(universitas|university|institut|institute|politeknik|polytechnic|sekolah tinggi|akademi|academy|stie|stmik|stis|poltek|ui|itb|ugm|unpad|unair|ub|its|undip|ipb|uin|uns|unhas|usu|upi|unnes|uny|unand|unesa|unsoed|binus|telkom|trisakti|gunadarma|tarumanagara|umn|parahyangan|atmajaya|petra|uph|maranatha|pelita harapan)\b/i;
+export const GOV_ID_REGEX = /\b(kartu tanda penduduk|nik|warga negara|golongan darah|surat izin mengemudi|kepolisian negara|golongan sim|paspor|kartu indonesia sehat|kis|bpjs)\b/i;
+export const UNIVERSITY_KEYWORDS_REGEX = /\b(universitas|university|institut|institute|politeknik|polytechnic|sekolah tinggi|akademi|academy|stie|stmik|stis|poltek|amikom|unsoed|ui|itb|ugm|unpad|unair|ub|its|undip|ipb|uin|uns|unhas|usu|upi|unnes|uny|unand|unesa|binus|telkom|trisakti|gunadarma|tarumanagara|umn|parahyangan|atmajaya|petra|uph|maranatha|pelita harapan)\b/i;
 
 // ==========================================
 // GEMINI AI KTM OCR SCANNER (STRICT UNIVERSITY KTM ONLY)
@@ -805,10 +819,15 @@ app.post('/api/public/scan-ktm', async (req, res) => {
                 const systemPrompt = `Kamu adalah sistem AI Verifikator & Validator Khusus KARTU TANDA MAHASISWA (KTM) PERGURUAN TINGGI / UNIVERSITAS di Indonesia.
 Sistem ini HANYA menerima KTM Mahasiswa Perguruan Tinggi (Universitas, Institut, Politeknik, Akademi, Sekolah Tinggi).
 
+PENTING SOAL ORIENTASI FOTO:
+Foto kartu yang diunggah pengguna mungkin TERBALIK (180 derajat), MIRING, atau VERTIKAL (90 derajat).
+Kamu HARUS membaca dan mengidentifikasi teks di kartu dalam SEMUA orientasi (bila terbalik atau miring, putar orientasi secara mental dan baca teksnya).
+
 ATURAN VALIDASI MUTLAK:
 1. Periksa jenis kartu dengan sangat teliti:
-   - Apakah ini benar KARTU TANDA MAHASISWA (KTM) dari Perguruan Tinggi / Universitas / Institut / Politeknik / Akademi / Sekolah Tinggi?
+   - Apakah ini benar KARTU TANDA MAHASISWA (KTM) dari Perguruan Tinggi / Universitas / Institut / Politeknik / Akademi / Sekolah Tinggi? (Contoh: Universitas Amikom Purwokerto, Universitas Jenderal Soedirman / UNSOED, UI, ITB, UGM, dll).
    - ATAU apakah ini:
+     * KARTU INDONESIA SEHAT (KIS) / BPJS KESEHATAN? -> WAJIB TOLAK (isValidKtm = false)!
      * KARTU PELAJAR SEKOLAH (SD, SMP, MTs, SMA, SMK, MA, atau Kartu Peserta Didik sekolah dasar/menengah)? -> WAJIB TOLAK (isValidKtm = false)!
      * KTP (Kartu Tanda Penduduk)? -> WAJIB TOLAK (isValidKtm = false)!
      * SIM (Surat Izin Mengemudi)? -> WAJIB TOLAK (isValidKtm = false)!
@@ -819,13 +838,13 @@ ATURAN VALIDASI MUTLAK:
 2. Kriteria KTM Mahasiswa yang Valid:
    - Institusi harus berupa Perguruan Tinggi / Universitas / Institut / Politeknik / Akademi / Sekolah Tinggi.
    - Ditujukan untuk Mahasiswa (memiliki sebutan Mahasiswa / Student / NIM / NPM).
-   - BUKAN diterbitkan oleh Dinas Pendidikan Kabupaten/Kota atau Sekolah Dasar/Menengah (SMP/SMA/SMK/SD/Peserta Didik).
+   - BUKAN diterbitkan oleh Dinas Pendidikan Kabupaten/Kota, BPJS Kesehatan, atau Sekolah Dasar/Menengah.
 
-3. Jika BUKAN KTM Mahasiswa (misal Kartu Pelajar SMP/SMA, KTP, SIM, dll):
+3. Jika BUKAN KTM Mahasiswa (misal KIS, BPJS, Kartu Pelajar SMP/SMA, KTP, SIM, dll):
    - "isValidKtm": false
-   - "cardType": "KARTU_PELAJAR_SEKOLAH" | "KTP" | "SIM" | "ID_KARYAWAN" | "KARTU_LAIN" | "BUKAN_KARTU"
-   - "detectedCardTitle": Judul kartu yang tertera (contoh: "Kartu Peserta Didik SMP Negeri 3 Cibinong")
-   - "rejectionReason": Alasan penolakan spesifik dan sopan dalam bahasa Indonesia (contoh: "Kartu yang dipindai adalah Kartu Peserta Didik SMP Negeri 3 Cibinong. Diskon dan harga khusus mahasiswa Cafe Campus HANYA berlaku untuk Mahasiswa aktif Perguruan Tinggi / Universitas dengan KTM resmi.")
+   - "cardType": "KIS_BPJS" | "KARTU_PELAJAR_SEKOLAH" | "KTP" | "SIM" | "ID_KARYAWAN" | "KARTU_LAIN" | "BUKAN_KARTU"
+   - "detectedCardTitle": Judul kartu yang tertera (contoh: "Kartu Indonesia Sehat", "Kartu Peserta Didik SMP Negeri 3 Cibinong", dll)
+   - "rejectionReason": Alasan penolakan spesifik dan sopan dalam bahasa Indonesia (contoh: "Kartu yang Anda unggah adalah Kartu Indonesia Sehat (KIS / BPJS Kesehatan), bukan Kartu Tanda Mahasiswa (KTM) Perguruan Tinggi.")
    - Nilai field lainnya set ke null.
 
 4. Jika BENAR KTM Mahasiswa yang Valid:
@@ -903,6 +922,16 @@ Output WAJIB JSON murni tanpa markdown wrapper:
                                         detectedTitle: parsedAi.detectedCardTitle || parsedAi.campus || 'Kartu Pelajar Sekolah',
                                         message: `Kartu terdeteksi sebagai kartu sekolah/pelajar (${parsedAi.campus || 'SMP/SMA'}). Diskon Cafe Campus HANYA berlaku untuk Mahasiswa aktif Perguruan Tinggi / Universitas.`,
                                         error: `Kartu terdeteksi sebagai kartu sekolah/pelajar (${parsedAi.campus || 'SMP/SMA'}).`
+                                    });
+                                }
+                                if (/\b(kartu indonesia sehat|kis|bpjs)\b/i.test(allOcrText)) {
+                                    return res.status(422).json({
+                                        ok: false,
+                                        isValidKtm: false,
+                                        cardType: 'KIS_BPJS',
+                                        detectedTitle: parsedAi.detectedCardTitle || 'Kartu Indonesia Sehat (KIS / BPJS)',
+                                        message: 'Kartu yang diunggah adalah Kartu Indonesia Sehat (KIS / BPJS Kesehatan), bukan Kartu Tanda Mahasiswa (KTM) Perguruan Tinggi.',
+                                        error: 'Kartu yang diunggah adalah Kartu Indonesia Sehat (KIS / BPJS).'
                                     });
                                 }
                                 if (GOV_ID_REGEX.test(allOcrText)) {
