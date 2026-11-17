@@ -8025,6 +8025,31 @@ button:active, .btn:active, .round-add:active, .option-pill:active, .category-ch
   text-align: center;
 }
 
+.ticket-mini-pair {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-right: 4px;
+}
+
+.ticket-avatar {
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  object-fit: cover;
+  border: 1.5px solid #16a34a;
+  background: #f1f5f9;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+}
+
+.ticket-avatar.ktm {
+  border-color: #0284c7;
+  border-radius: 4px;
+  aspect-ratio: 4/3;
+  width: 34px;
+  height: 24px;
+}
+
 /* ==========================================================================
    PATEN DUAL-ENGINE ALARM & BUZZER ENHANCEMENTS
    ========================================================================== */

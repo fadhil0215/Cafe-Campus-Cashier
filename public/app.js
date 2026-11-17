@@ -669,7 +669,25 @@ function getCart() {
     };
   } catch { return { tableToken: null, tableName: null, customerType: 'REGULAR', studentInfo: { campus: '', studentId: '', studentName: '' }, items: [] }; }
 }
-function setCart(c) { localStorage.setItem(cartKey, JSON.stringify(c)) }
+function setCart(c) {
+  try {
+    localStorage.setItem(cartKey, JSON.stringify(c));
+  } catch (e) {
+    console.warn('Quota exceeded in localStorage, saving stripped cart:', e);
+    try {
+      const stripped = JSON.parse(JSON.stringify(c));
+      if (stripped.studentInfo) {
+        if (stripped.studentInfo.studentPhoto && stripped.studentInfo.studentPhoto.length > 500) {
+          stripped.studentInfo.studentPhoto = stripped.studentInfo.studentPhoto.substring(0, 100) + '...[cached]';
+        }
+        if (stripped.studentInfo.facePhoto && stripped.studentInfo.facePhoto.length > 500) {
+          stripped.studentInfo.facePhoto = stripped.studentInfo.facePhoto.substring(0, 100) + '...[cached]';
+        }
+      }
+      localStorage.setItem(cartKey, JSON.stringify(stripped));
+    } catch (err2) {}
+  }
+}
 function clearCart() { const c = getCart(); localStorage.setItem(cartKey, JSON.stringify({ tableToken: c.tableToken, tableName: c.tableName, customerType: c.customerType, studentInfo: c.studentInfo, items: [] })); }
 function isStudent(c) { return Boolean(c && c.customerType === 'STUDENT'); }
 function getProductEffectivePrice(p, isStudentMode = false) { if (isStudentMode && Number(p?.studentPrice) > 0) return Number(p.studentPrice); return Number(p?.price || 0); }
@@ -1675,7 +1693,7 @@ async function openLiveCameraModal(onCapture) {
     } catch (err) {
       d.remove();
       const fallbackInput = document.createElement('input'); fallbackInput.type = 'file'; fallbackInput.accept = 'image/*';
-      fallbackInput.onchange = async (e) => { const file = e.target.files?.[0]; if (file) { const compressed = await compressImage(file, 900, 0.85); onCapture(compressed); } };
+      fallbackInput.onchange = async (e) => { const file = e.target.files?.[0]; if (file) { const compressed = await compressImage(file, 960, 0.82); onCapture(compressed); } };
       fallbackInput.click(); return;
     }
   };
@@ -1686,11 +1704,17 @@ async function openLiveCameraModal(onCapture) {
   toggleBtn.onclick = async () => { facingMode = facingMode === 'user' ? 'environment' : 'user'; await startStream(); };
   snapBtn.onclick = () => {
     if (!video.videoWidth || !video.videoHeight) return toast('Kamera sedang memuat, mohon tunggu sebentar...', true);
-    canvas.width = video.videoWidth; canvas.height = video.videoHeight;
+    const maxDim = 960;
+    let w = video.videoWidth; let h = video.videoHeight;
+    if (w > maxDim || h > maxDim) {
+      if (w > h) { h = Math.round((h * maxDim) / w); w = maxDim; }
+      else { w = Math.round((w * maxDim) / h); h = maxDim; }
+    }
+    canvas.width = w; canvas.height = h;
     const ctx = canvas.getContext('2d');
     if (facingMode === 'user') { ctx.translate(canvas.width, 0); ctx.scale(-1, 1); }
     ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-    const photoData = canvas.toDataURL('image/jpeg', 0.85);
+    const photoData = canvas.toDataURL('image/jpeg', 0.82);
     stopStream(); d.remove(); onCapture(photoData);
   };
 }
@@ -1711,7 +1735,7 @@ async function openLiveFaceModal(onCapture) {
     } catch (err) {
       d.remove();
       const fallbackInput = document.createElement('input'); fallbackInput.type = 'file'; fallbackInput.accept = 'image/*'; fallbackInput.capture = 'user';
-      fallbackInput.onchange = async (e) => { const file = e.target.files?.[0]; if (file) { const compressed = await compressImage(file, 800, 0.85); onCapture(compressed); } };
+      fallbackInput.onchange = async (e) => { const file = e.target.files?.[0]; if (file) { const compressed = await compressImage(file, 640, 0.82); onCapture(compressed); } };
       fallbackInput.click(); return;
     }
   };
@@ -1722,11 +1746,17 @@ async function openLiveFaceModal(onCapture) {
   toggleBtn.onclick = async () => { facingMode = facingMode === 'user' ? 'environment' : 'user'; await startStream(); };
   snapBtn.onclick = () => {
     if (!video.videoWidth || !video.videoHeight) return toast('Kamera sedang memuat, mohon tunggu sebentar...', true);
-    canvas.width = video.videoWidth; canvas.height = video.videoHeight;
+    const maxDim = 640;
+    let w = video.videoWidth; let h = video.videoHeight;
+    if (w > maxDim || h > maxDim) {
+      if (w > h) { h = Math.round((h * maxDim) / w); w = maxDim; }
+      else { w = Math.round((w * maxDim) / h); h = maxDim; }
+    }
+    canvas.width = w; canvas.height = h;
     const ctx = canvas.getContext('2d');
     if (facingMode === 'user') { ctx.translate(canvas.width, 0); ctx.scale(-1, 1); }
     ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-    const photoData = canvas.toDataURL('image/jpeg', 0.85);
+    const photoData = canvas.toDataURL('image/jpeg', 0.82);
     stopStream(); d.remove(); onCapture(photoData);
   };
 }
@@ -1993,6 +2023,9 @@ async function checkoutPage() {
               <button type="button" class="btn-capture-face" id="btnLaunchFaceCamera">
                 ${studentFacePhotoData ? '🔄 Ambil Ulang Foto Wajah' : '📸 Buka Kamera Depan (Foto Wajah Real-Time)'}
               </button>
+              <button type="button" class="btn btn-soft btn-small" id="btnUploadFaceFile" style="margin-top:6px;width:100%;font-size:12px;">
+                📁 Buka Kamera HP / Upload Selfie
+              </button>
               <input type="file" id="faceDirectInput" accept="image/*" capture="user" style="display:none;">
               <div class="face-guarantee-note">
                 <span>🛡️</span>
@@ -2160,6 +2193,8 @@ async function checkoutPage() {
       studentFacePhotoData = faceData;
       if (c.studentInfo) {
         c.studentInfo.facePhoto = studentFacePhotoData;
+        c.studentInfo.studentFacePhoto = studentFacePhotoData;
+        c.studentInfo.selfiePhoto = studentFacePhotoData;
         setCart(c);
       }
       if (faceViewport) {
@@ -2226,12 +2261,16 @@ async function checkoutPage() {
     if (btnLaunchFace) {
       btnLaunchFace.onclick = () => openLiveFaceModal(photo => triggerFaceCapture(photo));
     }
+    const btnUploadFace = $('#btnUploadFaceFile');
+    if (btnUploadFace && faceDirectInput) {
+      btnUploadFace.onclick = () => faceDirectInput.click();
+    }
     if (faceDirectInput) {
       faceDirectInput.onchange = async (e) => {
         const file = e.target.files?.[0];
         if (file) {
           try {
-            const compressed = await compressImage(file, 800, 0.85);
+            const compressed = await compressImage(file, 640, 0.82);
             triggerFaceCapture(compressed);
           } catch(err) {
             toast(err.message, true);
@@ -2255,10 +2294,13 @@ async function checkoutPage() {
     let studentData = null;
 
     if (isStud && !addTo) {
-      if (!studentPhotoData || !c.studentInfo || !c.studentInfo.studentId || c.studentInfo.isValidKtm === false) {
+      const finalKtm = studentPhotoData || c.studentInfo?.studentPhoto || null;
+      const finalFace = studentFacePhotoData || c.studentInfo?.facePhoto || c.studentInfo?.studentFacePhoto || c.studentInfo?.selfiePhoto || null;
+
+      if (!finalKtm || !c.studentInfo || !c.studentInfo.studentId || c.studentInfo.isValidKtm === false) {
         return toast('⛔ Harap foto atau upload Kartu Tanda Mahasiswa (KTM) Perguruan Tinggi terlebih dahulu (Langkah 1).', true);
       }
-      if (!studentFacePhotoData) {
+      if (!finalFace) {
         toast('📸 Harap ambil foto selfie wajah real-time (Langkah 2) untuk memastikan identitas mahasiswa asli.', true);
         const faceSec = $('#step2FaceSection');
         if (faceSec) {
@@ -2273,8 +2315,10 @@ async function checkoutPage() {
         studentId: c.studentInfo.studentId || `${Math.floor(2106000000 + Math.random() * 999999)}`,
         email: c.studentInfo.email || `${c.studentInfo.studentId}@ui.ac.id`,
         emailVerified: true,
-        studentPhoto: studentPhotoData,
-        facePhoto: studentFacePhotoData,
+        studentPhoto: finalKtm,
+        facePhoto: finalFace,
+        studentFacePhoto: finalFace,
+        selfiePhoto: finalFace,
         facultyId: c.studentInfo.facultyId || null,
         facultyCode: c.studentInfo.facultyCode || null,
         facultyName: c.studentInfo.facultyName || null,
@@ -2691,7 +2735,7 @@ function kitchenQueueCards(orders) {
   return `<div class="queue-cards-grid">${orders.map(o => {
     const isStud = o.customerType === 'STUDENT'; const vStatus = o.studentInfo?.verificationStatus;
     const isPrinted = Boolean(o.receiptPrinted || o.receipt_printed);
-    return `<div class="queue-ticket status-border-${o.status.toLowerCase()}"><div class="ticket-head"><div><strong class="ticket-num">#${esc(o.orderNumber)}</strong>${o.parentOrderNumber ? `<small class="addon-tag">+ tambahan #${esc(o.parentOrderNumber)}</small>` : ''}<span class="ticket-table">${esc(o.tableName)}</span></div><div style="display:flex;align-items:center;gap:6px;">${o.status === 'NEW' ? (isPrinted ? '<span class="receipt-mini-badge done" title="Struk sudah dicetak">✓ Struk</span>' : '<span class="receipt-mini-badge pending" title="Wajib cetak struk kasir">⚠️ Belum Cetak</span>') : ''}${statusBadge(o.status)}</div></div>${o.status === 'NEW' ? (!isPrinted ? `<div class="ticket-receipt-strip unprinted"><span>⚠️</span> <span>Belum Cetak Struk (Wajib cetak sebelum racik)</span></div>` : `<div class="ticket-receipt-strip printed"><span>✓</span> <span>Struk Sudah Dicetak</span></div>`) : ''}${isStud ? `<div class="ticket-student-bar"><div style="display:flex;justify-content:space-between;align-items:center;"><b>🎓 ${esc(o.studentInfo?.campus || 'Mahasiswa')}</b>${vStatus === 'VERIFIED' ? '<span class="badge-verify-approved">✅ Sah</span>' : (vStatus === 'REJECTED' ? '<span class="badge-verify-rejected">⚠️ Ditolak</span>' : '<span class="badge-verify-pending">⏳ Cek KTM</span>')}</div><small>NIM: ${esc(o.studentInfo?.studentId || '-')} • ${esc(o.studentInfo?.studentName || 'Pelajar')}</small><div class="ticket-student-photo-row"><button type="button" class="btn-inspect-photo" data-inspect-photo="${esc(o.orderNumber)}">🔍 Cek KTM & Wajah</button>${vStatus !== 'VERIFIED' ? `<div class="ticket-verify-btn-group"><button type="button" class="btn-verify-approve" data-verify-student="${esc(o.orderNumber)}" data-decision="VERIFIED" title="Setujui Diskon Pelajar">✓</button><button type="button" class="btn-verify-reject" data-verify-student="${esc(o.orderNumber)}" data-decision="REJECTED" title="Tolak & Ubah ke Harga Normal">✕</button></div>` : ''}</div></div>` : ''}<div class="ticket-time"><span>🕒 ${formatTime(o.createdAt)}</span><span class="ticket-payment ${o.payment.status === 'PAID' ? 'paid' : 'pending'}">${o.payment.method === 'QRIS_DEMO' ? 'QRIS' : 'Tunai'} • ${o.payment.status === 'PAID' ? 'Lunas' : 'Belum Bayar'}</span></div><div class="ticket-items">${o.items.map(i => `<div class="ticket-item-row"><span><b>${i.quantity}x</b> ${esc(i.productName)}</span>${i.options?.size ? `<small class="ticket-mod">${esc(i.options.size)}</small>` : ''}</div>`).join('')}</div><div class="ticket-actions">${o.payment.status === 'PENDING' && o.payment.method === 'CASH' ? `<button class="btn btn-green btn-small" data-quick-pay="${esc(o.orderNumber)}">Konfirmasi Bayar</button>` : ''}${o.status === 'NEW' && o.payment.status === 'PAID' ? (!isPrinted ? `<button class="btn btn-primary btn-small btn-highlight-print" data-print-order="${esc(o.orderNumber)}">🖨️ Cetak Struk (Wajib)</button><button class="btn btn-blue btn-small" data-quick-status="${esc(o.orderNumber)}" data-next="PROCESSING" data-need-receipt="true" title="Wajib cetak struk terlebih dahulu">▶ Proses Racik 🔒</button>` : `<button class="btn btn-blue btn-small" data-quick-status="${esc(o.orderNumber)}" data-next="PROCESSING">▶ Proses Racik</button><button class="btn btn-soft btn-small" data-print-order="${esc(o.orderNumber)}" title="Cetak ulang struk">🖨️ Struk</button>`) : ''}${o.status === 'PROCESSING' ? `<button class="btn btn-primary btn-small" data-quick-status="${esc(o.orderNumber)}" data-next="READY">🔔 Siap Diambil</button><button class="btn btn-soft btn-small" data-print-order="${esc(o.orderNumber)}" title="Cetak ulang struk">🖨️</button>` : ''}${o.status === 'READY' ? `<button class="btn btn-dark btn-small" data-quick-status="${esc(o.orderNumber)}" data-next="COMPLETED">✓ Selesai</button><button class="btn btn-soft btn-small" data-print-order="${esc(o.orderNumber)}" title="Cetak ulang struk">🖨️</button>` : ''}<button class="btn btn-soft btn-small" data-view-order="${esc(o.orderNumber)}">Detail</button></div></div>`;
+    return `<div class="queue-ticket status-border-${o.status.toLowerCase()}"><div class="ticket-head"><div><strong class="ticket-num">#${esc(o.orderNumber)}</strong>${o.parentOrderNumber ? `<small class="addon-tag">+ tambahan #${esc(o.parentOrderNumber)}</small>` : ''}<span class="ticket-table">${esc(o.tableName)}</span></div><div style="display:flex;align-items:center;gap:6px;">${o.status === 'NEW' ? (isPrinted ? '<span class="receipt-mini-badge done" title="Struk sudah dicetak">✓ Struk</span>' : '<span class="receipt-mini-badge pending" title="Wajib cetak struk kasir">⚠️ Belum Cetak</span>') : ''}${statusBadge(o.status)}</div></div>${o.status === 'NEW' ? (!isPrinted ? `<div class="ticket-receipt-strip unprinted"><span>⚠️</span> <span>Belum Cetak Struk (Wajib cetak sebelum racik)</span></div>` : `<div class="ticket-receipt-strip printed"><span>✓</span> <span>Struk Sudah Dicetak</span></div>`) : ''}${isStud ? `<div class="ticket-student-bar"><div style="display:flex;justify-content:space-between;align-items:center;"><b>🎓 ${esc(o.studentInfo?.campus || 'Mahasiswa')}</b>${vStatus === 'VERIFIED' ? '<span class="badge-verify-approved">✅ Sah</span>' : (vStatus === 'REJECTED' ? '<span class="badge-verify-rejected">⚠️ Ditolak</span>' : '<span class="badge-verify-pending">⏳ Cek KTM</span>')}</div><small>NIM: ${esc(o.studentInfo?.studentId || '-')} • ${esc(o.studentInfo?.studentName || 'Pelajar')}</small><div class="ticket-student-photo-row"><div class="ticket-mini-pair" title="Foto KTM dan Wajah Real-Time"><img src="${esc(o.studentInfo?.studentPhoto || '/assets/hero-desktop.jpg')}" title="KTM Mahasiswa" class="ticket-avatar ktm" onerror="this.onerror=null;this.src='/assets/hero-desktop.jpg'"><img src="${esc(o.studentInfo?.facePhoto || '/assets/hero-desktop.jpg')}" title="Wajah Real-Time" class="ticket-avatar face" onerror="this.onerror=null;this.src='/assets/hero-desktop.jpg'"></div><button type="button" class="btn-inspect-photo" data-inspect-photo="${esc(o.orderNumber)}">🔍 Cek KTM & Wajah</button>${vStatus !== 'VERIFIED' ? `<div class="ticket-verify-btn-group"><button type="button" class="btn-verify-approve" data-verify-student="${esc(o.orderNumber)}" data-decision="VERIFIED" title="Setujui Diskon Pelajar">✓</button><button type="button" class="btn-verify-reject" data-verify-student="${esc(o.orderNumber)}" data-decision="REJECTED" title="Tolak & Ubah ke Harga Normal">✕</button></div>` : ''}</div></div>` : ''}<div class="ticket-time"><span>🕒 ${formatTime(o.createdAt)}</span><span class="ticket-payment ${o.payment.status === 'PAID' ? 'paid' : 'pending'}">${o.payment.method === 'QRIS_DEMO' ? 'QRIS' : 'Tunai'} • ${o.payment.status === 'PAID' ? 'Lunas' : 'Belum Bayar'}</span></div><div class="ticket-items">${o.items.map(i => `<div class="ticket-item-row"><span><b>${i.quantity}x</b> ${esc(i.productName)}</span>${i.options?.size ? `<small class="ticket-mod">${esc(i.options.size)}</small>` : ''}</div>`).join('')}</div><div class="ticket-actions">${o.payment.status === 'PENDING' && o.payment.method === 'CASH' ? `<button class="btn btn-green btn-small" data-quick-pay="${esc(o.orderNumber)}">Konfirmasi Bayar</button>` : ''}${o.status === 'NEW' && o.payment.status === 'PAID' ? (!isPrinted ? `<button class="btn btn-primary btn-small btn-highlight-print" data-print-order="${esc(o.orderNumber)}">🖨️ Cetak Struk (Wajib)</button><button class="btn btn-blue btn-small" data-quick-status="${esc(o.orderNumber)}" data-next="PROCESSING" data-need-receipt="true" title="Wajib cetak struk terlebih dahulu">▶ Proses Racik 🔒</button>` : `<button class="btn btn-blue btn-small" data-quick-status="${esc(o.orderNumber)}" data-next="PROCESSING">▶ Proses Racik</button><button class="btn btn-soft btn-small" data-print-order="${esc(o.orderNumber)}" title="Cetak ulang struk">🖨️ Struk</button>`) : ''}${o.status === 'PROCESSING' ? `<button class="btn btn-primary btn-small" data-quick-status="${esc(o.orderNumber)}" data-next="READY">🔔 Siap Diambil</button><button class="btn btn-soft btn-small" data-print-order="${esc(o.orderNumber)}" title="Cetak ulang struk">🖨️</button>` : ''}${o.status === 'READY' ? `<button class="btn btn-dark btn-small" data-quick-status="${esc(o.orderNumber)}" data-next="COMPLETED">✓ Selesai</button><button class="btn btn-soft btn-small" data-print-order="${esc(o.orderNumber)}" title="Cetak ulang struk">🖨️</button>` : ''}<button class="btn btn-soft btn-small" data-view-order="${esc(o.orderNumber)}">Detail</button></div></div>`;
   }).join('')}</div>`;
 }
 
@@ -3086,18 +3130,50 @@ function orderTable(orders, compact = false) {
   }).join('')}</tbody></table></div>`;
 }
 
+function openPhotoZoomModal(photoUrl, title) {
+  const m = modal(`
+    <div class="modal-heading">
+      <div>
+        <span>INSPEKSI RESOLUSI TINGGI</span>
+        <h2>${esc(title)}</h2>
+      </div>
+    </div>
+    <div style="max-height:75vh;overflow:auto;text-align:center;background:#0f172a;border-radius:12px;padding:12px;">
+      <img src="${esc(photoUrl)}" style="max-width:100%;max-height:70vh;object-fit:contain;border-radius:8px;box-shadow:0 8px 24px rgba(0,0,0,0.5);" alt="${esc(title)}">
+    </div>
+    <div class="modal-actions" style="margin-top:14px;">
+      <a href="${esc(photoUrl)}" target="_blank" download class="btn btn-primary btn-small">⬇️ Buka / Unduh Foto</a>
+      <button class="btn btn-soft" id="btnCloseZoomPhoto">Tutup</button>
+    </div>
+  `, 'large-modal');
+  $('#btnCloseZoomPhoto', m).onclick = () => m.remove();
+}
+
 async function viewStudentPhotoModal(orderNumber, onUpdate) {
-  const orders = await api('/admin/orders?q=' + encodeURIComponent(orderNumber)); const o = orders.find(x => x.orderNumber === orderNumber);
+  let o = null;
+  const orders = await api('/admin/orders?q=' + encodeURIComponent(orderNumber));
+  o = orders.find(x => x.orderNumber === orderNumber);
   if (!o || !o.studentInfo) return toast('Data verifikasi pelajar tidak ditemukan.', true);
+  
   const info = o.studentInfo;
-  const ktmPhoto = info.studentPhoto || '/assets/hero-desktop.jpg';
-  const facePhoto = info.facePhoto || info.studentPhoto || '/assets/hero-desktop.jpg';
-  const isAuto = info.verificationStatus === 'AUTOMATICALLY_VERIFIED'; const isVerified = info.verificationStatus === 'VERIFIED' || isAuto; const isRejected = info.verificationStatus === 'REJECTED';
-  const riskClass = info.fraudRisk === 'HIGH' ? 'high' : (info.fraudRisk === 'MEDIUM' ? 'medium' : 'low'); const riskLabel = info.fraudRisk === 'HIGH' ? '🔴 Risiko Tinggi' : (info.fraudRisk === 'MEDIUM' ? '🟡 Risiko Sedang' : '🟢 Risiko Rendah (Aman)');
-  const d = modal(`<div class="modal-heading"><div><span>ENGINE ANTI-FRAUD & VERIFIKASI IDENTITAS PELAJAR</span><h2>Pesanan #${esc(o.orderNumber)} (${esc(o.tableName)})</h2></div><div style="display:flex;align-items:center;gap:6px;"><span class="badge-fraud-score ${riskClass}">${riskLabel} • Skor: ${info.fraudScore || 0}%</span>${isAuto ? '<span class="badge-verify-approved">🤖 Auto-Approved (AI)</span>' : (isVerified ? '<span class="badge-verify-approved">✅ Terverifikasi Sah</span>' : (isRejected ? '<span class="badge-verify-rejected">⚠️ Verifikasi Ditolak</span>' : '<span class="badge-verify-pending">⏳ Menunggu Verifikasi</span>'))}</div></div><div class="student-inspect-grid"><div class="student-inspect-photo-box"><div class="dual-inspect-container"><div class="dual-inspect-card"><div class="dual-card-title"><span>🪪 KARTU MAHASISWA (KTM)</span><span class="badge-mini-ai">AI Valid (${info.confidence || '99.5%'})</span></div><div class="dual-img-box"><img src="${esc(ktmPhoto)}" alt="Kartu Mahasiswa" onerror="this.src='/assets/hero-desktop.jpg'"></div><small>Dipindai otomatis oleh Gemini AI</small></div><div class="dual-inspect-card"><div class="dual-card-title"><span>👤 FOTO WAJAH REAL-TIME</span><span class="badge-mini-live">🟢 Live Check</span></div><div class="dual-img-box"><img src="${esc(facePhoto)}" alt="Wajah Mahasiswa Asli" onerror="this.src='/assets/hero-desktop.jpg'"></div><small>Difoto langsung saat pemesanan di meja</small></div></div><button type="button" class="btn btn-soft btn-small btn-wide" id="btnPreviewKtmCardFromPhoto" style="margin-top:8px;">🪪 Buka Kartu Mahasiswa Digital (KTM)</button></div><div class="student-inspect-details"><div class="inspect-detail-row"><span>Nama Pelajar / Mahasiswa</span><strong>${esc(info.studentName || '-')}</strong></div><div class="inspect-detail-row"><span>Asal Kampus / Sekolah</span><strong>${esc(info.campus || '-')}</strong></div><div class="inspect-detail-row"><span>Fakultas / Jurusan</span><strong>${esc(info.facultyName || info.facultyCode || '-')} • ${esc(info.studyProgram || '-')}</strong></div><div class="inspect-detail-row"><span>Nomor Induk (NIM / NIS)</span><strong>${esc(info.studentId || '-')}</strong></div><div class="inspect-detail-row"><span>Email Institusi Resmi</span><strong>${esc(info.email || 'Tidak Dilampirkan')} ${info.email ? '✅' : ''}</strong></div><div class="inspect-detail-row"><span>Total Subsidi Potongan Harga</span><strong style="color:#2c8b5b;">${money(o.totalSavings || 0)}</strong></div><div class="inspect-detail-row"><span>Total Tagihan Saat Ini</span><strong>${money(o.total)}</strong></div>${info.rejectionReason ? `<div class="inspect-detail-row"><span style="color:#e03131;">Alasan Penolakan:</span><strong style="color:#c92a2a;">${esc(info.rejectionReason)}</strong></div>` : ''}<div class="student-verify-notice" style="margin-top:auto;"><span>🛡️</span><div><b>Anti-Fraud AI Radar:</b> ${info.fraudFlags?.length ? info.fraudFlags.join(', ') : 'Pencocokan foto wajah real-time & KTM valid.'}</div></div></div></div><div class="modal-actions" style="margin-top:16px;">${!isVerified ? `<button class="btn btn-green" id="btnApproveStudent">✓ Sahkan Diskon Pelajar</button>` : ''}${!isRejected ? `<button class="btn btn-danger" id="btnRejectStudent">✕ Tolak & Ubah ke Harga Normal</button>` : ''}<button class="btn-blacklist" id="btnBlacklistStudent">🚨 Blacklist Pelajar</button><button class="btn btn-soft" id="btnCloseInspect">Tutup</button></div>`, 'wide-modal');
+  const ktmPhoto = info.studentPhoto || `/api/orders/${encodeURIComponent(o.orderNumber)}/photo/ktm`;
+  const facePhoto = info.facePhoto || `/api/orders/${encodeURIComponent(o.orderNumber)}/photo/face`;
+  const hasFace = Boolean(info.facePhoto);
+  
+  const isAuto = info.verificationStatus === 'AUTOMATICALLY_VERIFIED';
+  const isVerified = info.verificationStatus === 'VERIFIED' || isAuto;
+  const isRejected = info.verificationStatus === 'REJECTED';
+  const riskClass = info.fraudRisk === 'HIGH' ? 'high' : (info.fraudRisk === 'MEDIUM' ? 'medium' : 'low');
+  const riskLabel = info.fraudRisk === 'HIGH' ? '🔴 Risiko Tinggi' : (info.fraudRisk === 'MEDIUM' ? '🟡 Risiko Sedang' : '🟢 Risiko Rendah (Aman)');
+
+  const d = modal(`<div class="modal-heading"><div><span>ENGINE ANTI-FRAUD & VERIFIKASI IDENTITAS PELAJAR</span><h2>Pesanan #${esc(o.orderNumber)} (${esc(o.tableName)})</h2></div><div style="display:flex;align-items:center;gap:6px;"><span class="badge-fraud-score ${riskClass}">${riskLabel} • Skor: ${info.fraudScore || 0}%</span>${isAuto ? '<span class="badge-verify-approved">🤖 Auto-Approved (AI)</span>' : (isVerified ? '<span class="badge-verify-approved">✅ Terverifikasi Sah</span>' : (isRejected ? '<span class="badge-verify-rejected">⚠️ Verifikasi Ditolak</span>' : '<span class="badge-verify-pending">⏳ Menunggu Verifikasi</span>'))}</div></div><div class="student-inspect-grid"><div class="student-inspect-photo-box"><div class="dual-inspect-container"><div class="dual-inspect-card"><div class="dual-card-title"><span>🪪 1. KARTU MAHASISWA (KTM)</span><span class="badge-mini-ai">AI Valid (${info.confidence || '99.5%'})</span></div><div class="dual-img-box" id="btnZoomKtm" style="cursor:zoom-in;" title="Klik untuk memperbesar"><img src="${esc(ktmPhoto)}" alt="Kartu Mahasiswa" onerror="this.onerror=null;this.src='/assets/hero-desktop.jpg'"></div><small>🔍 Klik foto untuk memperbesar</small></div><div class="dual-inspect-card ${hasFace ? '' : 'face-card-empty'}"><div class="dual-card-title"><span>👤 2. FOTO WAJAH REAL-TIME</span>${hasFace ? '<span class="badge-mini-live">🟢 Live Check</span>' : '<span style="background:#fef3c7;color:#b45309;font-size:10px;padding:2px 6px;border-radius:4px;font-weight:700;">⚠️ Belum Ada</span>'}</div>${hasFace ? `<div class="dual-img-box" id="btnZoomFace" style="cursor:zoom-in;" title="Klik untuk memperbesar"><img src="${esc(facePhoto)}" alt="Wajah Mahasiswa Asli" onerror="this.onerror=null;this.src='/assets/hero-desktop.jpg'"></div><small>🔍 Difoto langsung saat pemesanan di meja</small>` : `<div class="dual-img-box" style="background:#fffbeb;border:1px dashed #f59e0b;display:flex;align-items:center;justify-content:center;text-align:center;padding:12px;"><div><span style="font-size:24px;">⚠️</span><p style="margin:4px 0 0;font-size:11px;font-weight:700;color:#92400e;">Foto Wajah Tidak Tersedia</p><small style="color:#b45309;font-size:10px;display:block;">Customer belum mengambil selfie real-time.</small></div></div><small style="color:#b45309;">Kasir wajib memeriksa identitas fisik.</small>`}</div></div><button type="button" class="btn btn-soft btn-small btn-wide" id="btnPreviewKtmCardFromPhoto" style="margin-top:8px;">🪪 Buka Kartu Mahasiswa Digital (KTM)</button></div><div class="student-inspect-details"><div class="inspect-detail-row"><span>Nama Pelajar / Mahasiswa</span><strong>${esc(info.studentName || '-')}</strong></div><div class="inspect-detail-row"><span>Asal Kampus / Sekolah</span><strong>${esc(info.campus || '-')}</strong></div><div class="inspect-detail-row"><span>Fakultas / Jurusan</span><strong>${esc(info.facultyName || info.facultyCode || '-')} • ${esc(info.studyProgram || '-')}</strong></div><div class="inspect-detail-row"><span>Nomor Induk (NIM / NIS)</span><strong>${esc(info.studentId || '-')}</strong></div><div class="inspect-detail-row"><span>Email Institusi Resmi</span><strong>${esc(info.email || 'Tidak Dilampirkan')} ${info.email ? '✅' : ''}</strong></div><div class="inspect-detail-row"><span>Total Subsidi Potongan Harga</span><strong style="color:#2c8b5b;">${money(o.totalSavings || 0)}</strong></div><div class="inspect-detail-row"><span>Total Tagihan Saat Ini</span><strong>${money(o.total)}</strong></div>${info.rejectionReason ? `<div class="inspect-detail-row"><span style="color:#e03131;">Alasan Penolakan:</span><strong style="color:#c92a2a;">${esc(info.rejectionReason)}</strong></div>` : ''}<div class="student-verify-notice" style="margin-top:auto;"><span>🛡️</span><div><b>Anti-Fraud AI Radar:</b> ${info.fraudFlags?.length ? info.fraudFlags.join(', ') : (hasFace ? 'Pencocokan foto wajah real-time & KTM valid.' : 'Peringatan: Foto selfie wajah tidak dilampirkan.')}</div></div></div></div><div class="modal-actions" style="margin-top:16px;">${!isVerified ? `<button class="btn btn-green" id="btnApproveStudent">✓ Sahkan Diskon Pelajar</button>` : ''}${!isRejected ? `<button class="btn btn-danger" id="btnRejectStudent">✕ Tolak & Ubah ke Harga Normal</button>` : ''}<button class="btn-blacklist" id="btnBlacklistStudent">🚨 Blacklist Pelajar</button><button class="btn btn-soft" id="btnCloseInspect">Tutup</button></div>`, 'wide-modal');
   $('#btnCloseInspect', d).onclick = () => d.remove();
   const btnKtmPreview = $('#btnPreviewKtmCardFromPhoto', d);
   if (btnKtmPreview) btnKtmPreview.onclick = () => openDigitalKtmModal(info);
+  const zoomKtm = $('#btnZoomKtm', d);
+  if (zoomKtm) zoomKtm.onclick = () => openPhotoZoomModal(ktmPhoto, `KTM Mahasiswa - #${o.orderNumber}`);
+  const zoomFace = $('#btnZoomFace', d);
+  if (zoomFace && hasFace) zoomFace.onclick = () => openPhotoZoomModal(facePhoto, `Foto Wajah Real-Time - #${o.orderNumber}`);
   const appBtn = $('#btnApproveStudent', d);
   if (appBtn) appBtn.onclick = async () => { appBtn.disabled = true; try { await api('/admin/orders/' + encodeURIComponent(o.orderNumber) + '/verify-student', { method: 'PATCH', body: JSON.stringify({ status: 'VERIFIED' }) }); toast('✅ Verifikasi pelajar DISETUJUI. Diskon sah!'); d.remove(); onUpdate && onUpdate(); } catch (e) { toast(e.message, true); appBtn.disabled = false; } };
   const rejBtn = $('#btnRejectStudent', d);
@@ -3133,7 +3209,7 @@ async function orderDetailModal(orderNumber, onUpdate) {
       </div>
       ${!isBdayClaimed ? `<button type="button" class="btn btn-green btn-small" id="btnClaimBirthdayReward">🎁 Berikan Kado Ultah</button>` : `<span class="badge-bday-done">✅ Kado Ultah Diberikan</span>`}
     </div>` : ''}
-    <div class="order-detail-grid"><div><div class="detail-meta"><div><span>WAKTU PESAN</span><b>${formatTime(o.createdAt)}</b></div><div><span>TIPE CUSTOMER</span><b>${isStud ? '🎓 Pelajar / Mahasiswa' : '☕ Pelanggan Umum'}</b></div><div><span>METODE</span><b>${o.payment.method === 'QRIS_DEMO' ? 'QRIS' : 'Tunai di Kasir'}</b></div><div><span>STATUS BAYAR</span><b>${o.payment.status === 'PAID' ? 'Lunas' : 'Belum Bayar'}</b></div></div>${o.studentInfo ? `<div class="student-form-card" style="margin-bottom:14px;padding:12px 16px;"><div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;"><h4 style="margin:0;color:#1b633a;font-size:13px;display:flex;align-items:center;gap:5px;">🎓 Verifikasi Pelajar & Anti-Fraud</h4><div style="display:flex;align-items:center;gap:6px;"><span class="badge-fraud-score ${o.studentInfo.fraudRisk === 'HIGH' ? 'high' : (o.studentInfo.fraudRisk === 'MEDIUM' ? 'medium' : 'low')}">${o.studentInfo.fraudRisk === 'HIGH' ? '🔴 Risiko Tinggi' : (o.studentInfo.fraudRisk === 'MEDIUM' ? '🟡 Risiko Sedang' : '🟢 Aman')} • ${o.studentInfo.fraudScore || 0}%</span>${vStatus === 'AUTOMATICALLY_VERIFIED' ? '<span class="badge-verify-approved">🤖 AI Sah</span>' : (vStatus === 'VERIFIED' ? '<span class="badge-verify-approved">✅ Sah</span>' : (vStatus === 'REJECTED' ? '<span class="badge-verify-rejected">⚠️ Ditolak</span>' : '<span class="badge-verify-pending">⏳ Cek KTM</span>'))}${o.totalSavings ? `<span class="badge-role-student">Hemat ${money(o.totalSavings)}</span>` : ''}</div></div><div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;font-size:12px;margin-bottom:10px;"><div><span style="color:#666;">Nama Mahasiswa:</span> <b style="display:block;">${esc(o.studentInfo?.studentName || '-')}</b></div><div><span style="color:#666;">Asal Kampus / Sekolah:</span> <b style="display:block;">${esc(o.studentInfo?.campus || '-')}</b></div><div><span style="color:#666;">Fakultas / Prodi:</span> <b style="display:block;">${esc(o.studentInfo?.facultyName || o.studentInfo?.facultyCode || '-')} • ${esc(o.studentInfo?.studyProgram || '-')}</b></div><div><span style="color:#666;">NIM / NIS:</span> <b style="display:inline-block;">${esc(o.studentInfo?.studentId || '-')}</b></div><div><span style="color:#666;">Email Institusi:</span> <b style="display:inline-block;">${esc(o.studentInfo?.email || '-')}</b></div>${o.studentInfo?.rejectionReason ? `<div style="grid-column:1/-1;"><span style="color:#e03131;">Alasan Tolak:</span> <b style="color:#c92a2a;display:inline-block;">${esc(o.studentInfo.rejectionReason)}</b></div>` : ''}</div><div style="display:flex;gap:8px;"><button type="button" class="btn btn-soft btn-small" id="btnInspectDetailPhoto" style="flex:1;">🔍 Periksa Foto KTM & Wajah Real-Time</button><button type="button" class="btn btn-soft btn-small" id="btnAdminViewKtm" style="flex:1;">🪪 Buka KTM Digital</button></div></div>` : ''}<div class="admin-items-box">${o.items.map(i => `<div class="admin-order-item"><img src="${esc(i.imageUrl || '/assets/iced-latte.jpg')}" alt=""><div><b>${i.quantity}x ${esc(i.productName)}</b><span>${esc(optionSummary(i))}</span>${i.note ? `<small>Catatan: ${esc(i.note)}</small>` : ''}${i.savings ? `<small style="color:#2c8b5b;display:block;font-weight:700;">Hemat Kampus: ${money(i.savings)}</small>` : ''}</div><strong>${money(i.lineTotal)}</strong></div>`).join('')}</div><div class="detail-bill"><div><span>Subtotal</span><b>${money(o.subtotal)}</b></div>${o.totalSavings ? `<div style="color:#2c8b5b;"><span>Total Subsidi Pelajar</span><b>- ${money(o.totalSavings)}</b></div>` : ''}${o.serviceFee ? `<div><span>Biaya Layanan</span><b>${money(o.serviceFee)}</b></div>` : ''}${o.tax ? `<div><span>Pajak</span><b>${money(o.tax)}</b></div>` : ''}<div><span>Total</span><strong>${money(o.total)}</strong></div></div></div><div class="detail-side"><h3>Riwayat Status</h3><div class="history-list">${o.history.map(h => `<div><i></i><div><b>${esc(h.label || h.status)}</b><small>${formatTime(h.at)}</small></div></div>`).join('')}</div></div></div><div class="modal-actions">${o.payment.status === 'PENDING' ? `<button class="btn btn-green" id="confirmCash">Konfirmasi Kasir (Lunas)</button>` : ''}${o.status === 'NEW' && o.payment.status === 'PAID' ? (!isPrinted ? `<button class="btn btn-primary btn-highlight-print" id="btnPrintAndProcess">🖨️ Cetak Struk (Wajib) & Mulai Racik</button><button class="btn btn-blue" id="toProcess" data-need-receipt="true" title="Wajib cetak struk terlebih dahulu">Mulai Proses Barista 🔒</button>` : `<button class="btn btn-blue" id="toProcess">Mulai Proses Barista</button>`) : ''}${o.status === 'PROCESSING' ? `<button class="btn btn-primary" id="toReady">🔔 Pesanan Siap Diambil</button>` : ''}${o.status === 'READY' ? `<button class="btn btn-dark" id="toComplete">Pesanan Selesai (Diambil)</button>` : ''}${o.status === 'NEW' && o.payment.status === 'PENDING' ? `<button class="btn btn-danger" id="toCancel">Batalkan Pesanan</button>` : ''}${o.payment.status === 'PAID' && o.status !== 'CANCELLED' ? `<button class="btn btn-danger-soft" id="btnVoidOrder">⛔ Void / Refund (Pulihkan Stok)</button>` : ''}</div>`, 'wide-modal');
+    <div class="order-detail-grid"><div><div class="detail-meta"><div><span>WAKTU PESAN</span><b>${formatTime(o.createdAt)}</b></div><div><span>TIPE CUSTOMER</span><b>${isStud ? '🎓 Pelajar / Mahasiswa' : '☕ Pelanggan Umum'}</b></div><div><span>METODE</span><b>${o.payment.method === 'QRIS_DEMO' ? 'QRIS' : 'Tunai di Kasir'}</b></div><div><span>STATUS BAYAR</span><b>${o.payment.status === 'PAID' ? 'Lunas' : 'Belum Bayar'}</b></div></div>${o.studentInfo ? `<div class="student-form-card" style="margin-bottom:14px;padding:12px 16px;"><div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;"><h4 style="margin:0;color:#1b633a;font-size:13px;display:flex;align-items:center;gap:5px;">🎓 Verifikasi Pelajar & Anti-Fraud</h4><div style="display:flex;align-items:center;gap:6px;"><span class="badge-fraud-score ${o.studentInfo.fraudRisk === 'HIGH' ? 'high' : (o.studentInfo.fraudRisk === 'MEDIUM' ? 'medium' : 'low')}">${o.studentInfo.fraudRisk === 'HIGH' ? '🔴 Risiko Tinggi' : (o.studentInfo.fraudRisk === 'MEDIUM' ? '🟡 Risiko Sedang' : '🟢 Aman')} • ${o.studentInfo.fraudScore || 0}%</span>${vStatus === 'AUTOMATICALLY_VERIFIED' ? '<span class="badge-verify-approved">🤖 AI Sah</span>' : (vStatus === 'VERIFIED' ? '<span class="badge-verify-approved">✅ Sah</span>' : (vStatus === 'REJECTED' ? '<span class="badge-verify-rejected">⚠️ Ditolak</span>' : '<span class="badge-verify-pending">⏳ Cek KTM</span>'))}${o.totalSavings ? `<span class="badge-role-student">Hemat ${money(o.totalSavings)}</span>` : ''}</div></div><div class="detail-student-preview-strip" style="display:flex;gap:10px;margin-bottom:10px;background:#f8fafc;padding:8px 12px;border-radius:10px;border:1px solid #e2e8f0;align-items:center;"><div style="display:flex;align-items:center;gap:8px;flex:1;"><img src="${esc(o.studentInfo?.studentPhoto || '/assets/hero-desktop.jpg')}" style="width:48px;height:36px;object-fit:cover;border-radius:6px;border:1.5px solid #0284c7;" alt="KTM" onerror="this.onerror=null;this.src='/assets/hero-desktop.jpg'"><div><small style="color:#64748b;display:block;font-size:10px;font-weight:700;">1. KARTU MAHASISWA</small><b style="font-size:11px;color:#0f172a;">${esc(o.studentInfo?.campus || 'KTM Valid')}</b></div></div><div style="width:1px;height:30px;background:#cbd5e1;"></div><div style="display:flex;align-items:center;gap:8px;flex:1;"><img src="${esc(o.studentInfo?.facePhoto || '/assets/hero-desktop.jpg')}" style="width:36px;height:36px;object-fit:cover;border-radius:50%;border:1.5px solid #16a34a;" alt="Face" onerror="this.onerror=null;this.src='/assets/hero-desktop.jpg'"><div><small style="color:#64748b;display:block;font-size:10px;font-weight:700;">2. WAJAH REAL-TIME</small><b style="font-size:11px;color:${o.studentInfo?.facePhoto ? '#15803d' : '#b45309'};">${o.studentInfo?.facePhoto ? '🟢 Live Selfie Valid' : '⚠️ Belum Ada'}</b></div></div></div><div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;font-size:12px;margin-bottom:10px;"><div><span style="color:#666;">Nama Mahasiswa:</span> <b style="display:block;">${esc(o.studentInfo?.studentName || '-')}</b></div><div><span style="color:#666;">Asal Kampus / Sekolah:</span> <b style="display:block;">${esc(o.studentInfo?.campus || '-')}</b></div><div><span style="color:#666;">Fakultas / Prodi:</span> <b style="display:block;">${esc(o.studentInfo?.facultyName || o.studentInfo?.facultyCode || '-')} • ${esc(o.studentInfo?.studyProgram || '-')}</b></div><div><span style="color:#666;">NIM / NIS:</span> <b style="display:inline-block;">${esc(o.studentInfo?.studentId || '-')}</b></div><div><span style="color:#666;">Email Institusi:</span> <b style="display:inline-block;">${esc(o.studentInfo?.email || '-')}</b></div>${o.studentInfo?.rejectionReason ? `<div style="grid-column:1/-1;"><span style="color:#e03131;">Alasan Tolak:</span> <b style="color:#c92a2a;display:inline-block;">${esc(o.studentInfo.rejectionReason)}</b></div>` : ''}</div><div style="display:flex;gap:8px;"><button type="button" class="btn btn-soft btn-small" id="btnInspectDetailPhoto" style="flex:1;">🔍 Periksa Foto KTM & Wajah Real-Time</button><button type="button" class="btn btn-soft btn-small" id="btnAdminViewKtm" style="flex:1;">🪪 Buka KTM Digital</button></div></div>` : ''}<div class="admin-items-box">${o.items.map(i => `<div class="admin-order-item"><img src="${esc(i.imageUrl || '/assets/iced-latte.jpg')}" alt=""><div><b>${i.quantity}x ${esc(i.productName)}</b><span>${esc(optionSummary(i))}</span>${i.note ? `<small>Catatan: ${esc(i.note)}</small>` : ''}${i.savings ? `<small style="color:#2c8b5b;display:block;font-weight:700;">Hemat Kampus: ${money(i.savings)}</small>` : ''}</div><strong>${money(i.lineTotal)}</strong></div>`).join('')}</div><div class="detail-bill"><div><span>Subtotal</span><b>${money(o.subtotal)}</b></div>${o.totalSavings ? `<div style="color:#2c8b5b;"><span>Total Subsidi Pelajar</span><b>- ${money(o.totalSavings)}</b></div>` : ''}${o.serviceFee ? `<div><span>Biaya Layanan</span><b>${money(o.serviceFee)}</b></div>` : ''}${o.tax ? `<div><span>Pajak</span><b>${money(o.tax)}</b></div>` : ''}<div><span>Total</span><strong>${money(o.total)}</strong></div></div></div><div class="detail-side"><h3>Riwayat Status</h3><div class="history-list">${o.history.map(h => `<div><i></i><div><b>${esc(h.label || h.status)}</b><small>${formatTime(h.at)}</small></div></div>`).join('')}</div></div></div><div class="modal-actions">${o.payment.status === 'PENDING' ? `<button class="btn btn-green" id="confirmCash">Konfirmasi Kasir (Lunas)</button>` : ''}${o.status === 'NEW' && o.payment.status === 'PAID' ? (!isPrinted ? `<button class="btn btn-primary btn-highlight-print" id="btnPrintAndProcess">🖨️ Cetak Struk (Wajib) & Mulai Racik</button><button class="btn btn-blue" id="toProcess" data-need-receipt="true" title="Wajib cetak struk terlebih dahulu">Mulai Proses Barista 🔒</button>` : `<button class="btn btn-blue" id="toProcess">Mulai Proses Barista</button>`) : ''}${o.status === 'PROCESSING' ? `<button class="btn btn-primary" id="toReady">🔔 Pesanan Siap Diambil</button>` : ''}${o.status === 'READY' ? `<button class="btn btn-dark" id="toComplete">Pesanan Selesai (Diambil)</button>` : ''}${o.status === 'NEW' && o.payment.status === 'PENDING' ? `<button class="btn btn-danger" id="toCancel">Batalkan Pesanan</button>` : ''}${o.payment.status === 'PAID' && o.status !== 'CANCELLED' ? `<button class="btn btn-danger-soft" id="btnVoidOrder">⛔ Void / Refund (Pulihkan Stok)</button>` : ''}</div>`, 'wide-modal');
   // Print buttons — fetch receipt data sekali, lalu cetak sesuai tipe
   const fetchAndPrint = async (type) => {
     try {

@@ -266,28 +266,58 @@ const getCookies = (req) => {
 };
 
 // MIME whitelist
-const ALLOWED_IMAGE_TYPES = { 'jpeg': 'jpg', 'jpg': 'jpg', 'png': 'png', 'webp': 'webp', 'gif': 'gif' };
-const MAX_IMAGE_BYTES = 5 * 1024 * 1024;
+const ALLOWED_IMAGE_TYPES = { 'jpeg': 'jpg', 'jpg': 'jpg', 'png': 'png', 'webp': 'webp', 'gif': 'gif', 'bmp': 'bmp' };
+const MAX_IMAGE_BYTES = 15 * 1024 * 1024;
 
 const saveBase64Image = (base64Str, subfolder) => {
-    if (!base64Str || !base64Str.startsWith('data:image')) return null;
+    if (!base64Str || typeof base64Str !== 'string') return null;
+    const trimmed = base64Str.trim();
+    if (!trimmed.startsWith('data:image')) return null;
     try {
-        const matches = base64Str.match(/^data:image\/([A-Za-z0-9-+]+);base64,(.+)$/);
-        if (!matches || matches.length !== 3) return null;
-        const rawType = matches[1].toLowerCase();
-        const ext = ALLOWED_IMAGE_TYPES[rawType];
-        if (!ext) return null;
-        const buffer = Buffer.from(matches[2], 'base64');
+        const matches = trimmed.match(/^data:image\/([A-Za-z0-9-+.]+)(?:;[^,]+)*;base64,(.+)$/s);
+        let rawType = 'jpeg';
+        let b64Data = '';
+        if (matches && matches[2]) {
+            rawType = matches[1].toLowerCase().replace(/^x-/, '');
+            b64Data = matches[2];
+        } else {
+            const base64Idx = trimmed.indexOf(';base64,');
+            if (base64Idx !== -1) {
+                const header = trimmed.substring(0, base64Idx);
+                const slashIdx = header.indexOf('/');
+                if (slashIdx !== -1) {
+                    rawType = header.substring(slashIdx + 1).split(';')[0].toLowerCase().replace(/^x-/, '');
+                }
+                b64Data = trimmed.substring(base64Idx + 8);
+            } else {
+                return null;
+            }
+        }
+        const ext = ALLOWED_IMAGE_TYPES[rawType] || 'jpg';
+        const cleanBase64 = b64Data.replace(/[\r\n\s]/g, '');
+        const buffer = Buffer.from(cleanBase64, 'base64');
+        if (!buffer || buffer.byteLength === 0) return null;
         if (buffer.byteLength > MAX_IMAGE_BYTES) return null;
         const fileName = `${crypto.randomUUID()}.${ext}`;
         const dirPath = path.join(__dirname, 'public', 'uploads', subfolder);
         if (!fs.existsSync(dirPath)) fs.mkdirSync(dirPath, { recursive: true });
         fs.writeFileSync(path.join(dirPath, fileName), buffer);
+        console.log(`[saveBase64Image] Berhasil menyimpan foto /uploads/${subfolder}/${fileName} (${buffer.byteLength} bytes)`);
         return `/uploads/${subfolder}/${fileName}`;
-    } catch (e) { return null; }
+    } catch (e) {
+        console.warn(`[saveBase64Image] Gagal menyimpan foto ${subfolder}:`, e.message);
+        return null;
+    }
 };
 
 const formatRupiah = n => 'Rp ' + Number(n || 0).toLocaleString('id-ID');
+
+const resolvePhotoUrl = (url, orderNum, type) => {
+    if (!url) return null;
+    if (url.includes('mockselfie')) return url;
+    if (url.startsWith('data:image')) return `/api/orders/${orderNum}/photo/${type}`;
+    return url;
+};
 
 // Audit logger helper
 const logAudit = async (userId, userName, role, action, targetType, targetId, details, req = null) => {
@@ -1646,21 +1676,32 @@ app.post('/api/orders', orderLimiter, async (req, res) => {
         let photoUrl = parent ? parent.student_photo_url : null;
         let faceUrl = parent ? parent.student_face_url : null;
         if (!parent && isStudent) {
-            if (b.studentInfo?.studentPhoto) {
-                if (b.studentInfo.studentPhoto.includes('mockselfie') || b.studentInfo.studentPhoto.length <= 255) {
-                    photoUrl = b.studentInfo.studentPhoto;
+            const rawKtm = b.studentInfo?.studentPhoto || b.studentInfo?.ktmPhoto || b.studentInfo?.student_photo;
+            const rawFace = b.studentInfo?.facePhoto || b.studentInfo?.studentFacePhoto || b.studentInfo?.selfiePhoto || b.studentInfo?.face_photo;
+
+            console.log(`[Order ${orderNumber}] Student verification received:`, {
+                hasKtm: Boolean(rawKtm),
+                ktmLength: rawKtm ? rawKtm.length : 0,
+                hasFace: Boolean(rawFace),
+                faceLength: rawFace ? rawFace.length : 0
+            });
+
+            if (rawKtm) {
+                if (rawKtm.includes('mockselfie') || (rawKtm.length <= 255 && !rawKtm.startsWith('data:image'))) {
+                    photoUrl = rawKtm;
                 } else {
-                    photoUrl = saveBase64Image(b.studentInfo.studentPhoto, 'ktm') || b.studentInfo.studentPhoto;
+                    const savedPath = saveBase64Image(rawKtm, 'ktm');
+                    photoUrl = rawKtm.startsWith('data:image') ? rawKtm : (savedPath || rawKtm);
                 }
             }
-            if (b.studentInfo?.facePhoto) {
-                if (b.studentInfo.facePhoto.includes('mockselfie') || b.studentInfo.facePhoto.length <= 255) {
-                    faceUrl = b.studentInfo.facePhoto;
+
+            if (rawFace) {
+                if (rawFace.includes('mockselfie') || (rawFace.length <= 255 && !rawFace.startsWith('data:image'))) {
+                    faceUrl = rawFace;
                 } else {
-                    faceUrl = saveBase64Image(b.studentInfo.facePhoto, 'face') || b.studentInfo.facePhoto;
+                    const savedPath = saveBase64Image(rawFace, 'face');
+                    faceUrl = rawFace.startsWith('data:image') ? rawFace : (savedPath || rawFace);
                 }
-            } else if (photoUrl) {
-                faceUrl = photoUrl;
             }
         }
 
@@ -1977,8 +2018,8 @@ app.get('/api/orders/:orderNum', async (req, res) => {
                 campus: o.student_campus,
                 studentId: o.student_id_num,
                 email: o.student_email,
-                studentPhoto: o.student_photo_url,
-                facePhoto: o.student_face_url || o.student_photo_url,
+                studentPhoto: resolvePhotoUrl(o.student_photo_url, o.order_number, 'ktm'),
+                facePhoto: resolvePhotoUrl(o.student_face_url, o.order_number, 'face'),
                 facultyId: o.student_faculty_id,
                 facultyCode: o.student_faculty_code,
                 facultyName: o.student_faculty_name,
@@ -2001,6 +2042,41 @@ app.get('/api/orders/:orderNum', async (req, res) => {
             history: [{ status: 'NEW', at: o.created_at }]
         });
     } catch (err) { res.status(500).json({ message: "Server Error" }); }
+});
+
+// Endpoint untuk streaming foto KTM atau Foto Wajah Real-Time dari MySQL / uploads secara persisten
+app.get('/api/orders/:orderNum/photo/:type', async (req, res) => {
+    try {
+        const { orderNum, type } = req.params;
+        const col = type === 'face' ? 'student_face_url' : 'student_photo_url';
+        const [rows] = await pool.query(`SELECT ${col} AS photo FROM orders WHERE order_number = ?`, [orderNum]);
+        if (!rows.length || !rows[0].photo) {
+            return res.status(404).send('Photo not found');
+        }
+        const photo = rows[0].photo;
+        if (photo.startsWith('data:image/')) {
+            const matches = photo.match(/^data:image\/([A-Za-z0-9-+.]+)(?:;[^,]+)*;base64,(.+)$/s);
+            if (matches) {
+                const rawType = matches[1].toLowerCase().replace(/^x-/, '');
+                const mime = (rawType === 'jpg' || rawType === 'jpeg') ? 'image/jpeg' : `image/${rawType}`;
+                const buf = Buffer.from(matches[2].replace(/[\r\n\s]/g, ''), 'base64');
+                res.setHeader('Content-Type', mime);
+                res.setHeader('Cache-Control', 'public, max-age=86400');
+                return res.send(buf);
+            }
+        } else if (photo.startsWith('/uploads/')) {
+            const filePath = path.join(__dirname, 'public', photo);
+            if (fs.existsSync(filePath)) {
+                res.setHeader('Cache-Control', 'public, max-age=86400');
+                return res.sendFile(filePath);
+            }
+        } else if (/^https?:\/\//i.test(photo)) {
+            return res.redirect(photo);
+        }
+        res.status(404).send('Photo file not found on disk or database');
+    } catch (err) {
+        res.status(500).send('Error retrieving photo');
+    }
 });
 
 // ==========================================
@@ -3391,8 +3467,8 @@ app.get('/api/admin/orders', authAdmin, async (req, res) => {
                 const isBirthdayToday = checkIsBirthdayToday(o.student_birth_date);
                 o.studentInfo = {
                     campus: o.student_campus, studentId: o.student_id_num, studentName: o.student_name,
-                    studentPhoto: o.student_photo_url,
-                facePhoto: o.student_face_url || o.student_photo_url, verificationStatus: o.verification_status,
+                    studentPhoto: resolvePhotoUrl(o.student_photo_url, o.order_number, 'ktm'),
+                facePhoto: resolvePhotoUrl(o.student_face_url, o.order_number, 'face'), verificationStatus: o.verification_status,
                     facultyName: o.student_faculty_name, facultyCode: o.student_faculty_code,
                     facultyColor: FACULTY_THEME_COLORS[(o.student_faculty_code || '').toUpperCase()] || '#0284c7',
                     facultyId: o.student_faculty_id, studyProgram: o.student_study_program,
@@ -4366,7 +4442,7 @@ const ensureSchema = async () => {
                 { name: 'voided_at', sql: 'ALTER TABLE orders ADD COLUMN voided_at TIMESTAMP NULL' },
                 { name: 'receipt_printed', sql: 'ALTER TABLE orders ADD COLUMN receipt_printed TINYINT(1) NOT NULL DEFAULT 0' },
                 { name: 'receipt_printed_at', sql: 'ALTER TABLE orders ADD COLUMN receipt_printed_at TIMESTAMP NULL' },
-                { name: 'student_face_url', sql: 'ALTER TABLE orders ADD COLUMN student_face_url VARCHAR(255) NULL' }
+                { name: 'student_face_url', sql: 'ALTER TABLE orders ADD COLUMN student_face_url MEDIUMTEXT NULL' }
             ];
             for (const col of orderCols) {
                 const [c] = await conn.query("SELECT COLUMN_NAME FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'orders' AND COLUMN_NAME = ?", [col.name]);
@@ -4374,6 +4450,8 @@ const ensureSchema = async () => {
                     await conn.query(col.sql);
                 }
             }
+            await conn.query("ALTER TABLE orders MODIFY COLUMN student_photo_url MEDIUMTEXT NULL").catch(() => {});
+            await conn.query("ALTER TABLE orders MODIFY COLUMN student_face_url MEDIUMTEXT NULL").catch(() => {});
 
         } finally {
             // Always restore FK checks before returning a pooled connection.

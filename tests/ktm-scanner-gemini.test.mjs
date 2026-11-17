@@ -251,5 +251,92 @@ describe('GEMINI AI KTM SCANNER & BARISTA CHATBOT TEST SUITE', () => {
         }
     });
 
+    it('6. Verifikasi 2 Langkah: Order mahasiswa dengan foto wajah real-time tersimpan persisten & streaming via /photo/face', async () => {
+        const testPort = 4216;
+        const child = spawn(process.execPath, ['server.mjs'], {
+            cwd: rootDir,
+            env: {
+                ...process.env,
+                PORT: String(testPort),
+                HOST: '127.0.0.1',
+                APP_MODE: 'demo'
+            },
+            stdio: ['ignore', 'pipe', 'pipe']
+        });
+
+        try {
+            await waitForServer(`http://127.0.0.1:${testPort}/api/health`);
+
+            const dummyPng = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=';
+            const dummyFaceJpg = 'data:image/jpeg;base64,/9j/4AAQSkZJRgABAQEASABIAAD/2wBDAP//////////////////////////////////////////////////////////////////////////////////////wgALCAABAAEBAREA/8QAFBABAAAAAAAAAAAAAAAAAAAAAP/aAAgBAQABPxA=';
+
+            // Ambil produk untuk order
+            const prodRes = await fetch(`http://127.0.0.1:${testPort}/api/public/products`);
+            const prods = await prodRes.json();
+            const sampleProd = prods.find(p => p.isAvailable) || prods[0];
+
+            // Submit order dengan data mahasiswa 2-Langkah (KTM + Face Selfie)
+            const orderRes = await fetch(`http://127.0.0.1:${testPort}/api/orders`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    tableToken: 'demo-table-12',
+                    customerType: 'STUDENT',
+                    studentInfo: {
+                        studentName: 'Helmi Hanatul Adam',
+                        campus: 'Universitas Amikom Purwokerto',
+                        studentId: '24SA11A065',
+                        email: 'helmi.hanatul@uap.ac.id',
+                        studentPhoto: dummyPng,
+                        facePhoto: dummyFaceJpg
+                    },
+                    items: [{ productId: sampleProd.id, quantity: 1 }],
+                    paymentMethod: 'CASH',
+                    idempotencyKey: 'face-test-' + Date.now()
+                })
+            });
+
+            assert.equal(orderRes.status, 201, 'Order mahasiswa dengan foto selfie harus 201 Created');
+            const orderData = await orderRes.json();
+            assert.ok(orderData.orderNumber);
+
+            // 1. Ambil detail pesanan publik
+            const detailRes = await fetch(`http://127.0.0.1:${testPort}/api/orders/${orderData.orderNumber}?access=${orderData.accessToken}`);
+            assert.equal(detailRes.status, 200);
+            const detailData = await detailRes.json();
+            assert.ok(detailData.studentInfo, 'studentInfo harus ada');
+            assert.ok(detailData.studentInfo.facePhoto, 'facePhoto harus ada');
+            assert.ok(detailData.studentInfo.facePhoto.includes('/photo/face'), 'facePhoto harus mengarah ke endpoint streaming');
+
+            // 2. Ambil gambar dari endpoint streaming /photo/face
+            const faceStreamRes = await fetch(`http://127.0.0.1:${testPort}/api/orders/${orderData.orderNumber}/photo/face`);
+            assert.equal(faceStreamRes.status, 200, 'Streaming foto wajah harus mengembalikan 200 OK');
+            assert.match(faceStreamRes.headers.get('content-type') || '', /image\/jpeg|image\/png/);
+            const faceBytes = await faceStreamRes.arrayBuffer();
+            assert.ok(faceBytes.byteLength > 0, 'Byte foto wajah harus lebih besar dari 0');
+
+            // 3. Login admin & pastikan data wajah muncul di daftar pesanan admin
+            const loginRes = await fetch(`http://127.0.0.1:${testPort}/api/admin/login`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ email: 'admin@cafecampus.demo', password: 'admin123' })
+            });
+            const cookie = loginRes.headers.get('set-cookie')?.split(';')[0];
+            assert.ok(cookie);
+
+            const adminOrdersRes = await fetch(`http://127.0.0.1:${testPort}/api/admin/orders?q=${encodeURIComponent(orderData.orderNumber)}`, {
+                headers: { Cookie: cookie }
+            });
+            assert.equal(adminOrdersRes.status, 200);
+            const adminOrders = await adminOrdersRes.json();
+            const matchedOrder = adminOrders.find(o => o.orderNumber === orderData.orderNumber);
+            assert.ok(matchedOrder, 'Pesanan harus ditemukan di admin');
+            assert.ok(matchedOrder.studentInfo?.facePhoto, 'Foto wajah harus masuk ke studentInfo pesanan admin');
+            assert.ok(matchedOrder.studentInfo.facePhoto.includes('/photo/face'));
+        } finally {
+            child.kill();
+        }
+    });
+
 });
 

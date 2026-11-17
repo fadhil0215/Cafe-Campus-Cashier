@@ -68,7 +68,7 @@ try {
   const receiptColumns = [
     ['receipt_printed', 'ALTER TABLE orders ADD COLUMN receipt_printed TINYINT(1) NOT NULL DEFAULT 0'],
     ['receipt_printed_at', 'ALTER TABLE orders ADD COLUMN receipt_printed_at TIMESTAMP NULL DEFAULT NULL'],
-    ['student_face_url', 'ALTER TABLE orders ADD COLUMN student_face_url VARCHAR(255) NULL DEFAULT NULL'],
+    ['student_face_url', 'ALTER TABLE orders ADD COLUMN student_face_url MEDIUMTEXT NULL DEFAULT NULL'],
   ];
   for (const [columnName, alterSql] of receiptColumns) {
     const [rows] = await connection.query(
@@ -78,6 +78,8 @@ try {
     );
     if (rows.length === 0) await connection.query(alterSql);
   }
+  await connection.query('ALTER TABLE orders MODIFY COLUMN student_photo_url MEDIUMTEXT NULL DEFAULT NULL').catch(() => {});
+  await connection.query('ALTER TABLE orders MODIFY COLUMN student_face_url MEDIUMTEXT NULL DEFAULT NULL').catch(() => {});
 
   // Safe migration for settings.gemini_api_key
   const [geminiColRows] = await connection.query(
