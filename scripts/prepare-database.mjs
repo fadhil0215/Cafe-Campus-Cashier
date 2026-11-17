@@ -133,13 +133,11 @@ try {
   );
   console.log(`[db-setup] Akun administrator real (${configuredAdminEmail}), kasir, dan barista berhasil dikonfigurasi.`);
 
-  // 5. Clean up demo-tagged orders in production mode
-  if (appMode !== 'demo') {
-    await connection.query("DELETE FROM order_items WHERE order_id IN (SELECT id FROM orders WHERE order_number LIKE 'CC-DEMO-%' OR order_number LIKE 'CC-INIT-%')");
-    await connection.query("DELETE FROM orders WHERE order_number LIKE 'CC-DEMO-%' OR order_number LIKE 'CC-INIT-%'");
-    await connection.query("DELETE FROM audit_logs WHERE JSON_EXTRACT(details, '$.email') LIKE '%@cafecampus.demo' OR user_name LIKE '%demo%'");
-    console.log('[db-setup] Mode produksi: data sample transaksi demo dan akun demo telah dibersihkan.');
-  }
+  // 5. Bersihkan seluruh transaksi sample demo dan audit demo bawaan
+  await connection.query("DELETE FROM order_items WHERE order_id IN (SELECT id FROM orders WHERE order_number LIKE 'CC-DEMO-%' OR order_number LIKE 'CC-INIT-%' OR order_number LIKE 'CC-TEST-%')");
+  await connection.query("DELETE FROM orders WHERE order_number LIKE 'CC-DEMO-%' OR order_number LIKE 'CC-INIT-%' OR order_number LIKE 'CC-TEST-%'");
+  await connection.query("DELETE FROM audit_logs WHERE JSON_EXTRACT(details, '$.email') LIKE '%@cafecampus.demo' OR user_name LIKE '%demo%'");
+  console.log('[db-setup] Transaksi sample demo (CC-INIT / CC-DEMO) dan log demo berhasil dibersihkan dari database.');
 
   // Sync requested tables: B1-B6, 101-105, 201-210, 301-309, 401-404, AD 1-AD 5
   const requestedTables = [
