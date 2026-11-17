@@ -1644,11 +1644,23 @@ app.post('/api/orders', orderLimiter, async (req, res) => {
         const queueNumber = await generateQueueNumber(conn);
 
         let photoUrl = parent ? parent.student_photo_url : null;
-        if (!parent && isStudent && b.studentInfo?.studentPhoto) {
-            if (b.studentInfo.studentPhoto.includes('mockselfie') || b.studentInfo.studentPhoto.length <= 255) {
-                photoUrl = b.studentInfo.studentPhoto;
-            } else {
-                photoUrl = saveBase64Image(b.studentInfo.studentPhoto, 'ktm') || b.studentInfo.studentPhoto;
+        let faceUrl = parent ? parent.student_face_url : null;
+        if (!parent && isStudent) {
+            if (b.studentInfo?.studentPhoto) {
+                if (b.studentInfo.studentPhoto.includes('mockselfie') || b.studentInfo.studentPhoto.length <= 255) {
+                    photoUrl = b.studentInfo.studentPhoto;
+                } else {
+                    photoUrl = saveBase64Image(b.studentInfo.studentPhoto, 'ktm') || b.studentInfo.studentPhoto;
+                }
+            }
+            if (b.studentInfo?.facePhoto) {
+                if (b.studentInfo.facePhoto.includes('mockselfie') || b.studentInfo.facePhoto.length <= 255) {
+                    faceUrl = b.studentInfo.facePhoto;
+                } else {
+                    faceUrl = saveBase64Image(b.studentInfo.facePhoto, 'face') || b.studentInfo.facePhoto;
+                }
+            } else if (photoUrl) {
+                faceUrl = photoUrl;
             }
         }
 
@@ -1776,15 +1788,15 @@ app.post('/api/orders', orderLimiter, async (req, res) => {
             INSERT INTO orders (
                 id, idempotency_key, order_number, queue_number, table_id, table_name,
                 customer_type, student_name, student_campus, student_id_num, student_email,
-                student_photo_url, student_faculty_id, student_faculty_code, student_faculty_name,
+                student_photo_url, student_face_url, student_faculty_id, student_faculty_code, student_faculty_name,
                 student_study_program, student_birth_date, is_birthday_reward,
                 subtotal, total_savings, service_fee, tax, total, payment_method, status,
                 payment_ref, fraud_score, fraud_risk, verification_status
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'NEW', ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'NEW', ?, ?, ?, ?)
         `, [
             orderId, b.idempotencyKey || null, orderNumber, queueNumber, tables[0].id, tables[0].name,
             b.customerType, b.studentInfo?.studentName || null, b.studentInfo?.campus || null,
-            b.studentInfo?.studentId || null, b.studentInfo?.email || null, photoUrl,
+            b.studentInfo?.studentId || null, b.studentInfo?.email || null, photoUrl, faceUrl,
             b.studentInfo?.facultyId || null, b.studentInfo?.facultyCode || null, b.studentInfo?.facultyName || null,
             b.studentInfo?.studyProgram || null, b.studentInfo?.birthDate || null, 0,
             subtotal, totalSavings, sFee, tax, grandTotal, b.paymentMethod, accessToken,
@@ -1966,6 +1978,7 @@ app.get('/api/orders/:orderNum', async (req, res) => {
                 studentId: o.student_id_num,
                 email: o.student_email,
                 studentPhoto: o.student_photo_url,
+                facePhoto: o.student_face_url || o.student_photo_url,
                 facultyId: o.student_faculty_id,
                 facultyCode: o.student_faculty_code,
                 facultyName: o.student_faculty_name,
@@ -3378,7 +3391,8 @@ app.get('/api/admin/orders', authAdmin, async (req, res) => {
                 const isBirthdayToday = checkIsBirthdayToday(o.student_birth_date);
                 o.studentInfo = {
                     campus: o.student_campus, studentId: o.student_id_num, studentName: o.student_name,
-                    studentPhoto: o.student_photo_url, verificationStatus: o.verification_status,
+                    studentPhoto: o.student_photo_url,
+                facePhoto: o.student_face_url || o.student_photo_url, verificationStatus: o.verification_status,
                     facultyName: o.student_faculty_name, facultyCode: o.student_faculty_code,
                     facultyColor: FACULTY_THEME_COLORS[(o.student_faculty_code || '').toUpperCase()] || '#0284c7',
                     facultyId: o.student_faculty_id, studyProgram: o.student_study_program,
@@ -4351,7 +4365,8 @@ const ensureSchema = async () => {
                 { name: 'voided_by', sql: 'ALTER TABLE orders ADD COLUMN voided_by VARCHAR(50) NULL' },
                 { name: 'voided_at', sql: 'ALTER TABLE orders ADD COLUMN voided_at TIMESTAMP NULL' },
                 { name: 'receipt_printed', sql: 'ALTER TABLE orders ADD COLUMN receipt_printed TINYINT(1) NOT NULL DEFAULT 0' },
-                { name: 'receipt_printed_at', sql: 'ALTER TABLE orders ADD COLUMN receipt_printed_at TIMESTAMP NULL' }
+                { name: 'receipt_printed_at', sql: 'ALTER TABLE orders ADD COLUMN receipt_printed_at TIMESTAMP NULL' },
+                { name: 'student_face_url', sql: 'ALTER TABLE orders ADD COLUMN student_face_url VARCHAR(255) NULL' }
             ];
             for (const col of orderCols) {
                 const [c] = await conn.query("SELECT COLUMN_NAME FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'orders' AND COLUMN_NAME = ?", [col.name]);

@@ -340,6 +340,7 @@ CREATE TABLE `orders` (
   `student_birth_date` date DEFAULT NULL,
   `student_email` varchar(100) DEFAULT NULL,
   `student_photo_url` varchar(255) DEFAULT NULL,
+  `student_face_url` varchar(255) DEFAULT NULL,
   `fraud_score` int DEFAULT '0',
   `fraud_risk` varchar(20) DEFAULT NULL,
   `verification_status` varchar(50) DEFAULT NULL,

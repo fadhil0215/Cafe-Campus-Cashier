@@ -7748,3 +7748,280 @@ button:active, .btn:active, .round-add:active, .option-pill:active, .category-ch
   border-top: 1px dashed #bbf7d0;
 }
 
+/* ========================================== */
+/* DUAL-STEP STUDENT VERIFICATION & LIVE FACE */
+/* ========================================== */
+.ktm-verification-stepper {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  background: #f1f8f3;
+  padding: 10px 14px;
+  border-radius: 12px;
+  margin-bottom: 16px;
+  border: 1px solid #d1ebd8;
+}
+
+.step-badge-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  font-weight: 700;
+  color: #64748b;
+  transition: all 0.2s ease;
+}
+
+.step-badge-pill.active {
+  color: #1b633a;
+}
+
+.step-badge-pill.completed {
+  color: #15803d;
+}
+
+.step-badge-pill.locked {
+  opacity: 0.6;
+}
+
+.step-badge-pill .step-num {
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  background: #e2e8f0;
+  color: #475569;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 11.5px;
+  font-weight: 800;
+}
+
+.step-badge-pill.active .step-num {
+  background: #1b633a;
+  color: #ffffff;
+  box-shadow: 0 2px 6px rgba(27, 99, 58, 0.3);
+}
+
+.step-badge-pill.completed .step-num {
+  background: #22c55e;
+  color: #ffffff;
+}
+
+.step-arrow {
+  color: #94a3b8;
+  font-weight: 800;
+  font-size: 13px;
+}
+
+/* Step 2 Face Card */
+.step-2-divider {
+  height: 1px;
+  background: #e2e8f0;
+  margin: 18px 0;
+}
+
+.step-2-card {
+  background: #f8fafc;
+  border: 1.5px dashed #38bdf8;
+  border-radius: 14px;
+  padding: 16px;
+  animation: fadeInStep2 0.3s ease-out;
+}
+
+@keyframes fadeInStep2 {
+  from { opacity: 0; transform: translateY(6px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.face-capture-layout {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 14px;
+  margin-top: 12px;
+}
+
+.face-preview-viewport {
+  position: relative;
+  width: 170px;
+  height: 220px;
+  border-radius: 20px;
+  background: #0f172a;
+  border: 2px dashed #94a3b8;
+  overflow: hidden;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.08);
+}
+
+.face-preview-viewport.has-face {
+  border-style: solid;
+  border-color: #10b981;
+  box-shadow: 0 6px 20px rgba(16, 185, 129, 0.2);
+}
+
+.face-preview-viewport img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+.face-placeholder {
+  text-align: center;
+  padding: 14px;
+  color: #94a3b8;
+}
+
+.face-placeholder .face-icon {
+  font-size: 42px;
+  margin-bottom: 6px;
+}
+
+.face-placeholder b {
+  font-size: 12px;
+  color: #e2e8f0;
+  display: block;
+}
+
+.face-placeholder small {
+  font-size: 10px;
+  color: #94a3b8;
+  display: block;
+  margin-top: 4px;
+}
+
+.face-live-check-tag {
+  position: absolute;
+  bottom: 8px;
+  left: 8px;
+  right: 8px;
+  background: rgba(16, 185, 129, 0.92);
+  color: #ffffff;
+  font-size: 10px;
+  font-weight: 800;
+  text-align: center;
+  padding: 4px 6px;
+  border-radius: 6px;
+  backdrop-filter: blur(4px);
+}
+
+.face-action-btns {
+  width: 100%;
+  max-width: 440px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.btn-capture-face {
+  width: 100%;
+  padding: 12px 18px;
+  border-radius: 10px;
+  border: none;
+  background: linear-gradient(135deg, #0284c7, #0369a1);
+  color: #ffffff;
+  font-size: 13px;
+  font-weight: 700;
+  cursor: pointer;
+  box-shadow: 0 4px 12px rgba(2, 132, 199, 0.25);
+  transition: all 0.2s ease;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+}
+
+.btn-capture-face:hover {
+  filter: brightness(1.08);
+  transform: translateY(-1px);
+}
+
+.face-guarantee-note {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  background: #f0f9ff;
+  border: 1px solid #bae6fd;
+  border-radius: 8px;
+  padding: 8px 12px;
+  font-size: 11px;
+  color: #0369a1;
+  line-height: 1.4;
+}
+
+/* Dual Photo Inspect Grid in Admin Modal */
+.dual-inspect-container {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+@media (max-width: 580px) {
+  .dual-inspect-container {
+    grid-template-columns: 1fr;
+  }
+}
+
+.dual-inspect-card {
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+  border-radius: 12px;
+  padding: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.dual-card-title {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 11px;
+  font-weight: 700;
+  color: #334155;
+}
+
+.badge-mini-ai {
+  background: #dcfce7;
+  color: #15803d;
+  font-size: 10px;
+  padding: 2px 6px;
+  border-radius: 4px;
+  font-weight: 800;
+}
+
+.badge-mini-live {
+  background: #e0f2fe;
+  color: #0369a1;
+  font-size: 10px;
+  padding: 2px 6px;
+  border-radius: 4px;
+  font-weight: 800;
+}
+
+.dual-img-box {
+  width: 100%;
+  aspect-ratio: 4 / 3;
+  border-radius: 8px;
+  overflow: hidden;
+  background: #0f172a;
+}
+
+.dual-img-box img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+.dual-inspect-card small {
+  font-size: 10.5px;
+  color: #64748b;
+  text-align: center;
+}
+

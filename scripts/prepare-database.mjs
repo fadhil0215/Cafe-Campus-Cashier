@@ -68,6 +68,7 @@ try {
   const receiptColumns = [
     ['receipt_printed', 'ALTER TABLE orders ADD COLUMN receipt_printed TINYINT(1) NOT NULL DEFAULT 0'],
     ['receipt_printed_at', 'ALTER TABLE orders ADD COLUMN receipt_printed_at TIMESTAMP NULL DEFAULT NULL'],
+    ['student_face_url', 'ALTER TABLE orders ADD COLUMN student_face_url VARCHAR(255) NULL DEFAULT NULL'],
   ];
   for (const [columnName, alterSql] of receiptColumns) {
     const [rows] = await connection.query(
