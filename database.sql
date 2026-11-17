@@ -25,9 +25,9 @@ CREATE TABLE `admins` (
 
 -- Data untuk: `admins`
 INSERT INTO `admins` (`id`, `name`, `email`, `password_hash`, `role`, `created_at`) VALUES
-('admin-1', 'Admin Campus', 'admin@cafecampus.demo', '$2b$10$0EE0QHUTP7y0S9kI1x0bXOjzyFdfzbBm9EI5qkmkaAWUL4CVZy4JG', 'ADMIN', '2026-09-18 12:34:50'),
-('admin-kasir-1', 'Kasir Utama', 'kasir@cafecampus.demo', '$2b$10$0EE0QHUTP7y0S9kI1x0bXOjzyFdfzbBm9EI5qkmkaAWUL4CVZy4JG', 'CASHIER', '2026-10-18 08:00:00'),
-('admin-dapur-1', 'Staf Dapur & Barista', 'dapur@cafecampus.demo', '$2b$10$0EE0QHUTP7y0S9kI1x0bXOjzyFdfzbBm9EI5qkmkaAWUL4CVZy4JG', 'KITCHEN', '2026-10-18 08:00:00')
+('admin-1', 'Administrator Cafe Campus', 'admin@cafecampus.my.id', '$2b$10$0EE0QHUTP7y0S9kI1x0bXOjzyFdfzbBm9EI5qkmkaAWUL4CVZy4JG', 'ADMIN', '2026-09-18 12:34:50'),
+('admin-kasir-1', 'Kasir Cafe Campus', 'kasir@cafecampus.my.id', '$2b$10$0EE0QHUTP7y0S9kI1x0bXOjzyFdfzbBm9EI5qkmkaAWUL4CVZy4JG', 'CASHIER', '2026-10-18 08:00:00'),
+('admin-dapur-1', 'Barista & Dapur', 'barista@cafecampus.my.id', '$2b$10$0EE0QHUTP7y0S9kI1x0bXOjzyFdfzbBm9EI5qkmkaAWUL4CVZy4JG', 'KITCHEN', '2026-10-18 08:00:00')
 ON DUPLICATE KEY UPDATE `name`=VALUES(`name`), `role`=VALUES(`role`);
 
 -- --------------------------------------------------------

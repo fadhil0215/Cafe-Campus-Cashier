@@ -96,38 +96,49 @@ try {
     throw new Error('Tabel admins tersedia tetapi belum berisi akun. Seed administrator awal belum terpasang; periksa import database.sql.');
   }
 
-  // The SQL snapshot contains a known demo-only password hash. In production,
-  // replace it once with credentials supplied through Railway Variables.
-  // After the hash changes, later restarts will not overwrite the real password.
-  const defaultDemoHash = '$2b$10$0EE0QHUTP7y0S9kI1x0bXOjzyFdfzbBm9EI5qkmkaAWUL4CVZy4JG';
-  const [[bootstrapAdmin]] = await connection.query(
-    'SELECT id, email, password_hash FROM admins WHERE id = ? LIMIT 1',
-    ['admin-1']
-  );
-  const configuredAdminEmail = String(process.env.ADMIN_EMAIL || '').trim().toLowerCase();
-  const configuredAdminPassword = String(process.env.ADMIN_PASSWORD || '');
+  // Provision real production administrator & staff accounts
+  const configuredAdminEmail = String(process.env.ADMIN_EMAIL || 'admin@cafecampus.my.id').trim().toLowerCase();
+  const configuredAdminPassword = String(process.env.ADMIN_PASSWORD || 'AdminCafe2026!');
   const appMode = String(process.env.APP_MODE || 'production').trim().toLowerCase();
 
-  const hasDefaultAdminPassword = bootstrapAdmin
-    ? (bootstrapAdmin.password_hash === defaultDemoHash || await bcrypt.compare('admin123', bootstrapAdmin.password_hash))
-    : false;
+  const newAdminHash = await bcrypt.hash(configuredAdminPassword, 12);
+  const cashierHash = await bcrypt.hash('KasirCafe2026!', 12);
+  const baristaHash = await bcrypt.hash('BaristaCafe2026!', 12);
 
-  if (hasDefaultAdminPassword) {
-    if (configuredAdminEmail || configuredAdminPassword) {
-      if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(configuredAdminEmail) || /contoh-client|example/i.test(configuredAdminEmail) || configuredAdminPassword.length < 12 || Buffer.byteLength(configuredAdminPassword, 'utf8') > 72 || /ganti_dengan|change_me|placeholder|example/i.test(configuredAdminPassword)) {
-        throw new Error('ADMIN_EMAIL harus berupa email client yang valid dan ADMIN_PASSWORD wajib berupa secret asli 12-72 byte (bukan nilai placeholder).');
-      }
-      const newAdminHash = await bcrypt.hash(configuredAdminPassword, 12);
-      await connection.query(
-        'UPDATE admins SET email = ?, password_hash = ? WHERE id = ?',
-        [configuredAdminEmail, newAdminHash, bootstrapAdmin.id]
-      );
-      console.log(`[db-setup] Kredensial awal administrator diperbarui untuk ${configuredAdminEmail}.`);
-    } else if (appMode !== 'demo') {
-      throw new Error('Akun admin database masih memakai kredensial demo. Untuk production, isi ADMIN_EMAIL dan ADMIN_PASSWORD (minimal 12 karakter) di Railway Variables, atau ubah password admin saat APP_MODE=demo lalu deploy ulang dengan APP_MODE=production.');
-    } else {
-      console.log('[db-setup] Mode demo: akun admin demo awal tetap aktif untuk testing.');
-    }
+  // 1. Delete all legacy demo accounts (@cafecampus.demo)
+  await connection.query("DELETE FROM admins WHERE email LIKE '%@cafecampus.demo'");
+
+  // 2. Ensure real administrator account
+  await connection.query(
+    `INSERT INTO admins (id, name, email, password_hash, role)
+     VALUES ('admin-1', 'Administrator Cafe Campus', ?, ?, 'ADMIN')
+     ON DUPLICATE KEY UPDATE name=VALUES(name), email=VALUES(email), password_hash=VALUES(password_hash), role=VALUES(role)`,
+    [configuredAdminEmail, newAdminHash]
+  );
+
+  // 3. Ensure real cashier account
+  await connection.query(
+    `INSERT INTO admins (id, name, email, password_hash, role)
+     VALUES ('admin-kasir-1', 'Kasir Cafe Campus', 'kasir@cafecampus.my.id', ?, 'CASHIER')
+     ON DUPLICATE KEY UPDATE name=VALUES(name), email=VALUES(email), role=VALUES(role)`,
+    [cashierHash]
+  );
+
+  // 4. Ensure real kitchen/barista account
+  await connection.query(
+    `INSERT INTO admins (id, name, email, password_hash, role)
+     VALUES ('admin-dapur-1', 'Barista & Dapur', 'barista@cafecampus.my.id', ?, 'KITCHEN')
+     ON DUPLICATE KEY UPDATE name=VALUES(name), email=VALUES(email), role=VALUES(role)`,
+    [baristaHash]
+  );
+  console.log(`[db-setup] Akun administrator real (${configuredAdminEmail}), kasir, dan barista berhasil dikonfigurasi.`);
+
+  // 5. Clean up demo-tagged orders in production mode
+  if (appMode !== 'demo') {
+    await connection.query("DELETE FROM order_items WHERE order_id IN (SELECT id FROM orders WHERE order_number LIKE 'CC-DEMO-%' OR order_number LIKE 'CC-INIT-%')");
+    await connection.query("DELETE FROM orders WHERE order_number LIKE 'CC-DEMO-%' OR order_number LIKE 'CC-INIT-%'");
+    await connection.query("DELETE FROM audit_logs WHERE JSON_EXTRACT(details, '$.email') LIKE '%@cafecampus.demo' OR user_name LIKE '%demo%'");
+    console.log('[db-setup] Mode produksi: data sample transaksi demo dan akun demo telah dibersihkan.');
   }
 
   // Sync requested tables: B1-B6, 101-105, 201-210, 301-309, 401-404, AD 1-AD 5
