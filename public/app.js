@@ -140,6 +140,30 @@ function synthesizeChime(sampleRate, duration, notes) {
   return createWavDataUri(sampleRate, samples);
 }
 
+let titleBlinkTimer = null;
+let originalPageTitle = typeof document !== 'undefined' ? (document.title || 'Cafe Campus') : 'Cafe Campus';
+
+function startTitleBlink(alertText) {
+  stopTitleBlink();
+  if (typeof document === 'undefined') return;
+  originalPageTitle = document.title;
+  let toggle = false;
+  titleBlinkTimer = setInterval(() => {
+    document.title = toggle ? alertText : '☕ ' + (originalPageTitle.replace(/^[🚨🔔☕\s]+/, '') || 'Cafe Campus');
+    toggle = !toggle;
+  }, 800);
+}
+
+function stopTitleBlink() {
+  if (titleBlinkTimer) {
+    clearInterval(titleBlinkTimer);
+    titleBlinkTimer = null;
+  }
+  if (typeof document !== 'undefined' && originalPageTitle) {
+    document.title = originalPageTitle;
+  }
+}
+
 class SoundAlarmEngine {
   constructor() {
     this.ctx = null;
@@ -149,6 +173,7 @@ class SoundAlarmEngine {
     this.isPlaying = false;
     this.vibrateInterval = null;
     this.unlocked = false;
+    this.audioBlocked = false;
     this.readyWavUri = null;
     this.adminWavUri = null;
     this.readyAudio = null;
@@ -184,27 +209,44 @@ class SoundAlarmEngine {
     }
   }
 
-  unlock() {
-    if (this.unlocked) return;
-    this.unlocked = true;
+  isReady() {
+    return (this.ctx && this.ctx.state === 'running') || this.unlocked;
+  }
+
+  async ensureRunning() {
     try {
       const AudioContextClass = window.AudioContext || window.webkitAudioContext;
       if (!this.ctx && AudioContextClass) {
         this.ctx = new AudioContextClass();
       }
+      if (this.ctx && this.ctx.state === 'suspended') {
+        await this.ctx.resume();
+      }
+      return this.ctx && this.ctx.state === 'running';
+    } catch {
+      return false;
+    }
+  }
+
+  async unlock() {
+    try {
+      const AudioContextClass = window.AudioContext || window.webkitAudioContext;
+      if (!this.ctx && AudioContextClass) {
+        this.ctx = new AudioContextClass();
+      }
+      if (this.ctx && this.ctx.state === 'suspended') {
+        await this.ctx.resume().catch(() => {});
+      }
+      if (this.ctx && !this.compressor) {
+        this.compressor = this.ctx.createDynamicsCompressor();
+        this.compressor.threshold.setValueAtTime(-14, this.ctx.currentTime);
+        this.compressor.knee.setValueAtTime(40, this.ctx.currentTime);
+        this.compressor.ratio.setValueAtTime(12, this.ctx.currentTime);
+        this.compressor.attack.setValueAtTime(0.003, this.ctx.currentTime);
+        this.compressor.release.setValueAtTime(0.25, this.ctx.currentTime);
+        this.compressor.connect(this.ctx.destination);
+      }
       if (this.ctx) {
-        if (this.ctx.state === 'suspended') {
-          this.ctx.resume().catch(() => {});
-        }
-        if (!this.compressor) {
-          this.compressor = this.ctx.createDynamicsCompressor();
-          this.compressor.threshold.setValueAtTime(-14, this.ctx.currentTime);
-          this.compressor.knee.setValueAtTime(40, this.ctx.currentTime);
-          this.compressor.ratio.setValueAtTime(12, this.ctx.currentTime);
-          this.compressor.attack.setValueAtTime(0.003, this.ctx.currentTime);
-          this.compressor.release.setValueAtTime(0.25, this.ctx.currentTime);
-          this.compressor.connect(this.ctx.destination);
-        }
         const buffer = this.ctx.createBuffer(1, 1, 22050);
         const source = this.ctx.createBufferSource();
         source.buffer = buffer;
@@ -243,11 +285,13 @@ class SoundAlarmEngine {
           this.adminAudio.muted = false;
         }
       }
+      this.unlocked = true;
+      this.audioBlocked = false;
     } catch { }
   }
 
-  playTone(freq, type = 'sine', duration = 0.25, gainVal = 0.90, delay = 0) {
-    if (!this.ctx) this.unlock();
+  async playTone(freq, type = 'sine', duration = 0.25, gainVal = 0.90, delay = 0) {
+    await this.ensureRunning();
     if (!this.ctx) return;
     try {
       const t = this.ctx.currentTime + delay;
@@ -268,6 +312,7 @@ class SoundAlarmEngine {
     try {
       if (this.readyAudio) {
         this.readyAudio.currentTime = 0;
+        this.readyAudio.loop = false;
         this.readyAudio.play().catch(() => { });
       }
     } catch { }
@@ -280,6 +325,7 @@ class SoundAlarmEngine {
     try {
       if (this.adminAudio) {
         this.adminAudio.currentTime = 0;
+        this.adminAudio.loop = false;
         this.adminAudio.play().catch(() => { });
       }
     } catch { }
@@ -289,25 +335,50 @@ class SoundAlarmEngine {
     this.playTone(1318.51, 'sine', 0.45, 0.95, 0.64);
   }
 
-  startAlarm(type = 'ready', durationSeconds = 20) {
+  async startAlarm(type = 'ready', durationSeconds = 20, isPersistent = false) {
     this.stopAlarm();
-    this.unlock();
+    await this.unlock();
     this.isPlaying = true;
 
+    // 1. Kedipkan Judul Tab Browser
+    if (type === 'admin') {
+      startTitleBlink('🚨 PESANAN BARU MASUK! 🚨');
+    } else {
+      startTitleBlink('☕ PESANAN SIAP DIAMBIL! ☕');
+    }
+
+    // 2. Play HTML5 Audio element looping (resilient to background tab throttle)
+    const audioEl = type === 'admin' ? this.adminAudio : this.readyAudio;
+    if (audioEl) {
+      try {
+        audioEl.currentTime = 0;
+        audioEl.loop = true;
+        audioEl.volume = 1.0;
+        const p = audioEl.play();
+        if (p && typeof p.then === 'function') {
+          p.then(() => { this.audioBlocked = false; }).catch(e => {
+            console.warn('[AlarmEngine] Autoplay blocked, awaiting user touch:', e.message);
+            this.audioBlocked = true;
+          });
+        }
+      } catch (e) {
+        this.audioBlocked = true;
+      }
+    }
+
+    // 3. Dual audio oscillator synthesis
     const playChime = () => {
       if (!this.isPlaying) return;
-      if (this.ctx && this.ctx.state === 'suspended') {
-        this.ctx.resume().catch(() => {});
-      }
       if (type === 'admin') {
         this.playAdminChime();
       } else {
         this.playReadyChime();
       }
     };
-
     playChime();
+    this.interval = setInterval(playChime, 1100);
 
+    // 4. Vibration pattern
     try {
       if ('vibrate' in navigator) {
         navigator.vibrate([800, 200, 800, 200, 1000, 250, 1000]);
@@ -317,11 +388,20 @@ class SoundAlarmEngine {
       }
     } catch { }
 
-    this.interval = setInterval(playChime, 900);
-
     const ms = Math.max(5, durationSeconds) * 1000;
     this.timeout = setTimeout(() => {
-      this.stopAlarm();
+      if (!isPersistent) {
+        this.stopAlarm();
+      } else {
+        // Untuk kasir: setelah durasi awal, jeda 10 detik lalu ingatkan kembali
+        if (this.interval) { clearInterval(this.interval); this.interval = null; }
+        if (audioEl) { try { audioEl.pause(); } catch {} }
+        setTimeout(() => {
+          if (this.isPlaying) {
+            this.startAlarm('admin', 15, true);
+          }
+        }, 10000);
+      }
     }, ms);
   }
 
@@ -331,12 +411,30 @@ class SoundAlarmEngine {
 
   stopAlarm() {
     this.isPlaying = false;
+    this.audioBlocked = false;
+    stopTitleBlink();
+    if (this.readyAudio) {
+      try {
+        this.readyAudio.pause();
+        this.readyAudio.currentTime = 0;
+        this.readyAudio.loop = false;
+      } catch {}
+    }
+    if (this.adminAudio) {
+      try {
+        this.adminAudio.pause();
+        this.adminAudio.currentTime = 0;
+        this.adminAudio.loop = false;
+      } catch {}
+    }
     if (this.interval) { clearInterval(this.interval); this.interval = null; }
     if (this.timeout) { clearTimeout(this.timeout); this.timeout = null; }
     if (this.vibrateInterval) { clearInterval(this.vibrateInterval); this.vibrateInterval = null; }
     try { if ('vibrate' in navigator) navigator.vibrate(0); } catch { }
     const b = document.getElementById('alarmBanner');
     if (b) b.remove();
+    const urgent = document.getElementById('urgentBuzzerOverlay');
+    if (urgent) urgent.remove();
   }
 }
 
@@ -345,6 +443,49 @@ const alarm = new SoundAlarmEngine();
 ['click', 'touchstart', 'touchend', 'pointerdown', 'keydown'].forEach(evt => {
   window.addEventListener(evt, () => alarm.unlock(), { passive: true });
 });
+
+function showUrgentReadyOverlay(o) {
+  let overlay = document.getElementById('urgentBuzzerOverlay');
+  if (overlay) return;
+  overlay = document.createElement('div');
+  overlay.id = 'urgentBuzzerOverlay';
+  overlay.className = 'urgent-buzzer-backdrop';
+  overlay.innerHTML = `
+    <div class="urgent-buzzer-modal">
+      <div class="urgent-buzzer-icon-box">
+        <div class="buzzer-wave"></div>
+        <div class="buzzer-wave wave-2"></div>
+        <span class="buzzer-cup-icon">☕</span>
+      </div>
+      <span class="urgent-badge-pill">SIAP DIAMBIL SEKARANG</span>
+      <h2>Pesanan #${esc(o.orderNumber)} Telah Selesai!</h2>
+      <p>Kopi &amp; hidangan spesial Anda sudah siap di konter barista di <strong>${esc(o.tableName || 'Meja')}</strong>.</p>
+      <div class="urgent-queue-chip">
+        <small>KODE ANTREAN PENGAMBILAN</small>
+        <strong>#${esc(o.queueNumber || o.orderNumber)}</strong>
+      </div>
+      <button type="button" class="btn btn-urgent-dismiss" id="btnDismissUrgentBuzzer">
+        🔊 Matikan Alarm &amp; Ambil Pesanan
+      </button>
+    </div>
+  `;
+  document.body.appendChild(overlay);
+
+  const dismiss = () => {
+    alarm.stopAlarm();
+    overlay.classList.add('fade-out');
+    setTimeout(() => overlay.remove(), 320);
+  };
+
+  const btn = overlay.querySelector('#btnDismissUrgentBuzzer');
+  if (btn) btn.onclick = (e) => { e.stopPropagation(); dismiss(); };
+
+  // Autoplay bypass: jika suara sempat terblokir, sentuhan pertama pengguna di mana saja langsung membunyikan alarm
+  overlay.addEventListener('touchstart', async () => {
+    await alarm.unlock();
+    if (!alarm.isPlaying) alarm.startAlarm('ready', 35);
+  }, { passive: true, once: true });
+}
 
 function showAlarmBanner(title, subtitle, onDismiss, onViewDetail) {
   let banner = document.getElementById('alarmBanner');
@@ -939,16 +1080,50 @@ function bindAdminChrome(active) {
   };
   const bellBtn = $('#adminBellBtn'); if (bellBtn) bellBtn.onclick = () => adminAudioSettingsModal();
   const livePill = $('#adminLivePill'); if (livePill) livePill.onclick = () => adminStreamStatusModal();
+
+  const updateAudioPill = () => {
+    const pill = $('#adminAudioStatusPill');
+    const isReady = alarm.isReady();
+    if (pill) {
+      pill.className = `audio-status-pill ${isReady ? 'active' : 'inactive'}`;
+      const txt = pill.querySelector('.audio-text');
+      if (txt) txt.textContent = isReady ? 'Audio Aktif' : 'Aktifkan Audio 🔔';
+    }
+    if (isReady) $('#adminAudioBanner')?.remove();
+  };
+
+  const audioPill = $('#adminAudioStatusPill');
+  if (audioPill) {
+    audioPill.onclick = async () => {
+      if (!alarm.isReady()) {
+        await alarm.unlock();
+        alarm.playAdminChime();
+        toast('✅ Bel Kasir Aktif & Siap Berbunyi!');
+        updateAudioPill();
+      } else {
+        adminAudioSettingsModal();
+      }
+    };
+  }
+
   const unlockBtn = $('#btnUnlockAdminAudio');
   if (unlockBtn) {
-    unlockBtn.onclick = () => {
-      alarm.unlock();
+    unlockBtn.onclick = async () => {
+      await alarm.unlock();
       alarm.playAdminChime();
       toast('✅ Bel Kasir Aktif & Siap Berbunyi!');
-      $('#adminAudioBanner')?.remove();
+      updateAudioPill();
       registerPushSubscription('admin');
     };
   }
+
+  // Interaksi universal di dalam dashboard kasir otomatis meng-unlock audio
+  const onAdminInteract = async () => {
+    await alarm.unlock();
+    updateAudioPill();
+  };
+  window.addEventListener('click', onAdminInteract, { passive: true });
+  window.addEventListener('keydown', onAdminInteract, { passive: true });
 }
 
 function adminAudioSettingsModal() {
@@ -970,13 +1145,14 @@ async function logoutAdmin() {
   nav('/admin/login');
 }
 function adminTop(title, subtitle, actions = '') {
-  const audioBanner = !alarm.unlocked ? `
+  const isAudioReady = alarm.isReady();
+  const audioBanner = !isAudioReady ? `
     <div class="admin-audio-alert-bar" id="adminAudioBanner">
       <div class="admin-audio-alert-content">
         <span class="pulse-bell">🔔</span>
         <div>
           <strong>Suara Bel Notifikasi Kasir Belum Diaktifkan</strong>
-          <small>Browser mewajibkan 1x klik agar alarm lonceng pesanan baru dapat berbunyi nyaring.</small>
+          <small>Browser mewajibkan 1x interaksi agar alarm lonceng pesanan baru dapat berbunyi nyaring.</small>
         </div>
       </div>
       <button class="btn btn-primary btn-small" id="btnUnlockAdminAudio">🔊 Aktifkan Suara Sekarang</button>
@@ -991,6 +1167,10 @@ function adminTop(title, subtitle, actions = '') {
       </div>
       <div class="admin-head-actions">
         ${actions}
+        <button type="button" class="audio-status-pill ${isAudioReady ? 'active' : 'inactive'}" id="adminAudioStatusPill" title="Status Alarm Audio Kasir">
+          <span class="audio-dot"></span>
+          <span class="audio-text">${isAudioReady ? 'Audio Aktif' : 'Aktifkan Audio 🔔'}</span>
+        </button>
         <button class="live-pill" id="adminLivePill" title="Lihat Status Jaringan Real-Time"><i></i> LIVE</button>
         <button class="icon-btn" id="adminBellBtn" title="Pengaturan & Uji Alarm Kasir">${icon('bell', 19)}</button>
       </div>
@@ -1161,6 +1341,7 @@ function createRealtimeSubscription({ channel, order, access, onEvent, onStatusC
 function setupAdminRealtime(refresh) {
   // Auto-subscribe Admin Web Push
   registerPushSubscription('admin');
+  const handledAdminOrders = new Set();
 
   const updatePill = (status) => {
     const pill = $('#adminLivePill');
@@ -1194,14 +1375,15 @@ function setupAdminRealtime(refresh) {
       // 1. Selesai Pembayaran dari Customer -> Bunyikan Alarm Kasir
       if (isPaymentUpdate) {
         const title = `💳 Pembayaran #${ord.orderNumber} Lunas!`;
-        const sub = `${ord.tableName || 'Meja'} • Total: ${money(ord.total || 0)}`;
+        const subText = `${ord.tableName || 'Meja'} • Total: ${money(ord.total || 0)}`;
         toast(`💳 Pembayaran #${ord.orderNumber} Lunas (${ord.tableName || 'Meja'})`);
         alarm.startAlarm('admin', 15);
         showAlarmBanner(
           title,
-          sub,
+          subText,
           () => alarm.stopAlarm(),
           () => {
+            alarm.stopAlarm();
             if (ord.orderNumber) {
               orderDetailModal(ord.orderNumber, refresh);
             }
@@ -1220,15 +1402,17 @@ function setupAdminRealtime(refresh) {
 
       // 3. Pesanan Baru Masuk (HANYA bila status NEW) -> Bunyikan Alarm Kasir
       if (event === 'admin-order' && ord && ord.status === 'NEW') {
+        handledAdminOrders.add(ord.orderNumber);
         const title = `🔔 Pesanan Baru #${ord.orderNumber} (${ord.tableName || 'Meja'})`;
         const totalStr = ord?.total ? ` • ${money(ord.total)}` : '';
         toast(`🔔 ${title}${totalStr}`);
-        alarm.startAlarm('admin', 20);
+        alarm.startAlarm('admin', 25, true);
         showAlarmBanner(
           title,
           `Total: ${money(ord?.total || 0)} (${ord?.payment?.method === 'CASH' ? 'Bayar Tunai di Kasir' : 'QRIS'})`,
           () => alarm.stopAlarm(),
           () => {
+            alarm.stopAlarm();
             if (ord?.orderNumber) {
               orderDetailModal(ord.orderNumber, refresh);
             }
@@ -1243,7 +1427,7 @@ function setupAdminRealtime(refresh) {
                 body: `Meja: ${ord?.tableName || '-'} • Total: ${money(ord?.total || 0)}`,
                 icon: '/assets/icon.png',
                 badge: '/assets/icon.png',
-                vibrate: [800, 200, 800, 200, 1000],
+                vibrate: [1000, 300, 1000, 300, 1500],
                 tag: 'admin-order-' + (ord?.orderNumber || Date.now()),
                 requireInteraction: true,
                 data: { url: '/admin/orders' }
@@ -1261,8 +1445,39 @@ function setupAdminRealtime(refresh) {
     }
   });
 
+  // Background Reconciler: Jaminan 100% Alarm Berbunyi Meskipun SSE Sempat Terputus / Tab Tertidur
+  const backgroundReconciler = setInterval(async () => {
+    try {
+      const res = await api('/admin/orders?limit=10');
+      if (Array.isArray(res)) {
+        const newOrders = res.filter(o => o.status === 'NEW');
+        for (const ord of newOrders) {
+          const ordNum = ord.orderNumber;
+          const orderAgeMs = Date.now() - new Date(ord.createdAt || ord.created_at || Date.now()).getTime();
+          if (orderAgeMs < 10 * 60 * 1000 && !handledAdminOrders.has(ordNum)) {
+            handledAdminOrders.add(ordNum);
+            const title = `🔔 Pesanan Baru #${ordNum} (${ord.tableName || 'Meja'})`;
+            toast(title);
+            alarm.startAlarm('admin', 25, true);
+            showAlarmBanner(
+              title,
+              `Total: ${money(ord.total || 0)} (${ord.paymentMethod === 'CASH' ? 'Bayar Tunai di Kasir' : 'QRIS'})`,
+              () => alarm.stopAlarm(),
+              () => {
+                alarm.stopAlarm();
+                orderDetailModal(ordNum, refresh);
+              }
+            );
+            refresh && refresh();
+          }
+        }
+      }
+    } catch {}
+  }, 7000);
+
   disposeOnLeave(() => {
     sub.close();
+    clearInterval(backgroundReconciler);
   });
 }
 
@@ -1292,6 +1507,14 @@ async function landing() {
   let tables = []; try { tables = await api('/public/tables') } catch { tables = Array.from({ length: 12 }, (_, i) => ({ tableNumber: String(i + 1).padStart(2, '0'), name: `Meja ${String(i + 1).padStart(2, '0')}`, publicToken: `demo-table-${String(i + 1).padStart(2, '0')}` })); }
   const defaultToken = tables[0]?.publicToken || 'demo-table-b1';
   const settings = await fetchCachedSettings(); const activeOrder = getActiveOrder();
+  if (activeOrder && activeOrder.orderNumber && activeOrder.accessToken) {
+    api('/orders/' + encodeURIComponent(activeOrder.orderNumber) + '?access=' + encodeURIComponent(activeOrder.accessToken)).then(latest => {
+      if (latest && latest.status === 'READY') {
+        updateActiveOrder({ status: 'READY' });
+        nav('/track/' + encodeURIComponent(activeOrder.orderNumber));
+      }
+    }).catch(() => {});
+  }
   document.body.className = 'landing-body cafe-home-body';
   document.body.innerHTML = `<main class="cafe-home"><header class="home-navbar"><a class="home-brand" data-nav href="/"><span>${brandMark(38)}</span><div><b>Cafe Campus</b><small>Artisanal &amp; Creative Space</small></div></a><div class="home-nav-actions"><button type="button" class="btn btn-soft btn-small" id="navWifiBtn">${icon('wifi', 15)}<span>Wi-Fi 100 Mbps</span></button><a data-nav href="/order/${encodeURIComponent(defaultToken)}/menu" class="btn btn-outline btn-small">${icon('menu', 15)}<span>Buku Menu</span></a><button type="button" class="btn btn-primary btn-small" id="navOrderBtn">${icon('cart', 15)}<span>Pesan di Meja</span></button></div></header>${activeOrder ? `<section class="home-active-order-bar animate-pop"><div class="haob-left"><span class="aofb-pulse"></span><div><b>Pesanan #${esc(activeOrder.orderNumber)} Sedang Berlangsung</b><small>${esc(activeOrder.tableName || 'Meja')} • Status: ${statusMeta[activeOrder.status]?.customer || 'Sedang Diproses'}</small></div></div><a data-nav href="/track/${encodeURIComponent(activeOrder.orderNumber)}?access=${encodeURIComponent(activeOrder.accessToken || '')}" class="btn btn-primary btn-small">Lacak Pesanan</a></section>` : ''}<section class="cafe-hero"><div class="hero-badge">${icon('sparkles', 14)} <span>Tempat Favorit Nugas &amp; Kopi Spesial Kampus</span></div><h1 class="hero-title">Secangkir Kopi Pilihan &amp; Ruang Nyaman untuk Ide Besarmu</h1><p class="hero-desc">Nikmati racikan espresso kaya aroma, hidangan hangat yang lezat, dan suasana produktif. Pesan langsung dari smartphone tanpa perlu antre di kasir.</p><div class="hero-actions"><button type="button" class="btn btn-primary btn-large hero-cta-btn" id="heroOrderBtn">${icon('cart', 20)} Pesan dari Meja Anda</button><a data-nav href="/order/${encodeURIComponent(defaultToken)}/menu" class="btn btn-soft btn-large hero-menu-btn">${icon('menu', 18)} Lihat Buku Menu Digital</a><button type="button" class="btn btn-soft btn-large hero-wifi-btn" id="heroWifiBtn">${icon('wifi', 18)} Salin Password Wi-Fi</button></div></section></main>`;
   const openTablePicker = () => tablePickerModal(tables); const openWifi = () => wifiModal();
@@ -1300,6 +1523,15 @@ async function landing() {
 }
 
 async function tableWelcomePage(tableToken) {
+  const activeOrder = getActiveOrder();
+  if (activeOrder && activeOrder.orderNumber && activeOrder.accessToken) {
+    api('/orders/' + encodeURIComponent(activeOrder.orderNumber) + '?access=' + encodeURIComponent(activeOrder.accessToken)).then(latest => {
+      if (latest && latest.status === 'READY') {
+        updateActiveOrder({ status: 'READY' });
+        nav('/track/' + encodeURIComponent(activeOrder.orderNumber));
+      }
+    }).catch(() => {});
+  }
   const table = await api('/public/tables/' + encodeURIComponent(tableToken));
   let c = getCart();
   if (c.tableToken && c.tableToken !== table.publicToken && c.tableToken !== tableToken) { c = { tableToken: table.publicToken || tableToken, tableName: table.name, items: [] }; } else { c.tableToken = table.publicToken || tableToken; c.tableName = table.name; }
@@ -2074,6 +2306,7 @@ async function checkoutPage() {
       
       const targetOrderNumber = addTo ? addTo.orderNumber : r.orderNumber;
       sessionStorage.setItem('cc_show_stay_alert_' + targetOrderNumber, '1');
+      registerPushSubscription('customer', targetOrderNumber).catch(() => {});
 
       clearCart();
       if (addTo) clearAddTo();
@@ -2147,8 +2380,9 @@ async function trackPage(orderNumber) {
   const triggerReadyAlarm = () => {
     if (readyAlarmTriggered) return;
     readyAlarmTriggered = true;
-    alarm.startAlarm('ready', 30);
+    alarm.startAlarm('ready', 35);
     showAlarmBanner(`🔔 PESANAN #${esc(o.orderNumber)} SIAP DIAMBIL!`, 'Pesanan siap diambil di counter pick-up barista.', () => alarm.stopAlarm());
+    showUrgentReadyOverlay(o);
     
     // Push Notification sistem (muncul di layar kunci HP & background)
     const notifTitle = `☕ PESANAN #${o.orderNumber} SIAP DIAMBIL!`;
@@ -2209,14 +2443,20 @@ async function trackPage(orderNumber) {
     currentScreenMode = 'track'; document.body.className = 'customer-body track-body';
     const isGranted = ('Notification' in window && Notification.permission === 'granted');
     const buzzerCardHtml = isGranted
-      ? `<div class="buzzer-active-pill">🔔 Buzzer Layar Kunci Aktif — HP Berdering &amp; Bergetar Saat Pesanan Siap</div>`
+      ? `<div class="buzzer-active-pill" style="display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap;">
+          <span>🔔 Buzzer Layar Kunci Aktif — HP Berdering &amp; Bergetar Saat Pesanan Siap</span>
+          <button type="button" class="btn btn-soft btn-small" id="btnTestBuzzer" style="padding:4px 10px;font-size:11px;">Tes Bunyi HP</button>
+        </div>`
       : `<div class="buzzer-status-card" id="buzzerCard">
           <div class="buzzer-status-icon">🔔</div>
           <div class="buzzer-status-info">
             <b>Aktifkan Alarm Layar Kunci &amp; Suara</b>
             <small>Izinkan notifikasi agar alarm berbunyi kencang meskipun layar HP mati atau tab ditutup.</small>
           </div>
-          <button class="btn btn-primary btn-small" id="btnEnableBuzzer">Aktifkan Alarm</button>
+          <div style="display:flex;gap:6px;align-items:center;">
+            <button class="btn btn-primary btn-small" id="btnEnableBuzzer">Aktifkan Alarm</button>
+            <button class="btn btn-soft btn-small" id="btnTestBuzzer">Tes Bunyi</button>
+          </div>
         </div>`;
 
     document.body.innerHTML = customerShell(`<main class="tracking-page"><div class="tracking-top"><span>STATUS PESANAN</span><div style="display:flex;justify-content:space-between;align-items:flex-start;gap:12px;width:100%;"><div><h1>Pesanan #${esc(o.orderNumber)}</h1><em id="estMinutesText">Estimasi ${o.estimatedMinutes || 10} Mnt</em></div><div class="queue-num-chip"><small>ANTREAN</small><strong>#${esc(o.queueNumber || 'Q-001')}</strong></div></div></div>${buzzerCardHtml}<div class="stay-alert-strip" style="background:#fffbeb;border:1px solid #fde68a;border-radius:12px;padding:12px 14px;margin-bottom:12px;display:flex;align-items:flex-start;gap:10px;"><span style="font-size:20px;line-height:1.1;">⚠️</span><div style="flex:1;font-size:12.5px;color:#92400e;line-height:1.4;"><strong style="display:block;margin-bottom:2px;font-size:13px;color:#78350f;">PENTING: Jangan Tutup Halaman Ini</strong>Biarkan tab ini tetap terbuka agar alarm dering &amp; getar pesanan siap bisa langsung berbunyi di HP Anda saat barista memanggil.</div></div>${o.studentInfo ? `<div class="track-verify-card ${o.studentInfo.verificationStatus === 'AUTOMATICALLY_VERIFIED' || o.studentInfo.verificationStatus === 'VERIFIED' ? 'verified' : (o.studentInfo.verificationStatus === 'REJECTED' ? 'rejected' : 'pending')}"><div style="font-size:22px;">${o.studentInfo.verificationStatus === 'AUTOMATICALLY_VERIFIED' || o.studentInfo.verificationStatus === 'VERIFIED' ? '✅' : (o.studentInfo.verificationStatus === 'REJECTED' ? '⚠️' : '⏳')}</div><div style="flex:1;"><b style="font-size:12.5px;display:block;">${o.studentInfo.verificationStatus === 'AUTOMATICALLY_VERIFIED' ? 'Identitas Pelajar Terverifikasi Sah (AI Radar)' : (o.studentInfo.verificationStatus === 'VERIFIED' ? 'Verifikasi Kartu Pelajar Disetujui Kasir' : (o.studentInfo.verificationStatus === 'REJECTED' ? 'Verifikasi Pelajar Ditolak: Kembali ke Harga Reguler' : 'Menunggu Validasi Selfie KTM oleh Kasir'))}</b><small style="display:block;margin-top:2px;font-size:11px;">${o.studentInfo.verificationStatus === 'AUTOMATICALLY_VERIFIED' ? `Identitas mahasiswa ${esc(o.studentInfo.campus)} dan domain kampus lolos validasi otomatis.` : (o.studentInfo.verificationStatus === 'VERIFIED' ? `Identitas mahasiswa ${esc(o.studentInfo.campus)} telah diverifikasi sah oleh kasir.` : (o.studentInfo.verificationStatus === 'REJECTED' ? `Alasan: ${esc(o.studentInfo.rejectionReason || 'Foto KTM tidak sesuai')}. Seluruh harga item otomatis disesuaikan ke tarif normal tanpa reload.` : 'Kasir akan memverifikasi foto selfie KTM Anda saat memproses pesanan.'))}</small>${o.studentInfo ? `<button type="button" class="btn btn-soft btn-small" id="btnViewDigitalKtm" style="margin-top:8px;">🪪 Tampilkan Kartu Mahasiswa Digital (KTM)</button>` : ''}</div></div>` : ''}<div id="trackingCardWrapper">${renderTrackingCardContent()}</div><section class="tracking-summary" id="trackingSummarySection"><h3>Rincian Pesanan</h3>${o.items.map(i => `<div><span>${esc(i.productName)} x${i.quantity}<small>${esc(optionSummary(i))}</small></span><b>${money(i.lineTotal)}</b></div>`).join('')}<hr><div><span>Nomor Meja</span><b>${esc(o.tableName)}</b></div><div><span>Metode Pembayaran</span><b id="paymentStatusBadge">${o.payment.method === 'QRIS_DEMO' || o.payment.method === 'QRIS' ? 'QRIS' : 'Bayar di Kasir'} ${o.payment.status === 'PAID' ? '(Lunas)' : '(Pending)'}</b></div><div class="tracking-total"><span>Total Bayar</span><strong id="trackGrandTotal">${money(o.total)}</strong></div></section><div id="trackAddonsWrapper">${trackAddonsSection(o, access)}</div></main>`, { tableName: o.tableName, className: 'simple-shell' });
@@ -2276,7 +2516,7 @@ async function trackPage(orderNumber) {
     const btnBuzzer = $('#btnEnableBuzzer');
     if (btnBuzzer) {
       btnBuzzer.onclick = async () => {
-        alarm.unlock();
+        await alarm.unlock();
         alarm.playReadyChime();
         requestWakeLock();
         if ('Notification' in window) {
@@ -2289,6 +2529,15 @@ async function trackPage(orderNumber) {
             }
           } catch { }
         }
+      };
+    }
+    const btnTest = $('#btnTestBuzzer');
+    if (btnTest) {
+      btnTest.onclick = async () => {
+        await alarm.unlock();
+        alarm.playReadyChime();
+        if ('vibrate' in navigator) navigator.vibrate([400, 150, 400]);
+        toast('🔔 Memutar contoh dering pesanan siap...');
       };
     }
   };

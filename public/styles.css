@@ -8025,3 +8025,191 @@ button:active, .btn:active, .round-add:active, .option-pill:active, .category-ch
   text-align: center;
 }
 
+/* ==========================================================================
+   PATEN DUAL-ENGINE ALARM & BUZZER ENHANCEMENTS
+   ========================================================================== */
+.audio-status-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  border-radius: 20px;
+  font-size: 12px;
+  font-weight: 600;
+  border: 1.5px solid transparent;
+  cursor: pointer;
+  transition: all 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+  text-decoration: none;
+}
+.audio-status-pill.active {
+  background: #f0fdf4;
+  border-color: #86efac;
+  color: #15803d;
+}
+.audio-status-pill.active .audio-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #22c55e;
+  box-shadow: 0 0 0 2px rgba(34, 197, 94, 0.25);
+}
+.audio-status-pill.inactive {
+  background: #fff7ed;
+  border-color: #fdba74;
+  color: #c2410c;
+  animation: pulseAlarmGlow 1.2s infinite alternate ease-in-out;
+}
+.audio-status-pill.inactive .audio-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #f97316;
+}
+
+/* Urgent Customer Buzzer Overlay (Autoplay Bypass & Screen Wakeup) */
+.urgent-buzzer-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 999999;
+  background: rgba(15, 23, 42, 0.90);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+  animation: fadeInBuzzer 0.3s ease-out;
+}
+.urgent-buzzer-backdrop.fade-out {
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.3s ease-out;
+}
+.urgent-buzzer-modal {
+  background: #ffffff;
+  border-radius: 24px;
+  padding: 32px 24px;
+  max-width: 440px;
+  width: 100%;
+  text-align: center;
+  box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.6), 0 0 0 4px rgba(245, 158, 11, 0.45);
+  animation: popModalBuzzer 0.4s cubic-bezier(0.16, 1, 0.3, 1);
+  position: relative;
+  overflow: hidden;
+}
+.urgent-buzzer-icon-box {
+  position: relative;
+  width: 90px;
+  height: 90px;
+  margin: 0 auto 16px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.buzzer-wave {
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  border: 3px solid #f59e0b;
+  animation: buzzerRipple 1.8s infinite cubic-bezier(0.2, 0.8, 0.4, 1);
+}
+.buzzer-wave.wave-2 {
+  animation-delay: 0.6s;
+}
+.buzzer-cup-icon {
+  font-size: 44px;
+  position: relative;
+  z-index: 2;
+  animation: cupBounce 1s infinite alternate ease-in-out;
+}
+.urgent-badge-pill {
+  display: inline-block;
+  background: #fef3c7;
+  color: #92400e;
+  border: 1px solid #fcd34d;
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.8px;
+  padding: 5px 14px;
+  border-radius: 20px;
+  margin-bottom: 12px;
+  text-transform: uppercase;
+}
+.urgent-buzzer-modal h2 {
+  margin: 0 0 8px;
+  font-size: 22px;
+  font-weight: 800;
+  color: #0f172a;
+  line-height: 1.3;
+}
+.urgent-buzzer-modal p {
+  margin: 0 0 20px;
+  font-size: 13.5px;
+  color: #64748b;
+  line-height: 1.5;
+}
+.urgent-queue-chip {
+  background: #f8fafc;
+  border: 2px dashed #cbd5e1;
+  border-radius: 14px;
+  padding: 14px;
+  margin-bottom: 22px;
+}
+.urgent-queue-chip small {
+  display: block;
+  font-size: 11px;
+  font-weight: 700;
+  color: #64748b;
+  letter-spacing: 0.5px;
+}
+.urgent-queue-chip strong {
+  display: block;
+  font-size: 32px;
+  font-weight: 900;
+  color: #047857;
+  margin-top: 3px;
+  letter-spacing: 1px;
+}
+.btn-urgent-dismiss {
+  width: 100%;
+  padding: 14px 18px;
+  font-size: 15px;
+  font-weight: 700;
+  border-radius: 14px;
+  background: linear-gradient(135deg, #10b981 0%, #059669 100%);
+  color: #ffffff;
+  border: none;
+  box-shadow: 0 8px 20px rgba(16, 185, 129, 0.35);
+  cursor: pointer;
+  transition: transform 0.15s ease, box-shadow 0.15s ease;
+}
+.btn-urgent-dismiss:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 10px 24px rgba(16, 185, 129, 0.45);
+}
+.btn-urgent-dismiss:active {
+  transform: translateY(0);
+}
+
+@keyframes buzzerRipple {
+  0% { transform: scale(0.7); opacity: 1; }
+  100% { transform: scale(2.2); opacity: 0; }
+}
+@keyframes cupBounce {
+  0% { transform: translateY(0) rotate(0deg); }
+  100% { transform: translateY(-7px) rotate(4deg); }
+}
+@keyframes pulseAlarmGlow {
+  0% { box-shadow: 0 0 0 0 rgba(249, 115, 22, 0.4); }
+  100% { box-shadow: 0 0 0 8px rgba(249, 115, 22, 0); }
+}
+@keyframes fadeInBuzzer {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+@keyframes popModalBuzzer {
+  0% { transform: scale(0.85); opacity: 0; }
+  100% { transform: scale(1); opacity: 1; }
+}
+
+

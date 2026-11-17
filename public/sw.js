@@ -1,4 +1,4 @@
-const SW_VERSION = 'v5';
+const SW_VERSION = 'v6';
 
 self.addEventListener('install', event => {
   self.skipWaiting();
@@ -24,14 +24,17 @@ self.addEventListener('push', event => {
     body: data.body || 'Pesanan Anda telah diperbarui!',
     icon: '/assets/icon.png',
     badge: '/assets/icon.png',
-    vibrate: [800, 200, 800, 200, 1000, 250, 1000, 250, 1500],
+    vibrate: [1000, 300, 1000, 300, 1500, 500, 2000],
     requireInteraction: true,
     renotify: true,
     silent: false,
-    tag: data.tag || 'cafe-campus-alert',
+    tag: data.tag || ('cafe-campus-' + Date.now()),
     data: {
       url: data.url || '/'
-    }
+    },
+    actions: [
+      { action: 'open', title: '☕ Buka Status Pesanan' }
+    ]
   };
 
   event.waitUntil(self.registration.showNotification(title, options));

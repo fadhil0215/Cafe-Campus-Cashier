@@ -347,7 +347,7 @@ const sendPushNotification = async (channel, orderNumber, payload) => {
     const payloadStr = JSON.stringify(payload);
     for (const [endpoint, item] of pushSubscriptions.entries()) {
         if (channel && item.channel !== channel) continue;
-        if (orderNumber && item.orderNumber !== orderNumber) continue;
+        if (orderNumber && item.orderNumber && item.orderNumber !== orderNumber) continue;
         try {
             await webpush.sendNotification(item.sub, payloadStr);
         } catch (err) {
