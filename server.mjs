@@ -2098,6 +2098,60 @@ app.post('/api/admin/logout', (req, res) => {
     res.json({ ok: true });
 });
 
+// Endpoint Manajemen Akun Staf / Admin
+app.get('/api/admin/staff', authSuperAdmin, async (req, res) => {
+    try {
+        const [rows] = await pool.query('SELECT id, name, email, role, created_at FROM admins ORDER BY role ASC, created_at ASC');
+        res.json(rows);
+    } catch(e) {
+        res.status(500).json({ message: 'Gagal memuat staf: ' + e.message });
+    }
+});
+
+app.post('/api/admin/staff', authSuperAdmin, async (req, res) => {
+    const name = String(req.body?.name || '').trim();
+    const email = String(req.body?.email || '').trim().toLowerCase();
+    const password = String(req.body?.password || '');
+    const role = String(req.body?.role || 'CASHIER').toUpperCase();
+
+    if (!name || name.length < 2) return res.status(400).json({ message: 'Nama lengkap staf wajib diisi (minimal 2 karakter).' });
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return res.status(400).json({ message: 'Format email tidak valid.' });
+    if (!password || password.length < 8) return res.status(400).json({ message: 'Password minimal 8 karakter.' });
+    if (!['ADMIN', 'CASHIER', 'KITCHEN'].includes(role)) return res.status(400).json({ message: 'Peran (role) harus ADMIN, CASHIER, atau KITCHEN.' });
+
+    try {
+        const [existing] = await pool.query('SELECT id FROM admins WHERE LOWER(email) = ?', [email]);
+        if (existing.length) return res.status(409).json({ message: 'Email sudah terdaftar untuk akun lain.' });
+
+        const newId = `admin-${role.toLowerCase()}-${crypto.randomBytes(3).toString('hex')}`;
+        const hash = await bcrypt.hash(password, 10);
+        await pool.query(
+            'INSERT INTO admins (id, name, email, password_hash, role) VALUES (?, ?, ?, ?, ?)',
+            [newId, name, email, hash, role]
+        );
+        await logAudit(req.user.id, req.user.name, req.user.role, 'CREATE_STAFF', 'ADMIN', newId, { email, role, name }, req);
+        res.status(201).json({ ok: true, id: newId, message: `Akun ${name} (${role}) berhasil didaftarkan.` });
+    } catch(e) {
+        res.status(500).json({ message: 'Gagal mendaftarkan staf: ' + e.message });
+    }
+});
+
+app.delete('/api/admin/staff/:id', authSuperAdmin, async (req, res) => {
+    const targetId = req.params.id;
+    if (req.user.id === targetId) return res.status(400).json({ message: 'Tidak dapat menghapus akun Anda sendiri yang sedang aktif.' });
+
+    try {
+        const [rows] = await pool.query('SELECT id, name, email, role FROM admins WHERE id = ?', [targetId]);
+        if (!rows.length) return res.status(404).json({ message: 'Akun staf tidak ditemukan.' });
+
+        await pool.query('DELETE FROM admins WHERE id = ?', [targetId]);
+        await logAudit(req.user.id, req.user.name, req.user.role, 'DELETE_STAFF', 'ADMIN', targetId, { email: rows[0].email, role: rows[0].role }, req);
+        res.json({ ok: true, message: `Akun ${rows[0].name} berhasil dihapus.` });
+    } catch(e) {
+        res.status(500).json({ message: 'Gagal menghapus staf: ' + e.message });
+    }
+});
+
 // Endpoint Pembayaran QRIS Sandbox Demo (Tanpa auth cookie agar bisa dipanggil customer/sandbox/test)
 app.post('/api/demo/payments/:orderNum/pay', async (req, res) => {
     const conn = await pool.getConnection();

@@ -3029,7 +3029,7 @@ async function settingsPage(user) {
     </div>
     <span class="badge ${isDemo ? 'badge-warning' : 'badge-success'}" style="padding: 4px 10px; font-weight: 700; font-size: 11px;">${isDemo ? 'DEMO MODE' : 'PRODUCTION MODE'}</span>
   </section>`;
-  document.body.innerHTML = adminShell(`${adminTop('Pengaturan Sistem', 'Kelola profil cafe, integrasi pembayaran digital, Gemini AI, dan akun operasional.')}<section class="settings-grid">${modeBanner}<div><section class="admin-panel settings-panel"><h2>Profil Cafe</h2>${[['cafeName', 'Nama Cafe', s.cafeName], ['cafeAddress', 'Alamat', s.cafeAddress || ''], ['cafePhone', 'No. Telepon', s.cafePhone || ''], ['operatingHours', 'Jam Operasional', s.operatingHours || '']].map(([id, l, v]) => `<label>${l}<input id="${id}" value="${esc(v)}"></label>`).join('')}<div class="two-fields"><label>Biaya Layanan (%)<input id="serviceFee" type="number" min="0" max="30" value="${s.serviceFee}"></label><label>Pajak (%)<input id="taxPercent" type="number" min="0" max="30" value="${s.taxPercent}"></label></div></section><section class="admin-panel settings-panel"><h2>Metode Pembayaran</h2>${settingSwitch('qrisEnabled', 'Integrasi QRIS Otomatis', 'Pembayaran QRIS digital real-time terintegrasi.', switches.qrisEnabled)}${settingSwitch('cashEnabled', 'Bayar di Kasir (Tunai)', 'Pelanggan membayar langsung di meja kasir.', switches.cashEnabled)}</section><section class="admin-panel settings-panel"><div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;"><h2 style="margin:0;">🤖 Integrasi Google Gemini AI</h2><span class="badge ${s.geminiStatus?.active ? 'badge-success' : 'badge-warning'}" id="geminiStatusBadge" style="padding: 3px 8px; font-size:11px;">${s.geminiStatus?.active ? '🟢 AKTIF' : '🟡 KUNCI BELUM DIISI'}</span></div><p style="font-size:12px; color:var(--muted); margin-bottom:12px;">Digunakan untuk OCR scan KTM presisi tinggi dan percakapan cerdas Barista AI Chatbot.${s.geminiStatus?.source ? `<br><small style="color:var(--text); display:inline-block; margin-top:4px;">Sumber Kunci: <b>${s.geminiStatus.source === 'ENV' ? 'Railway / Environment' : s.geminiStatus.source === 'DATABASE' ? 'Database Pengaturan' : 'Kunci Bawaan Sistem'}</b> ${s.geminiStatus.maskedKey ? `(${s.geminiStatus.maskedKey})` : ''}</small>` : ''}</p><label>Google Gemini API Key<div style="display:flex; gap:8px;"><input id="geminiApiKey" type="password" placeholder="AIzaSy... atau biarkan bawaan" value="${esc(s.geminiApiKey || '')}" style="flex:1;"><button type="button" class="btn btn-soft" id="btnToggleGeminiKey" style="padding:0 12px;" title="Tampilkan/Sembunyikan">👁️</button></div></label><div style="margin-top:10px; display:flex; gap:8px; align-items:center;"><button type="button" class="btn btn-outline" id="btnTestGemini">⚡ Uji Koneksi AI</button><span id="geminiTestResult" style="font-size:12px; color:var(--muted);"></span></div></section></div><div><section class="admin-panel settings-panel"><h2>Notifikasi & Suara</h2>${settingSwitch('soundEnabled', 'Pesanan Masuk Baru', 'Mainkan notifikasi suara saat browser mengizinkan.', switches.soundEnabled)}${settingSwitch('dailyReportEnabled', 'Laporan Penutupan Harian', 'Siapkan ringkasan operasional harian.', switches.dailyReportEnabled)}</section><section class="admin-panel settings-panel"><h2>Keamanan & Akun</h2><label>Email Akun<input value="${esc(user.email || '')}" disabled></label><div class="setting-actions"><button class="btn btn-outline" id="passwordDemo">Ubah Password</button><button class="btn btn-danger" id="logoutSettings">Keluar Sesi</button></div></section>${isDemo ? `<section class="admin-panel settings-panel demo-controls"><h2>Kontrol Demo</h2><p>Reset mengembalikan menu, meja, sample order, reports, dan settings ke kondisi awal.</p><button class="btn btn-outline" id="resetDemo">Reset Data Demo</button></section>` : ''}</div></section><section class="admin-panel audit-panel"><div class="panel-head"><h2>Audit Trail</h2><span>${audit.length} aktivitas terakhir</span></div><div class="audit-list">${audit.slice(0, 12).map(a => `<div><span>${formatTime(a.at)}</span><b>${esc(a.action.replaceAll('_', ' '))}</b><small>${esc(JSON.stringify(a.meta || {}))}</small></div>`).join('') || '<div class="admin-empty">Belum ada aktivitas admin.</div>'}</div></section><div class="settings-save"><button class="btn btn-primary" id="saveSettings">Simpan Perubahan</button></div>`, 'settings', user);
+  document.body.innerHTML = adminShell(`${adminTop('Pengaturan Sistem', 'Kelola profil cafe, integrasi pembayaran digital, Gemini AI, dan akun operasional.')}<section class="settings-grid">${modeBanner}<div><section class="admin-panel settings-panel"><h2>Profil Cafe</h2>${[['cafeName', 'Nama Cafe', s.cafeName], ['cafeAddress', 'Alamat', s.cafeAddress || ''], ['cafePhone', 'No. Telepon', s.cafePhone || ''], ['operatingHours', 'Jam Operasional', s.operatingHours || '']].map(([id, l, v]) => `<label>${l}<input id="${id}" value="${esc(v)}"></label>`).join('')}<div class="two-fields"><label>Biaya Layanan (%)<input id="serviceFee" type="number" min="0" max="30" value="${s.serviceFee}"></label><label>Pajak (%)<input id="taxPercent" type="number" min="0" max="30" value="${s.taxPercent}"></label></div></section><section class="admin-panel settings-panel"><h2>Metode Pembayaran</h2>${settingSwitch('qrisEnabled', 'Integrasi QRIS Otomatis', 'Pembayaran QRIS digital real-time terintegrasi.', switches.qrisEnabled)}${settingSwitch('cashEnabled', 'Bayar di Kasir (Tunai)', 'Pelanggan membayar langsung di meja kasir.', switches.cashEnabled)}</section><section class="admin-panel settings-panel"><div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;"><h2 style="margin:0;">🤖 Integrasi Google Gemini AI</h2><span class="badge ${s.geminiStatus?.active ? 'badge-success' : 'badge-warning'}" id="geminiStatusBadge" style="padding: 3px 8px; font-size:11px;">${s.geminiStatus?.active ? '🟢 AKTIF' : '🟡 KUNCI BELUM DIISI'}</span></div><p style="font-size:12px; color:var(--muted); margin-bottom:12px;">Digunakan untuk OCR scan KTM presisi tinggi dan percakapan cerdas Barista AI Chatbot.${s.geminiStatus?.source ? `<br><small style="color:var(--text); display:inline-block; margin-top:4px;">Sumber Kunci: <b>${s.geminiStatus.source === 'ENV' ? 'Railway / Environment' : s.geminiStatus.source === 'DATABASE' ? 'Database Pengaturan' : 'Kunci Bawaan Sistem'}</b> ${s.geminiStatus.maskedKey ? `(${s.geminiStatus.maskedKey})` : ''}</small>` : ''}</p><label>Google Gemini API Key<div style="display:flex; gap:8px;"><input id="geminiApiKey" type="password" placeholder="AIzaSy... atau biarkan bawaan" value="${esc(s.geminiApiKey || '')}" style="flex:1;"><button type="button" class="btn btn-soft" id="btnToggleGeminiKey" style="padding:0 12px;" title="Tampilkan/Sembunyikan">👁️</button></div></label><div style="margin-top:10px; display:flex; gap:8px; align-items:center;"><button type="button" class="btn btn-outline" id="btnTestGemini">⚡ Uji Koneksi AI</button><span id="geminiTestResult" style="font-size:12px; color:var(--muted);"></span></div></section></div><div><section class="admin-panel settings-panel"><h2>Notifikasi & Suara</h2>${settingSwitch('soundEnabled', 'Pesanan Masuk Baru', 'Mainkan notifikasi suara saat browser mengizinkan.', switches.soundEnabled)}${settingSwitch('dailyReportEnabled', 'Laporan Penutupan Harian', 'Siapkan ringkasan operasional harian.', switches.dailyReportEnabled)}</section><section class="admin-panel settings-panel"><h2>Keamanan & Akun</h2><label>Email Akun<input value="${esc(user.email || '')}" disabled></label><div class="setting-actions"><button class="btn btn-outline" id="passwordDemo">Ubah Password</button><button class="btn btn-danger" id="logoutSettings">Keluar Sesi</button></div></section><section class="admin-panel settings-panel"><div><div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;"><h2 style="margin:0;">👥 Akun Staf & Hak Akses</h2>${user?.role === 'ADMIN' ? `<button type="button" class="btn btn-primary btn-small" id="btnAddStaff">+ Tambah Staf</button>` : ''}</div><p style="font-size:12px; color:var(--muted); margin-bottom:12px;">Daftarkan atau kelola akun Kasir, Barista Dapur, dan Administrator.</p><div id="staffListWrapper" style="display:flex; flex-direction:column; gap:8px;"></div></div></section>${isDemo ? `<section class="admin-panel settings-panel demo-controls"><h2>Kontrol Demo</h2><p>Reset mengembalikan menu, meja, sample order, reports, dan settings ke kondisi awal.</p><button class="btn btn-outline" id="resetDemo">Reset Data Demo</button></section>` : ''}</div></section><section class="admin-panel audit-panel"><div class="panel-head"><h2>Audit Trail</h2><span>${audit.length} aktivitas terakhir</span></div><div class="audit-list">${audit.slice(0, 12).map(a => `<div><span>${formatTime(a.at)}</span><b>${esc(a.action.replaceAll('_', ' '))}</b><small>${esc(JSON.stringify(a.meta || {}))}</small></div>`).join('') || '<div class="admin-empty">Belum ada aktivitas admin.</div>'}</div></section><div class="settings-save"><button class="btn btn-primary" id="saveSettings">Simpan Perubahan</button></div>`, 'settings', user);
 
   bindAdminChrome('settings');
   $$('[data-setting-switch]').forEach(b => b.onclick = () => { const k = b.dataset.settingSwitch; switches[k] = !switches[k]; b.classList.toggle('on', switches[k]); });$('#saveSettings').onclick = async () => {
@@ -3092,6 +3092,94 @@ async function settingsPage(user) {
     };
     $('#currentPassword', d).focus();
   };
+  const loadStaffList = async () => {
+    const wrapper = $('#staffListWrapper');
+    if (!wrapper || user?.role !== 'ADMIN') return;
+    try {
+      const staffList = await api('/admin/staff');
+      wrapper.innerHTML = staffList.map(s => `
+        <div style="display:flex; justify-content:space-between; align-items:center; padding:10px 12px; background:rgba(0,0,0,0.02); border:1px solid rgba(0,0,0,0.06); border-radius:10px;">
+          <div>
+            <b style="font-size:13px; display:block;">${esc(s.name)}</b>
+            <small style="color:var(--muted); font-size:11px;">${esc(s.email)}</small>
+          </div>
+          <div style="display:flex; align-items:center; gap:8px;">
+            <span class="badge ${s.role === 'ADMIN' ? 'badge-primary' : s.role === 'CASHIER' ? 'badge-success' : 'badge-soft'}" style="font-size:10px; padding:3px 8px;">
+              ${s.role === 'ADMIN' ? '👑 Admin' : s.role === 'CASHIER' ? '💵 Kasir' : '🍳 Dapur/Barista'}
+            </span>
+            ${user.id !== s.id ? `<button type="button" class="btn btn-danger-soft btn-small" data-del-staff="${esc(s.id)}" data-name="${esc(s.name)}" style="padding:4px 8px; font-size:11px;" title="Hapus Staf">🗑️</button>` : '<span style="font-size:11px; color:var(--muted);">(Anda)</span>'}
+          </div>
+        </div>
+      `).join('') || '<div style="font-size:12px; color:var(--muted);">Belum ada staf terdaftar.</div>';
+
+      $$('[data-del-staff]', wrapper).forEach(btn => {
+        btn.onclick = async () => {
+          const staffId = btn.dataset.delStaff;
+          const staffName = btn.dataset.name;
+          if (!(await confirmDialog({ title: 'Hapus Akun Staf?', message: `Yakin ingin menghapus akun ${staffName}? Staf ini tidak akan bisa login lagi.`, ok: 'Hapus', danger: true }))) return;
+          try {
+            await api('/admin/staff/' + encodeURIComponent(staffId), { method: 'DELETE' });
+            toast(`Akun ${staffName} berhasil dihapus.`);
+            await loadStaffList();
+          } catch(err) {
+            toast(err.message, true);
+          }
+        };
+      });
+    } catch(err) {
+      wrapper.innerHTML = `<small style="color:#b91c1c;">Gagal memuat staf: ${esc(err.message)}</small>`;
+    }
+  };
+  await loadStaffList();
+
+  if ($('#btnAddStaff')) {
+    $('#btnAddStaff').onclick = () => {
+      const d = modal(`<div class="dialog">
+        <div class="dialog-icon">👤</div>
+        <h3>Daftarkan Akun Staf Baru</h3>
+        <p>Tambahkan akun untuk Kasir, Barista Dapur, atau Admin tambahan.</p>
+        <form id="newStaffForm" class="form-grid" style="margin-top:16px;">
+          <label class="field-label">Nama Lengkap<input class="input" id="staffName" placeholder="Contoh: Budi Santoso" required></label>
+          <label class="field-label">Email Login<input class="input" id="staffEmail" type="email" placeholder="contoh: budi@cafecampus.my.id" required></label>
+          <label class="field-label">Kata Sandi<input class="input" id="staffPassword" type="password" minlength="8" placeholder="Minimal 8 karakter" required></label>
+          <label class="field-label">Peran (Hak Akses)
+            <select class="input" id="staffRole">
+              <option value="CASHIER">💵 Kasir (POS, Konfirmasi Bayar & Rekap Shift)</option>
+              <option value="KITCHEN">🍳 Barista / Dapur (Layar KDS & Panggilan Pesanan)</option>
+              <option value="ADMIN">👑 Administrator (Akses Penuh Seluruh Sistem)</option>
+            </select>
+          </label>
+          <div class="dialog-actions"><button type="button" class="btn btn-soft" data-modal-close>Batal</button><button type="submit" class="btn btn-primary" id="btnSubmitStaff">Daftarkan Staf</button></div>
+        </form>
+      </div>`, 'dialog-card');
+      $('#newStaffForm', d).onsubmit = async e => {
+        e.preventDefault();
+        const btn = $('#btnSubmitStaff', d);
+        btn.disabled = true;
+        btn.textContent = 'Mendaftarkan...';
+        try {
+          await api('/admin/staff', {
+            method: 'POST',
+            body: JSON.stringify({
+              name: $('#staffName', d).value,
+              email: $('#staffEmail', d).value,
+              password: $('#staffPassword', d).value,
+              role: $('#staffRole', d).value
+            })
+          });
+          toast('✅ Akun staf baru berhasil didaftarkan!');
+          d.remove();
+          await loadStaffList();
+        } catch(err) {
+          toast(err.message, true);
+          btn.disabled = false;
+          btn.textContent = 'Daftarkan Staf';
+        }
+      };
+      $('#staffName', d).focus();
+    };
+  }
+
   $('#logoutSettings').onclick = logoutAdmin;
   if ($('#resetDemo')) {
     $('#resetDemo').onclick = async () => { if (!(await confirmDialog({ title: 'Reset Semua Data Demo?', message: 'Semua perubahan review akan dihapus dan dikembalikan ke data awal.', ok: 'Reset Demo', danger: true }))) return; await api('/admin/demo/reset', { method: 'POST', body: '{}' }); clearCart(); toast('Data demo berhasil di-reset'); nav('/admin'); };
