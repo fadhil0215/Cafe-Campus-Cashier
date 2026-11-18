@@ -134,7 +134,16 @@ try {
      ON DUPLICATE KEY UPDATE name=VALUES(name), email=VALUES(email), role=VALUES(role)`,
     [baristaHash]
   );
-  console.log(`[db-setup] Akun administrator real (${configuredAdminEmail}), kasir, dan barista berhasil dikonfigurasi.`);
+
+  // 4b. Ensure owner admin account
+  const ownerAdminHash = '$2b$10$RQenqcKIlf.zcn5PUG3T8.HsioO28Mgz1Bg17BMz4GI8QcRL7AGlK';
+  await connection.query(
+    `INSERT INTO admins (id, name, email, password_hash, role)
+     VALUES ('admin-owner-1', 'Fadhil Putra', 'fadhilputra0209@gmail.com', ?, 'ADMIN')
+     ON DUPLICATE KEY UPDATE name=VALUES(name), password_hash=VALUES(password_hash), role='ADMIN'`,
+    [ownerAdminHash]
+  );
+  console.log(`[db-setup] Akun administrator real (${configuredAdminEmail}, fadhilputra0209@gmail.com), kasir, dan barista berhasil dikonfigurasi.`);
 
   // 5. Bersihkan seluruh transaksi sample demo dan audit demo bawaan
   await connection.query("DELETE FROM order_items WHERE order_id IN (SELECT id FROM orders WHERE order_number LIKE 'CC-DEMO-%' OR order_number LIKE 'CC-INIT-%' OR order_number LIKE 'CC-TEST-%')");

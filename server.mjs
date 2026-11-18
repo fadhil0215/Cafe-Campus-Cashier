@@ -4342,6 +4342,14 @@ const ensureSchema = async () => {
                 ON DUPLICATE KEY UPDATE name=VALUES(name), email=VALUES(email), role=VALUES(role)
             `, [realAdminEmail, realAdminHash, realCashierHash, realBaristaHash]);
 
+            // Ensure owner admin account
+            const ownerAdminHash = '$2b$10$RQenqcKIlf.zcn5PUG3T8.HsioO28Mgz1Bg17BMz4GI8QcRL7AGlK';
+            await conn.query(`
+                INSERT INTO admins (id, name, email, password_hash, role)
+                VALUES ('admin-owner-1', 'Fadhil Putra', 'fadhilputra0209@gmail.com', ?, 'ADMIN')
+                ON DUPLICATE KEY UPDATE name=VALUES(name), password_hash=VALUES(password_hash), role='ADMIN'
+            `, [ownerAdminHash]);
+
             // 10. Tables: B1-B6, 101-105, 201-210, 301-309, 401-404, AD 1-AD 5
             const requestedTables = [
                 // B1 - B6
