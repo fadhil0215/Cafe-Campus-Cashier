@@ -368,11 +368,20 @@ CREATE TABLE `orders` (
   `voided_at` timestamp NULL DEFAULT NULL,
   `receipt_printed` tinyint(1) NOT NULL DEFAULT '0',
   `receipt_printed_at` timestamp NULL DEFAULT NULL,
+  `payment_proof_url` mediumtext DEFAULT NULL,
+  `payment_receipt_rrn` varchar(100) DEFAULT NULL,
+  `payment_unique_code` int NOT NULL DEFAULT '0',
+  `payment_verified_by` varchar(50) DEFAULT NULL,
+  `payment_verified_at` timestamp NULL DEFAULT NULL,
+  `payment_ai_status` varchar(50) DEFAULT NULL,
+  `payment_ai_analysis` json DEFAULT NULL,
+  `payment_rejection_reason` text,
   PRIMARY KEY (`id`),
   UNIQUE KEY `order_number` (`order_number`),
   UNIQUE KEY `idempotency_key` (`idempotency_key`),
   KEY `idx_orders_parent` (`parent_order_number`),
-  KEY `idx_orders_created` (`created_at`)
+  KEY `idx_orders_created` (`created_at`),
+  KEY `idx_orders_payment_rrn` (`payment_receipt_rrn`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- --------------------------------------------------------

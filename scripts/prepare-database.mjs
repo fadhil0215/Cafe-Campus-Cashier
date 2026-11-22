@@ -69,6 +69,14 @@ try {
     ['receipt_printed', 'ALTER TABLE orders ADD COLUMN receipt_printed TINYINT(1) NOT NULL DEFAULT 0'],
     ['receipt_printed_at', 'ALTER TABLE orders ADD COLUMN receipt_printed_at TIMESTAMP NULL DEFAULT NULL'],
     ['student_face_url', 'ALTER TABLE orders ADD COLUMN student_face_url MEDIUMTEXT NULL DEFAULT NULL'],
+    ['payment_proof_url', 'ALTER TABLE orders ADD COLUMN payment_proof_url MEDIUMTEXT NULL DEFAULT NULL'],
+    ['payment_receipt_rrn', 'ALTER TABLE orders ADD COLUMN payment_receipt_rrn VARCHAR(100) NULL DEFAULT NULL'],
+    ['payment_unique_code', 'ALTER TABLE orders ADD COLUMN payment_unique_code INT NOT NULL DEFAULT 0'],
+    ['payment_verified_by', 'ALTER TABLE orders ADD COLUMN payment_verified_by VARCHAR(50) NULL DEFAULT NULL'],
+    ['payment_verified_at', 'ALTER TABLE orders ADD COLUMN payment_verified_at TIMESTAMP NULL DEFAULT NULL'],
+    ['payment_ai_status', 'ALTER TABLE orders ADD COLUMN payment_ai_status VARCHAR(50) NULL DEFAULT NULL'],
+    ['payment_ai_analysis', 'ALTER TABLE orders ADD COLUMN payment_ai_analysis JSON NULL DEFAULT NULL'],
+    ['payment_rejection_reason', 'ALTER TABLE orders ADD COLUMN payment_rejection_reason TEXT NULL DEFAULT NULL'],
   ];
   for (const [columnName, alterSql] of receiptColumns) {
     const [rows] = await connection.query(
@@ -80,6 +88,10 @@ try {
   }
   await connection.query('ALTER TABLE orders MODIFY COLUMN student_photo_url MEDIUMTEXT NULL DEFAULT NULL').catch(() => {});
   await connection.query('ALTER TABLE orders MODIFY COLUMN student_face_url MEDIUMTEXT NULL DEFAULT NULL').catch(() => {});
+  const [qrisRrnIdx] = await connection.query("SHOW INDEX FROM orders WHERE Key_name = 'idx_orders_payment_rrn'");
+  if (!qrisRrnIdx.length) {
+    await connection.query('CREATE INDEX idx_orders_payment_rrn ON orders (payment_receipt_rrn)').catch(() => {});
+  }
 
   // Safe migration for settings.gemini_api_key
   const [geminiColRows] = await connection.query(

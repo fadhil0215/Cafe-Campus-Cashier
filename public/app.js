@@ -1063,7 +1063,21 @@ function customerHeader(tableName = '') {
 
 function customerShell(content, { tableName = '', className = '' } = {}) { return `<div class="customer-app ${className}">${customerHeader(tableName)}${content}${baristaAiLauncherHtml()}</div>`; }
 function statusBadge(st) { const m = statusMeta[st] || { label: st, class: '' }; return `<span class="status-badge ${m.class}"><i class="status-dot"></i>${m.label}</span>`; }
-function paymentBadge(o) { const paid = o.payment?.status === 'PAID'; const method = o.payment?.method === 'QRIS_DEMO' ? 'QRIS' : 'Tunai'; return `<div class="payment-cell"><span class="payment-badge ${o.payment?.method === 'QRIS_DEMO' ? 'qris' : 'cash'}">${method}</span><span class="pay-status-pill ${paid ? 'paid' : 'pending'}"><i class="pay-dot"></i>${paid ? 'Lunas' : 'Pending'}</span></div>`; }
+function paymentBadge(o) {
+  const paid = o.payment?.status === 'PAID';
+  const isQris = o.payment?.method === 'QRIS' || o.payment?.method === 'QRIS_DEMO';
+  const method = isQris ? 'QRIS' : 'Tunai';
+  let proofTag = '';
+  if (isQris && !paid) {
+    if (o.payment?.proofUrl) {
+      const isOk = o.payment.aiStatus === 'VERIFIED';
+      proofTag = `<span class="pay-proof-tag ${isOk ? 'ok' : 'warn'}" title="Bukti Transfer QRIS">${isOk ? 'AI Sah ✅' : 'Cek Bukti ⚠️'}</span>`;
+    } else {
+      proofTag = `<span class="pay-proof-tag wait" title="Menunggu unggah bukti">Tunggu Bukti ⏳</span>`;
+    }
+  }
+  return `<div class="payment-cell"><span class="payment-badge ${isQris ? 'qris' : 'cash'}">${method}</span><span class="pay-status-pill ${paid ? 'paid' : 'pending'}"><i class="pay-dot"></i>${paid ? 'Lunas' : 'Pending'}</span>${proofTag}</div>`;
+}
 
 function adminLinks() {
   return [
@@ -1918,7 +1932,7 @@ async function checkoutPage() {
   });
   const hasUnavailableItem = c.items.some(i => i.isAvailable === false);
 
-  let method = settings.qrisEnabled !== false ? 'QRIS_DEMO' : 'CASH';
+  let method = settings.qrisEnabled !== false ? 'QRIS' : 'CASH';
   const idemKey = 'cc_demo_checkout_idem_v6';
   let idem = sessionStorage.getItem(idemKey) || genUUID(); sessionStorage.setItem(idemKey, idem);
 
@@ -2041,7 +2055,7 @@ async function checkoutPage() {
         <div><b>Anti-Sybil Quota:</b> Diskon pelajar dibatasi maksimal 1 pesanan per hari per identitas (NIM/KTM) untuk mencegah penyalahgunaan.</div>
       </div>
     </div>
-  ` : ''}<div class="checkout-order-card"><div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;"><h3 style="margin:0;">Ringkasan Pesanan (${esc(c.tableName || 'Meja')})</h3><span class="${isStud ? 'badge-role-student' : 'badge-role-regular'}">${isStud ? '🎓 Pelajar' : '☕ Umum'}</span></div>${c.items.map(i => `<div class="checkout-item"><div><b>${i.quantity}x ${esc(i.name)}</b>${i.isAvailable === false ? '<span class="badge-soldout-chip" style="display:inline-block;margin-left:6px;">⚠️ Habis</span>' : ''}<small>${esc(optionSummary(i))}</small>${i.savings ? `<small style="color:#2c8b5b;display:block;font-weight:700;">Hemat ${money(i.savings)}</small>` : ''}</div><strong>${money(i.price * i.quantity)}</strong></div>`).join('')}<div class="payment-summary compact">${savings > 0 ? `<div><span>Subtotal Reguler</span><span style="text-decoration:line-through;color:var(--muted);">${money(regSub)}</span></div><div class="student-savings-row"><span>🎉 Subsidi Harga Pelajar</span><strong>- ${money(savings)}</strong></div>` : ''}<div><span>Subtotal</span><b>${money(sub)}</b></div>${fee ? `<div><span>Biaya Layanan (${settings.serviceFee}%)</span><b>${money(fee)}</b></div>` : ''}${tax ? `<div><span>Pajak (${settings.taxPercent}%)</span><b>${money(tax)}</b></div>` : ''}<hr><div class="summary-total"><span>Total Pembayaran</span><strong>${money(total)}</strong></div></div></div></section><section class="payment-methods"><h3>Pilih Metode Pembayaran</h3><div id="paymentChoiceList">${settings.qrisEnabled !== false ? `<button type="button" class="payment-choice ${method === 'QRIS_DEMO' ? 'selected' : ''}" data-pay="QRIS_DEMO"><div class="payment-choice-icon qris-icon">QR</div><div><b>QRIS</b><span>Bayar instan via BCA, GoPay, OVO, ShopeePay</span></div><i></i></button>` : ''}${settings.cashEnabled !== false ? `<button type="button" class="payment-choice ${method === 'CASH' ? 'selected' : ''}" data-pay="CASH"><div class="payment-choice-icon">${icon('cart', 19)}</div><div><b>Bayar di Kasir (Tunai)</b><span>Lakukan pembayaran langsung ke meja kasir</span></div><i></i></button>` : ''}</div><div class="demo-payment-note" style="font-size:12px;color:var(--muted);background:rgba(0,0,0,0.03);padding:10px 14px;border-radius:10px;margin-top:10px;line-height:1.5;">ℹ️ Pembayaran QRIS mendukung seluruh aplikasi Mobile Banking (BCA, Mandiri, BRI, BNI) &amp; Dompet Digital (GoPay, OVO, ShopeePay, DANA).</div><button id="place" class="btn btn-primary btn-wide btn-large" ${hasUnavailableItem ? 'disabled style="opacity:0.6;cursor:not-allowed;"' : ''}>${hasUnavailableItem ? 'Menu Habis — Cek Keranjang' : `Konfirmasi Pesanan • ${money(total)}`}</button></section></div></main>`, { tableName: c.tableName, className: 'simple-shell' });
+  ` : ''}<div class="checkout-order-card"><div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;"><h3 style="margin:0;">Ringkasan Pesanan (${esc(c.tableName || 'Meja')})</h3><span class="${isStud ? 'badge-role-student' : 'badge-role-regular'}">${isStud ? '🎓 Pelajar' : '☕ Umum'}</span></div>${c.items.map(i => `<div class="checkout-item"><div><b>${i.quantity}x ${esc(i.name)}</b>${i.isAvailable === false ? '<span class="badge-soldout-chip" style="display:inline-block;margin-left:6px;">⚠️ Habis</span>' : ''}<small>${esc(optionSummary(i))}</small>${i.savings ? `<small style="color:#2c8b5b;display:block;font-weight:700;">Hemat ${money(i.savings)}</small>` : ''}</div><strong>${money(i.price * i.quantity)}</strong></div>`).join('')}<div class="payment-summary compact">${savings > 0 ? `<div><span>Subtotal Reguler</span><span style="text-decoration:line-through;color:var(--muted);">${money(regSub)}</span></div><div class="student-savings-row"><span>🎉 Subsidi Harga Pelajar</span><strong>- ${money(savings)}</strong></div>` : ''}<div><span>Subtotal</span><b>${money(sub)}</b></div>${fee ? `<div><span>Biaya Layanan (${settings.serviceFee}%)</span><b>${money(fee)}</b></div>` : ''}${tax ? `<div><span>Pajak (${settings.taxPercent}%)</span><b>${money(tax)}</b></div>` : ''}<hr><div class="summary-total"><span>Total Pembayaran</span><strong>${money(total)}</strong></div></div></div></section><section class="payment-methods"><h3>Pilih Metode Pembayaran</h3><div id="paymentChoiceList">${settings.qrisEnabled !== false ? `<button type="button" class="payment-choice ${method === 'QRIS' || method === 'QRIS_DEMO' ? 'selected' : ''}" data-pay="QRIS"><div class="payment-choice-icon qris-icon">QR</div><div><b>QRIS Instan (Wisata Niaga Campus)</b><span>Scan &amp; Upload Bukti via BCA, Mandiri, BRI, BNI, GoPay, OVO, ShopeePay, DANA, bale by BTN</span></div><i></i></button>` : ''}${settings.cashEnabled !== false ? `<button type="button" class="payment-choice ${method === 'CASH' ? 'selected' : ''}" data-pay="CASH"><div class="payment-choice-icon">${icon('cart', 19)}</div><div><b>Bayar di Kasir (Tunai)</b><span>Lakukan pembayaran langsung ke kasir sebelum atau sesudah pesanan siap</span></div><i></i></button>` : ''}</div><div class="demo-payment-note" style="font-size:12px;color:var(--muted);background:rgba(0,0,0,0.03);padding:10px 14px;border-radius:10px;margin-top:10px;line-height:1.5;">🛡️ <b>Anti-Fraud &amp; Keamanan Transaksi:</b> Pembayaran QRIS terhubung ke QRIS resmi <b>WISATA NIAGA CAMPUS</b> (bale by BTN) dengan verifikasi otomatis AI Scanner &amp; audit kasir.</div><button id="place" class="btn btn-primary btn-wide btn-large" ${hasUnavailableItem ? 'disabled style="opacity:0.6;cursor:not-allowed;"' : ''}>${hasUnavailableItem ? 'Menu Habis — Cek Keranjang' : `Konfirmasi Pesanan • ${money(total)}`}</button></section></div></main>`, { tableName: c.tableName, className: 'simple-shell' });
 
   $('#back').onclick = () => nav('/cart');
   $$('[data-pay]').forEach(b => b.onclick = () => { alarm.unlock(); method = b.dataset.pay; $$('[data-pay]').forEach(x => x.classList.toggle('selected', x.dataset.pay === method)); });
@@ -2480,7 +2494,145 @@ async function trackPage(orderNumber) {
   const renderTrackingCardContent = () => {
     const waiting = o.payment?.status !== 'PAID';
     if (o.status === 'CANCELLED') return `<section class="cancelled-card"><h2>Pesanan Dibatalkan</h2><p>Pesanan ini sudah ditutup. Silakan hubungi staff jika membutuhkan bantuan.</p></section>`;
-    return `<section class="tracking-card" id="trackingCardInner">${waiting ? `<div class="payment-wait"><div>${o.payment?.method === 'QRIS_DEMO' || o.payment?.method === 'QRIS' ? 'QR' : '$'}</div><div><b>${o.payment?.method === 'QRIS_DEMO' || o.payment?.method === 'QRIS' ? 'Menunggu Pembayaran QRIS' : 'Menunggu Pembayaran di Kasir'}</b><span>${o.payment?.method === 'QRIS_DEMO' || o.payment?.method === 'QRIS' ? 'Silakan scan kode QRIS menggunakan M-Banking atau E-Wallet Anda.' : 'Silakan lakukan pembayaran tunai/debit ke meja kasir.'}</span></div></div>${o.payment?.method === 'QRIS' || o.payment?.method === 'QRIS_DEMO' ? `<div class="qris-demo-box">${o.payment?.qrisUrl ? `<img src="${o.payment.qrisUrl}" alt="QRIS Code" style="width:200px; height:200px; border-radius:12px; margin: 0 auto; display:block;">` : `<div class="fake-qr">${icon('qr', 84)}</div>`}<p>Scan QRIS ini dengan M-Banking atau E-Wallet (GoPay, OVO, ShopeePay, Dana, dll) • <b>${money(o.total)}</b></p><div class="loader-pulse" style="font-size:12px; color:var(--muted); margin-top:8px;">Menunggu konfirmasi pembayaran...</div></div>` : ''}` : trackingTimeline(o)}</section>`;
+    if (!waiting) return `<section class="tracking-card" id="trackingCardInner">${trackingTimeline(o)}</section>`;
+
+    const isQris = o.payment?.method === 'QRIS' || o.payment?.method === 'QRIS_DEMO';
+    if (isQris) {
+      const hasProof = Boolean(o.payment?.proofUrl);
+      const isRejected = o.payment?.aiStatus === 'REJECTED';
+      const isVerified = o.payment?.aiStatus === 'VERIFIED';
+      const isSuspicious = o.payment?.aiStatus === 'SUSPICIOUS';
+
+      return `<section class="tracking-card qris-card-wrap" id="trackingCardInner">
+        <div class="qris-card-banner">
+          <div class="qris-brand-left">
+            <span class="qris-badge-mark">QRIS</span>
+            <div>
+              <b style="display:block;font-size:15px;color:#0f172a;">${esc(o.payment?.merchantName || 'WISATA NIAGA CAMPUS')}</b>
+              <small style="color:#64748b;font-size:11px;">NMID: ${esc(o.payment?.nmid || 'ID2024361872201')} • bale by BTN (GPN)</small>
+            </div>
+          </div>
+          <span class="qris-gpn-pill">ASPI • GPN</span>
+        </div>
+
+        <div class="qris-main-box">
+          <div class="qris-qr-frame">
+            <img src="/qr/merchant-qris.svg" alt="QRIS Wisata Niaga Campus" class="qris-barcode-img">
+            <div class="qris-scan-caption">SCAN DENGAN M-BANKING / E-WALLET</div>
+          </div>
+
+          <div class="qris-amount-card">
+            <small class="amount-tag-label">TOTAL TRANSFER TEPAT</small>
+            <div class="amount-val-row">
+              <strong class="amount-big-num">${money(o.total)}</strong>
+              <button type="button" class="btn-copy-chip" id="btnCopyNominal" title="Salin Nominal">
+                📋 Salin
+              </button>
+            </div>
+            ${o.payment?.uniqueCode ? `
+              <div class="unique-code-notice">
+                <span>🛡️</span>
+                <div>Termasuk 3 digit kode unik verifikasi: <b>+${o.payment.uniqueCode}</b> (Wajib transfer tepat persis agar terverifikasi otomatis)</div>
+              </div>
+            ` : ''}
+          </div>
+        </div>
+
+        <!-- Bagian Unggah Bukti Pembayaran -->
+        <div class="qris-proof-upload-panel">
+          ${isRejected ? `
+            <div class="proof-alert-box rejected">
+              <span style="font-size:24px;">⚠️</span>
+              <div>
+                <b>Bukti Pembayaran Ditolak Kasir</b>
+                <p>${esc(o.payment?.rejectionReason || 'Bukti transfer tidak sesuai nominal atau mutasi rekening belum masuk.')}</p>
+                <small>Silakan ambil atau upload ulang screenshot bukti transfer yang sah di bawah ini.</small>
+              </div>
+            </div>
+          ` : ''}
+
+          ${hasProof && !isRejected ? `
+            <div class="proof-active-card ${isVerified ? 'verified' : (isSuspicious ? 'suspicious' : 'pending')}">
+              <div class="proof-card-top">
+                <span class="proof-pill ${isVerified ? 'verified' : (isSuspicious ? 'suspicious' : 'pending')}">
+                  ${isVerified ? '✅ Bukti Terverifikasi AI (Sah)' : (isSuspicious ? '⚠️ Menunggu Validasi Kasir' : '⏳ Bukti Terkirim')}
+                </span>
+                <span class="proof-step-info">Menunggu Konfirmasi Kasir</span>
+              </div>
+
+              <div class="proof-preview-body">
+                <a href="${esc(o.payment.proofUrl)}" target="_blank" class="proof-img-box" title="Klik untuk memperbesar struk">
+                  <img src="${esc(o.payment.proofUrl)}" alt="Bukti Transfer">
+                  <span class="proof-zoom-label">🔍 Lihat Struk</span>
+                </a>
+                <div class="proof-text-info">
+                  <div><span>Nomor RRN/Ref:</span> <b>${esc(o.payment.receiptRrn || 'Terdeteksi')}</b></div>
+                  <div><span>Status Kasir:</span> <b style="color:#b45309;">⏳ Menunggu Audit</b></div>
+                  <small style="color:#64748b;display:block;margin-top:4px;">Struk sudah masuk antrean kasir. Layar ini akan otomatis beralih setelah kasir mengonfirmasi.</small>
+                </div>
+              </div>
+
+              <div class="proof-card-foot">
+                <button type="button" class="btn btn-soft btn-small btn-wide" id="btnReuploadProof">
+                  🔄 Upload Ulang Bukti Jika Salah
+                </button>
+              </div>
+            </div>
+          ` : `
+            <div class="proof-upload-guide">
+              <div class="guide-title">
+                <span style="font-size:20px;">📸</span>
+                <div>
+                  <b>Upload Bukti Transfer / Screenshot</b>
+                  <p>Setelah melakukan scan dan bayar di aplikasi Bank/E-Wallet, unggah screenshot bukti bayar Anda untuk diverifikasi oleh sistem Anti-Fraud Cafe Campus.</p>
+                </div>
+              </div>
+
+              <button type="button" class="btn btn-primary btn-wide btn-large" id="btnUploadProofAction">
+                📸 Ambil Foto / Pilih Screenshot Bukti Bayar
+              </button>
+              <input type="file" id="qrisProofFileInput" accept="image/*" style="display:none;">
+
+              <div class="supported-banks-strip">
+                <small>Mendukung:</small>
+                <span>BCA</span> • <span>Mandiri</span> • <span>BRI</span> • <span>BNI</span> • <span>GoPay</span> • <span>OVO</span> • <span>ShopeePay</span> • <span>DANA</span> • <span>bale by BTN</span>
+              </div>
+            </div>
+          `}
+
+          <!-- Scanning HUD Animation -->
+          <div class="qris-scan-hud" id="qrisScanningHud" style="display:none;">
+            <div class="laser-scanner"></div>
+            <div class="scan-hud-body">
+              <div class="spinner"></div>
+              <b>⚡ Google Gemini AI sedang memverifikasi keaslian struk...</b>
+              <small>Menganalisis kecocokan nama merchant WISATA NIAGA CAMPUS, nominal, dan nomor referensi RRN.</small>
+            </div>
+          </div>
+        </div>
+      </section>`;
+    }
+
+    // CASH
+    return `<section class="tracking-card cash-tracking-card" id="trackingCardInner">
+      <div class="cash-card-content">
+        <div class="cash-icon-circle">${icon('cart', 40)}</div>
+        <h2>Menunggu Pembayaran di Meja Kasir</h2>
+        <p>Silakan menuju ke meja kasir dan sebutkan nomor pesanan atau meja Anda:</p>
+        <div class="cash-ticket-box">
+          <small>KODE PESANAN / MEJA</small>
+          <strong>#${esc(o.orderNumber)} (${esc(o.tableName)})</strong>
+        </div>
+        <div class="cash-total-display">
+          <span>Total Tagihan Tunai:</span>
+          <b>${money(o.total)}</b>
+        </div>
+        <div class="cash-instruction-note">
+          <span>💡</span>
+          <div>Setelah kasir menerima pembayaran tunai Anda, layar ini akan otomatis berdering dan pesanan Anda langsung diracik oleh barista.</div>
+        </div>
+      </div>
+    </section>`;
   };
 
   const renderTrackShell = () => {
@@ -2504,7 +2656,7 @@ async function trackPage(orderNumber) {
         </div>`;
 
     document.body.innerHTML = customerShell(`<main class="tracking-page"><div class="tracking-top"><span>STATUS PESANAN</span><div style="display:flex;justify-content:space-between;align-items:flex-start;gap:12px;width:100%;"><div><h1>Pesanan #${esc(o.orderNumber)}</h1><em id="estMinutesText">Estimasi ${o.estimatedMinutes || 10} Mnt</em></div><div class="queue-num-chip"><small>ANTREAN</small><strong>#${esc(o.queueNumber || 'Q-001')}</strong></div></div></div>${buzzerCardHtml}<div class="stay-alert-strip" style="background:#fffbeb;border:1px solid #fde68a;border-radius:12px;padding:12px 14px;margin-bottom:12px;display:flex;align-items:flex-start;gap:10px;"><span style="font-size:20px;line-height:1.1;">⚠️</span><div style="flex:1;font-size:12.5px;color:#92400e;line-height:1.4;"><strong style="display:block;margin-bottom:2px;font-size:13px;color:#78350f;">PENTING: Jangan Tutup Halaman Ini</strong>Biarkan tab ini tetap terbuka agar alarm dering &amp; getar pesanan siap bisa langsung berbunyi di HP Anda saat barista memanggil.</div></div>${o.studentInfo ? `<div class="track-verify-card ${o.studentInfo.verificationStatus === 'AUTOMATICALLY_VERIFIED' || o.studentInfo.verificationStatus === 'VERIFIED' ? 'verified' : (o.studentInfo.verificationStatus === 'REJECTED' ? 'rejected' : 'pending')}"><div style="font-size:22px;">${o.studentInfo.verificationStatus === 'AUTOMATICALLY_VERIFIED' || o.studentInfo.verificationStatus === 'VERIFIED' ? '✅' : (o.studentInfo.verificationStatus === 'REJECTED' ? '⚠️' : '⏳')}</div><div style="flex:1;"><b style="font-size:12.5px;display:block;">${o.studentInfo.verificationStatus === 'AUTOMATICALLY_VERIFIED' ? 'Identitas Pelajar Terverifikasi Sah (AI Radar)' : (o.studentInfo.verificationStatus === 'VERIFIED' ? 'Verifikasi Kartu Pelajar Disetujui Kasir' : (o.studentInfo.verificationStatus === 'REJECTED' ? 'Verifikasi Pelajar Ditolak: Kembali ke Harga Reguler' : 'Menunggu Validasi Selfie KTM oleh Kasir'))}</b><small style="display:block;margin-top:2px;font-size:11px;">${o.studentInfo.verificationStatus === 'AUTOMATICALLY_VERIFIED' ? `Identitas mahasiswa ${esc(o.studentInfo.campus)} dan domain kampus lolos validasi otomatis.` : (o.studentInfo.verificationStatus === 'VERIFIED' ? `Identitas mahasiswa ${esc(o.studentInfo.campus)} telah diverifikasi sah oleh kasir.` : (o.studentInfo.verificationStatus === 'REJECTED' ? `Alasan: ${esc(o.studentInfo.rejectionReason || 'Foto KTM tidak sesuai')}. Seluruh harga item otomatis disesuaikan ke tarif normal tanpa reload.` : 'Kasir akan memverifikasi foto selfie KTM Anda saat memproses pesanan.'))}</small>${o.studentInfo ? `<button type="button" class="btn btn-soft btn-small" id="btnViewDigitalKtm" style="margin-top:8px;">🪪 Tampilkan Kartu Mahasiswa Digital (KTM)</button>` : ''}</div></div>` : ''}<div id="trackingCardWrapper">${renderTrackingCardContent()}</div><section class="tracking-summary" id="trackingSummarySection"><h3>Rincian Pesanan</h3>${o.items.map(i => `<div><span>${esc(i.productName)} x${i.quantity}<small>${esc(optionSummary(i))}</small></span><b>${money(i.lineTotal)}</b></div>`).join('')}<hr><div><span>Nomor Meja</span><b>${esc(o.tableName)}</b></div><div><span>Metode Pembayaran</span><b id="paymentStatusBadge">${o.payment.method === 'QRIS_DEMO' || o.payment.method === 'QRIS' ? 'QRIS' : 'Bayar di Kasir'} ${o.payment.status === 'PAID' ? '(Lunas)' : '(Pending)'}</b></div><div class="tracking-total"><span>Total Bayar</span><strong id="trackGrandTotal">${money(o.total)}</strong></div></section><div id="trackAddonsWrapper">${trackAddonsSection(o, access)}</div></main>`, { tableName: o.tableName, className: 'simple-shell' });
-    bindPayButton(); bindAddOrderButton(); bindBuzzerButton();
+    bindPayButton(); bindAddOrderButton(); bindBuzzerButton(); bindQrisProofEvents();
     const btnKtm = $('#btnViewDigitalKtm');
     if (btnKtm) btnKtm.onclick = () => openDigitalKtmModal(o.studentInfo);
     checkStayAlertModal();
@@ -2596,6 +2748,50 @@ async function trackPage(orderNumber) {
     };
   };
 
+  const bindQrisProofEvents = () => {
+    const copyBtn = $('#btnCopyNominal');
+    if (copyBtn) {
+      copyBtn.onclick = () => {
+        if (navigator.clipboard) {
+          navigator.clipboard.writeText(String(o.total));
+          toast('✅ Nominal Rp ' + o.total.toLocaleString('id-ID') + ' disalin!');
+        } else {
+          toast('Nominal: Rp ' + o.total.toLocaleString('id-ID'));
+        }
+      };
+    }
+
+    const btnUpload = $('#btnUploadProofAction');
+    const btnReupload = $('#btnReuploadProof');
+    const fileInput = $('#qrisProofFileInput');
+    const hud = $('#qrisScanningHud');
+
+    const triggerFile = () => fileInput && fileInput.click();
+    if (btnUpload) btnUpload.onclick = triggerFile;
+    if (btnReupload) btnReupload.onclick = triggerFile;
+
+    if (fileInput) {
+      fileInput.onchange = async (e) => {
+        const file = e.target.files?.[0];
+        if (!file) return;
+        try {
+          if (hud) hud.style.display = 'block';
+          const compressed = await compressImage(file, 1000, 0.88);
+          const res = await api('/orders/' + encodeURIComponent(orderNumber) + '/payment-proof', {
+            method: 'POST',
+            body: JSON.stringify({ accessToken: access, proofImage: compressed })
+          });
+          if (hud) hud.style.display = 'none';
+          toast(res.message || '✅ Bukti transfer berhasil diunggah!');
+          await refresh();
+        } catch (err) {
+          if (hud) hud.style.display = 'none';
+          toast(err.message, true);
+        }
+      };
+    }
+  };
+
   const bindPayButton = () => {
     const pay = $('#demoPay');
     if (pay) pay.onclick = async () => {
@@ -2622,7 +2818,7 @@ async function trackPage(orderNumber) {
     if (o.status === 'COMPLETED') return renderCompletedScreen();
     if (currentScreenMode !== 'track') return renderTrackShell();
 
-    const wrapper = $('#trackingCardWrapper'); if (wrapper) { wrapper.innerHTML = renderTrackingCardContent(); bindPayButton(); }
+    const wrapper = $('#trackingCardWrapper'); if (wrapper) { wrapper.innerHTML = renderTrackingCardContent(); bindPayButton(); bindQrisProofEvents(); }
     const addonsWrap = $('#trackAddonsWrapper'); if (addonsWrap && Array.isArray(o.addons)) { addonsWrap.innerHTML = trackAddonsSection(o, access); bindAddOrderButton(); }
     const badge = $('#paymentStatusBadge'); if (badge) badge.textContent = `${o.payment.method === 'QRIS_DEMO' || o.payment.method === 'QRIS' ? 'QRIS' : 'Bayar di Kasir'} ${o.payment.status === 'PAID' ? '(Lunas)' : '(Pending)'}`;
     const est = $('#estMinutesText'); if (est) est.textContent = `Estimasi ${o.estimatedMinutes || 10} Mnt`;
@@ -2735,12 +2931,17 @@ function kitchenQueueCards(orders) {
   return `<div class="queue-cards-grid">${orders.map(o => {
     const isStud = o.customerType === 'STUDENT'; const vStatus = o.studentInfo?.verificationStatus;
     const isPrinted = Boolean(o.receiptPrinted || o.receipt_printed);
-    return `<div class="queue-ticket status-border-${o.status.toLowerCase()}"><div class="ticket-head"><div><strong class="ticket-num">#${esc(o.orderNumber)}</strong>${o.parentOrderNumber ? `<small class="addon-tag">+ tambahan #${esc(o.parentOrderNumber)}</small>` : ''}<span class="ticket-table">${esc(o.tableName)}</span></div><div style="display:flex;align-items:center;gap:6px;">${o.status === 'NEW' ? (isPrinted ? '<span class="receipt-mini-badge done" title="Struk sudah dicetak">✓ Struk</span>' : '<span class="receipt-mini-badge pending" title="Wajib cetak struk kasir">⚠️ Belum Cetak</span>') : ''}${statusBadge(o.status)}</div></div>${o.status === 'NEW' ? (!isPrinted ? `<div class="ticket-receipt-strip unprinted"><span>⚠️</span> <span>Belum Cetak Struk (Wajib cetak sebelum racik)</span></div>` : `<div class="ticket-receipt-strip printed"><span>✓</span> <span>Struk Sudah Dicetak</span></div>`) : ''}${isStud ? `<div class="ticket-student-bar"><div style="display:flex;justify-content:space-between;align-items:center;"><b>🎓 ${esc(o.studentInfo?.campus || 'Mahasiswa')}</b>${vStatus === 'VERIFIED' ? '<span class="badge-verify-approved">✅ Sah</span>' : (vStatus === 'REJECTED' ? '<span class="badge-verify-rejected">⚠️ Ditolak</span>' : '<span class="badge-verify-pending">⏳ Cek KTM</span>')}</div><small>NIM: ${esc(o.studentInfo?.studentId || '-')} • ${esc(o.studentInfo?.studentName || 'Pelajar')}</small><div class="ticket-student-photo-row"><div class="ticket-mini-pair" title="Foto KTM dan Wajah Real-Time"><img src="${esc(o.studentInfo?.studentPhoto || '/assets/hero-desktop.jpg')}" title="KTM Mahasiswa" class="ticket-avatar ktm" onerror="this.onerror=null;this.src='/assets/hero-desktop.jpg'"><img src="${esc(o.studentInfo?.facePhoto || '/assets/hero-desktop.jpg')}" title="Wajah Real-Time" class="ticket-avatar face" onerror="this.onerror=null;this.src='/assets/hero-desktop.jpg'"></div><button type="button" class="btn-inspect-photo" data-inspect-photo="${esc(o.orderNumber)}">🔍 Cek KTM & Wajah</button>${vStatus !== 'VERIFIED' ? `<div class="ticket-verify-btn-group"><button type="button" class="btn-verify-approve" data-verify-student="${esc(o.orderNumber)}" data-decision="VERIFIED" title="Setujui Diskon Pelajar">✓</button><button type="button" class="btn-verify-reject" data-verify-student="${esc(o.orderNumber)}" data-decision="REJECTED" title="Tolak & Ubah ke Harga Normal">✕</button></div>` : ''}</div></div>` : ''}<div class="ticket-time"><span>🕒 ${formatTime(o.createdAt)}</span><span class="ticket-payment ${o.payment.status === 'PAID' ? 'paid' : 'pending'}">${o.payment.method === 'QRIS_DEMO' ? 'QRIS' : 'Tunai'} • ${o.payment.status === 'PAID' ? 'Lunas' : 'Belum Bayar'}</span></div><div class="ticket-items">${o.items.map(i => `<div class="ticket-item-row"><span><b>${i.quantity}x</b> ${esc(i.productName)}</span>${i.options?.size ? `<small class="ticket-mod">${esc(i.options.size)}</small>` : ''}</div>`).join('')}</div><div class="ticket-actions">${o.payment.status === 'PENDING' && o.payment.method === 'CASH' ? `<button class="btn btn-green btn-small" data-quick-pay="${esc(o.orderNumber)}">Konfirmasi Bayar</button>` : ''}${o.status === 'NEW' && o.payment.status === 'PAID' ? (!isPrinted ? `<button class="btn btn-primary btn-small btn-highlight-print" data-print-order="${esc(o.orderNumber)}">🖨️ Cetak Struk (Wajib)</button><button class="btn btn-blue btn-small" data-quick-status="${esc(o.orderNumber)}" data-next="PROCESSING" data-need-receipt="true" title="Wajib cetak struk terlebih dahulu">▶ Proses Racik 🔒</button>` : `<button class="btn btn-blue btn-small" data-quick-status="${esc(o.orderNumber)}" data-next="PROCESSING">▶ Proses Racik</button><button class="btn btn-soft btn-small" data-print-order="${esc(o.orderNumber)}" title="Cetak ulang struk">🖨️ Struk</button>`) : ''}${o.status === 'PROCESSING' ? `<button class="btn btn-primary btn-small" data-quick-status="${esc(o.orderNumber)}" data-next="READY">🔔 Siap Diambil</button><button class="btn btn-soft btn-small" data-print-order="${esc(o.orderNumber)}" title="Cetak ulang struk">🖨️</button>` : ''}${o.status === 'READY' ? `<button class="btn btn-dark btn-small" data-quick-status="${esc(o.orderNumber)}" data-next="COMPLETED">✓ Selesai</button><button class="btn btn-soft btn-small" data-print-order="${esc(o.orderNumber)}" title="Cetak ulang struk">🖨️</button>` : ''}<button class="btn btn-soft btn-small" data-view-order="${esc(o.orderNumber)}">Detail</button></div></div>`;
+    const isQris = o.payment?.method === 'QRIS' || o.payment?.method === 'QRIS_DEMO';
+    const isPaid = o.payment?.status === 'PAID';
+    const hasProof = Boolean(o.payment?.proofUrl);
+    const aiStatus = o.payment?.aiStatus;
+    return `<div class="queue-ticket status-border-${o.status.toLowerCase()}"><div class="ticket-head"><div><strong class="ticket-num">#${esc(o.orderNumber)}</strong>${o.parentOrderNumber ? `<small class="addon-tag">+ tambahan #${esc(o.parentOrderNumber)}</small>` : ''}<span class="ticket-table">${esc(o.tableName)}</span></div><div style="display:flex;align-items:center;gap:6px;">${o.status === 'NEW' ? (isPrinted ? '<span class="receipt-mini-badge done" title="Struk sudah dicetak">✓ Struk</span>' : '<span class="receipt-mini-badge pending" title="Wajib cetak struk kasir">⚠️ Belum Cetak</span>') : ''}${statusBadge(o.status)}</div></div>${o.status === 'NEW' ? (!isPrinted ? `<div class="ticket-receipt-strip unprinted"><span>⚠️</span> <span>Belum Cetak Struk (Wajib cetak sebelum racik)</span></div>` : `<div class="ticket-receipt-strip printed"><span>✓</span> <span>Struk Sudah Dicetak</span></div>`) : ''}${isStud ? `<div class="ticket-student-bar"><div style="display:flex;justify-content:space-between;align-items:center;"><b>🎓 ${esc(o.studentInfo?.campus || 'Mahasiswa')}</b>${vStatus === 'VERIFIED' ? '<span class="badge-verify-approved">✅ Sah</span>' : (vStatus === 'REJECTED' ? '<span class="badge-verify-rejected">⚠️ Ditolak</span>' : '<span class="badge-verify-pending">⏳ Cek KTM</span>')}</div><small>NIM: ${esc(o.studentInfo?.studentId || '-')} • ${esc(o.studentInfo?.studentName || 'Pelajar')}</small><div class="ticket-student-photo-row"><div class="ticket-mini-pair" title="Foto KTM dan Wajah Real-Time"><img src="${esc(o.studentInfo?.studentPhoto || '/assets/hero-desktop.jpg')}" title="KTM Mahasiswa" class="ticket-avatar ktm" onerror="this.onerror=null;this.src='/assets/hero-desktop.jpg'"><img src="${esc(o.studentInfo?.facePhoto || '/assets/hero-desktop.jpg')}" title="Wajah Real-Time" class="ticket-avatar face" onerror="this.onerror=null;this.src='/assets/hero-desktop.jpg'"></div><button type="button" class="btn-inspect-photo" data-inspect-photo="${esc(o.orderNumber)}">🔍 Cek KTM & Wajah</button>${vStatus !== 'VERIFIED' ? `<div class="ticket-verify-btn-group"><button type="button" class="btn-verify-approve" data-verify-student="${esc(o.orderNumber)}" data-decision="VERIFIED" title="Setujui Diskon Pelajar">✓</button><button type="button" class="btn-verify-reject" data-verify-student="${esc(o.orderNumber)}" data-decision="REJECTED" title="Tolak & Ubah ke Harga Normal">✕</button></div>` : ''}</div></div>` : ''}<div class="ticket-time"><span>🕒 ${formatTime(o.createdAt)}</span><span class="ticket-payment ${isPaid ? 'paid' : 'pending'}">${isQris ? 'QRIS' : 'Tunai'} • ${isPaid ? 'Lunas' : 'Belum Bayar'}</span></div><div class="ticket-items">${o.items.map(i => `<div class="ticket-item-row"><span><b>${i.quantity}x</b> ${esc(i.productName)}</span>${i.options?.size ? `<small class="ticket-mod">${esc(i.options.size)}</small>` : ''}</div>`).join('')}</div><div class="ticket-actions">${!isPaid ? (isQris ? (hasProof ? `<button class="btn btn-primary btn-small btn-audit-qris" data-audit-qris="${esc(o.orderNumber)}" title="Buka Audit Forensik QRIS">🧾 Cek Bukti (${aiStatus === 'VERIFIED' ? 'AI Sah ✅' : (aiStatus === 'SUSPICIOUS' ? '⚠️ Curiga' : '🔍 Audit')})</button>` : `<span class="badge-waiting-proof">⏳ Menunggu Bukti QRIS</span>`) : `<button class="btn btn-green btn-small" data-quick-pay="${esc(o.orderNumber)}">Konfirmasi Bayar Tunai</button>`) : ''}${o.status === 'NEW' && isPaid ? (!isPrinted ? `<button class="btn btn-primary btn-small btn-highlight-print" data-print-order="${esc(o.orderNumber)}">🖨️ Cetak Struk (Wajib)</button><button class="btn btn-blue btn-small" data-quick-status="${esc(o.orderNumber)}" data-next="PROCESSING" data-need-receipt="true" title="Wajib cetak struk terlebih dahulu">▶ Proses Racik 🔒</button>` : `<button class="btn btn-blue btn-small" data-quick-status="${esc(o.orderNumber)}" data-next="PROCESSING">▶ Proses Racik</button><button class="btn btn-soft btn-small" data-print-order="${esc(o.orderNumber)}" title="Cetak ulang struk">🖨️ Struk</button>`) : ''}${o.status === 'PROCESSING' ? `<button class="btn btn-primary btn-small" data-quick-status="${esc(o.orderNumber)}" data-next="READY">🔔 Siap Diambil</button><button class="btn btn-soft btn-small" data-print-order="${esc(o.orderNumber)}" title="Cetak ulang struk">🖨️</button>` : ''}${o.status === 'READY' ? `<button class="btn btn-dark btn-small" data-quick-status="${esc(o.orderNumber)}" data-next="COMPLETED">✓ Selesai</button><button class="btn btn-soft btn-small" data-print-order="${esc(o.orderNumber)}" title="Cetak ulang struk">🖨️</button>` : ''}<button class="btn btn-soft btn-small" data-view-order="${esc(o.orderNumber)}">Detail</button></div></div>`;
   }).join('')}</div>`;
 }
 
 function bindQueueCardActions(onUpdate) {
   $$('[data-quick-pay]').forEach(b => b.onclick = async () => { b.disabled = true; try { await api('/admin/orders/' + encodeURIComponent(b.dataset.quickPay) + '/payment', { method: 'PATCH', body: '{}' }); toast('Pembayaran kasir berhasil dikonfirmasi LUNAS'); onUpdate(); } catch (e) { toast(e.message, true); b.disabled = false; } });
+  $$('[data-audit-qris]').forEach(b => b.onclick = () => openQrisAuditModal(b.dataset.auditQris, onUpdate));
   $$('[data-print-order]').forEach(b => b.onclick = () => showOrderReceiptDialog(b.dataset.printOrder, onUpdate, false));
   $$('[data-quick-status]').forEach(b => b.onclick = async () => {
     const next = b.dataset.next;
@@ -2876,7 +3077,7 @@ async function showOrderReceiptDialog(orderNumber, onDone, autoAdvance = false) 
             <span>Waktu:</span><span>${printTime}</span>
           </div>
           <div style="display:flex;justify-content:space-between;margin-bottom:2px;">
-            <span>Metode:</span><b>${r.paymentMethod === 'QRIS_DEMO' ? 'QRIS' : 'Tunai Kasir'} (${r.paymentStatus === 'PAID' ? 'LUNAS' : 'BELUM LUNAS'})</b>
+            <span>Metode:</span><b>${(r.paymentMethod === 'QRIS' || r.paymentMethod === 'QRIS_DEMO') ? 'QRIS' : 'Tunai Kasir'} (${r.paymentStatus === 'PAID' ? 'LUNAS' : 'BELUM LUNAS'})</b>
           </div>
           ${r.customerType === 'STUDENT' ? `
             <div style="background:#eaf7ed;border-radius:4px;padding:4px 6px;margin:6px 0;font-size:10.5px;color:#1b633a;">
@@ -3081,6 +3282,9 @@ function bindOrderTableActions(onUpdate) {
       } catch(e) { toast(e.message, true); }
     };
   });
+  $$('[data-audit-qris]').forEach(btn => {
+    btn.onclick = () => openQrisAuditModal(btn.dataset.auditQris, onUpdate);
+  });
   $$('[data-print-order]').forEach(btn => {
     btn.onclick = () => showOrderReceiptDialog(btn.dataset.printOrder, onUpdate, false);
   });
@@ -3126,7 +3330,7 @@ function orderTable(orders, compact = false) {
   if (!orders.length) return '<div class="admin-empty"><p>Tidak ada data pesanan pada filter ini.</p></div>';
   return `<div class="responsive-table"><table class="admin-table"><thead><tr><th style="width: 105px;">No. Pesanan</th><th style="width: 85px;">Meja</th><th style="width: 110px;">Tipe</th><th>Rincian Item</th><th style="width: 115px;">Total</th><th style="width: 140px;">Pembayaran</th><th style="width: 130px;">Status</th><th style="width: 75px;">Waktu</th><th style="width: 95px; text-align: right;">Aksi</th></tr></thead><tbody>${orders.map(o => {
     const isPrinted = Boolean(o.receiptPrinted || o.receipt_printed);
-    return `<tr><td data-label="No. Pesanan"><span class="order-num-tag">#${esc(o.orderNumber)}</span>${o.parentOrderNumber ? `<small class="addon-tag">+ tambahan #${esc(o.parentOrderNumber)}</small>` : ''}</td><td data-label="Meja"><span class="table-name-tag">${esc(o.tableName)}</span></td><td data-label="Tipe">${o.customerType === 'STUDENT' ? `<span class="badge-role-student" title="${esc(o.studentInfo?.campus || '')} (NIM: ${esc(o.studentInfo?.studentId || '-')})">🎓 Pelajar</span>` : `<span class="badge-role-regular">☕ Umum</span>`}</td><td data-label="Rincian Item"><div class="items-cell" title="${esc(o.items.map(i => `${i.quantity}x ${i.productName}`).join(', '))}">${o.items.map(i => `<span class="item-chip"><b>${i.quantity}x</b> ${esc(i.productName)}</span>`).join('')}</div></td><td data-label="Total"><span class="order-total-val">${money(o.total)}</span></td><td data-label="Pembayaran">${paymentBadge(o)}</td><td data-label="Status">${statusBadge(o.status)} ${isPrinted ? '<span class="receipt-mini-badge done" title="Struk sudah dicetak">✓ Struk</span>' : '<span class="receipt-mini-badge pending" title="Belum cetak struk">⚠️ Struk</span>'}</td><td data-label="Waktu"><span class="order-time-tag">${formatTime(o.createdAt)}</span></td><td data-label="Aksi" style="text-align: right;"><div style="display:inline-flex;gap:4px;justify-content:flex-end;"><button class="btn btn-small btn-soft" data-print-order="${esc(o.orderNumber)}" title="Cetak Struk">🖨️</button><button class="btn btn-small btn-soft" data-view-order="${esc(o.orderNumber)}">Detail</button></div></td></tr>`;
+    return `<tr><td data-label="No. Pesanan"><span class="order-num-tag">#${esc(o.orderNumber)}</span>${o.parentOrderNumber ? `<small class="addon-tag">+ tambahan #${esc(o.parentOrderNumber)}</small>` : ''}</td><td data-label="Meja"><span class="table-name-tag">${esc(o.tableName)}</span></td><td data-label="Tipe">${o.customerType === 'STUDENT' ? `<span class="badge-role-student" title="${esc(o.studentInfo?.campus || '')} (NIM: ${esc(o.studentInfo?.studentId || '-')})">🎓 Pelajar</span>` : `<span class="badge-role-regular">☕ Umum</span>`}</td><td data-label="Rincian Item"><div class="items-cell" title="${esc(o.items.map(i => `${i.quantity}x ${i.productName}`).join(', '))}">${o.items.map(i => `<span class="item-chip"><b>${i.quantity}x</b> ${esc(i.productName)}</span>`).join('')}</div></td><td data-label="Total"><span class="order-total-val">${money(o.total)}</span></td><td data-label="Pembayaran">${paymentBadge(o)}</td><td data-label="Status">${statusBadge(o.status)} ${isPrinted ? '<span class="receipt-mini-badge done" title="Struk sudah dicetak">✓ Struk</span>' : '<span class="receipt-mini-badge pending" title="Belum cetak struk">⚠️ Struk</span>'}</td><td data-label="Waktu"><span class="order-time-tag">${formatTime(o.createdAt)}</span></td><td data-label="Aksi" style="text-align: right;"><div style="display:inline-flex;gap:4px;justify-content:flex-end;">${o.payment?.status === 'PENDING' && (o.payment?.method === 'QRIS' || o.payment?.method === 'QRIS_DEMO') && o.payment?.proofUrl ? `<button class="btn btn-small btn-primary btn-audit-qris" data-audit-qris="${esc(o.orderNumber)}" title="Audit Bukti Transfer QRIS">🧾 Bukti</button>` : ''}<button class="btn btn-small btn-soft" data-print-order="${esc(o.orderNumber)}" title="Cetak Struk">🖨️</button><button class="btn btn-small btn-soft" data-view-order="${esc(o.orderNumber)}">Detail</button></div></td></tr>`;
   }).join('')}</tbody></table></div>`;
 }
 
@@ -3147,6 +3351,197 @@ function openPhotoZoomModal(photoUrl, title) {
     </div>
   `, 'large-modal');
   $('#btnCloseZoomPhoto', m).onclick = () => m.remove();
+}
+
+async function openQrisAuditModal(orderNumber, onDone) {
+  let o = null;
+  try {
+    const orders = await api('/admin/orders?q=' + encodeURIComponent(orderNumber));
+    o = orders.find(x => x.orderNumber === orderNumber) || orders[0];
+  } catch(e) {
+    return toast('Gagal memuat pesanan: ' + e.message, true);
+  }
+  if (!o) return toast('Pesanan tidak ditemukan.', true);
+
+  const proofUrl = o.payment?.proofUrl || `/api/orders/${encodeURIComponent(o.orderNumber)}/photo/receipt`;
+  const aiStatus = o.payment?.aiStatus || 'PENDING';
+  const aiData = o.payment?.aiAnalysis || {};
+  const isPaid = o.payment?.status === 'PAID';
+  const uniqueCode = o.payment?.uniqueCode || 0;
+  const rrn = o.payment?.receiptRrn || aiData.rrn || '-';
+
+  const isVerifiedAi = aiStatus === 'VERIFIED';
+  const isSuspiciousAi = aiStatus === 'SUSPICIOUS';
+
+  const m = modal(`
+    <div class="modal-heading">
+      <div>
+        <span>AUDIT FORENSIK PEMBAYARAN QRIS • WISATA NIAGA CAMPUS</span>
+        <h2>Pesanan #${esc(o.orderNumber)} (${esc(o.tableName)})</h2>
+      </div>
+      <div style="display:flex;align-items:center;gap:8px;">
+        <span class="badge-qris-audit-status ${isVerifiedAi ? 'verified' : (isSuspiciousAi ? 'suspicious' : 'pending')}">
+          ${isVerifiedAi ? '🤖 AI: Sah & Terverifikasi ✅' : (isSuspiciousAi ? '⚠️ AI: Perlu Perhatian Kasir' : '⏳ Belum Dianalisis AI')}
+        </span>
+        <span class="pay-status-pill ${isPaid ? 'paid' : 'pending'}">
+          <i class="pay-dot"></i>${isPaid ? 'Lunas' : 'Belum Lunas'}
+        </span>
+      </div>
+    </div>
+
+    <div class="qris-audit-layout">
+      <!-- Sisi Kiri: Bukti Struk Gambar -->
+      <div class="qris-audit-img-pane">
+        <div class="audit-img-header">
+          <b>🧾 Screenshot Bukti Transfer Pelanggan</b>
+          <button type="button" class="btn btn-soft btn-small" id="btnZoomReceiptImg">🔍 Perbesar Foto</button>
+        </div>
+        <div class="audit-img-wrapper" id="auditImgWrapper" style="cursor:zoom-in;">
+          <img src="${esc(proofUrl)}" alt="Bukti Transfer QRIS #${esc(o.orderNumber)}" onerror="this.onerror=null;this.src='/assets/hero-desktop.jpg'">
+        </div>
+        <small class="audit-img-hint">💡 Klik pada gambar atau tombol untuk melihat resolusi penuh &amp; detail teks transfer.</small>
+      </div>
+
+      <!-- Sisi Kanan: Analisis AI & Mutasi Bank -->
+      <div class="qris-audit-data-pane">
+        <div class="audit-section-card">
+          <h4>📊 Data Transaksi di Sistem Cafe Campus</h4>
+          <div class="audit-data-grid">
+            <div><span>Nomor Pesanan:</span> <b>#${esc(o.orderNumber)}</b></div>
+            <div><span>Meja / Customer:</span> <b>${esc(o.tableName)} (${o.customerType === 'STUDENT' ? '🎓 Pelajar' : '☕ Umum'})</b></div>
+            <div><span>Waktu Pemesanan:</span> <b>${formatTime(o.createdAt)}</b></div>
+            <div><span>Total Tagihan:</span> <b class="audit-highlight-total">${money(o.total)}</b></div>
+            <div><span>Kode Unik Verifikasi:</span> <b style="color:#0284c7;">+${uniqueCode} (Rp ${o.total.toLocaleString('id-ID')})</b></div>
+          </div>
+        </div>
+
+        <div class="audit-section-card ${isVerifiedAi ? 'card-ai-ok' : (isSuspiciousAi ? 'card-ai-warn' : '')}">
+          <h4>🛡️ Hasil Pemindaian Forensik Google Gemini AI</h4>
+          <div class="audit-forensic-checks">
+            <div class="audit-check-row">
+              <span class="check-label">1. Nama Merchant Tujuan:</span>
+              <span class="check-val ${aiData.merchantMatch ? 'ok' : 'warn'}">
+                ${aiData.merchantMatch ? '✅ Cocok (' + esc(aiData.merchantDetected || 'WISATA NIAGA CAMPUS') + ')' : '⚠️ ' + esc(aiData.merchantDetected || 'Tidak Terdeteksi')}
+              </span>
+            </div>
+
+            <div class="audit-check-row">
+              <span class="check-label">2. Nominal Transfer:</span>
+              <span class="check-val ${aiData.amountMatch ? 'ok' : 'warn'}">
+                ${aiData.amountMatch ? '✅ Persis Sesuai (' + money(aiData.amountDetected || o.total) + ')' : '⚠️ Beda (' + (aiData.amountDetected ? money(aiData.amountDetected) : 'Tidak Terbaca') + ' vs ' + money(o.total) + ')'}
+              </span>
+            </div>
+
+            <div class="audit-check-row">
+              <span class="check-label">3. Nomor Referensi (RRN):</span>
+              <span class="check-val ${rrn !== '-' ? 'ok' : 'wait'}">
+                <b>${esc(rrn)}</b> ${aiData.rrn ? '✅ Terindeks Anti-Replay' : ''}
+              </span>
+            </div>
+
+            <div class="audit-check-row">
+              <span class="check-label">4. Bank / E-Wallet Asal:</span>
+              <span class="check-val">
+                <b>${esc(aiData.issuerBank || 'Bale BTN / QRIS Nasional')}</b>
+              </span>
+            </div>
+
+            <div class="audit-check-row">
+              <span class="check-label">5. Waktu &amp; Tanggal Transaksi:</span>
+              <span class="check-val ${aiData.freshnessOk ? 'ok' : 'wait'}">
+                ${aiData.transactionTime || 'Hari ini'} ${aiData.freshnessOk ? '✅ Fresh (< 2 Jam)' : '⚠️ Cek Jam'}
+              </span>
+            </div>
+
+            <div class="audit-check-row">
+              <span class="check-label">6. Deteksi Manipulasi / Editan:</span>
+              <span class="check-val ${!aiData.tamperingSigns ? 'ok' : 'warn'}">
+                ${!aiData.tamperingSigns ? '🟢 Bersih (Tidak ada artefak font/edan)' : '🔴 Terindikasi Diedit / Font Tidak Seragam'}
+              </span>
+            </div>
+          </div>
+
+          ${aiData.notes ? `
+            <div class="audit-notes-box">
+              <small><b>Catatan Analisis AI:</b> ${esc(aiData.notes)}</small>
+            </div>
+          ` : ''}
+        </div>
+
+        <div class="audit-cashier-alert">
+          <span>💡</span>
+          <div>
+            <b>Panduan Kasir Sebelum Konfirmasi:</b>
+            <p>Pastikan notifikasi dana masuk atau mutasi di aplikasi <b>bale by BTN</b> / mutasi rekening kasir menampilkan nominal <b>Rp ${o.total.toLocaleString('id-ID')}</b> (dengan 3 digit unik <b>${uniqueCode}</b>).</p>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="modal-actions" style="margin-top:20px;">
+      ${!isPaid ? `
+        <button class="btn btn-green btn-large" id="btnAuditConfirmPaid" style="font-weight:700;">
+          ✅ Verifikasi &amp; Konfirmasi LUNAS
+        </button>
+        <button class="btn btn-danger" id="btnAuditRejectProof">
+          ⛔ Tolak Bukti QRIS (Minta Upload Ulang)
+        </button>
+      ` : `
+        <span class="badge-receipt-done" style="margin-right:auto;padding:8px 14px;font-size:13px;">✓ Pesanan Sudah Berstatus LUNAS</span>
+      `}
+      <button class="btn btn-soft" id="btnCloseAuditModal">Tutup</button>
+    </div>
+  `, 'wide-modal');
+
+  $('#btnCloseAuditModal', m).onclick = () => m.remove();
+  const zoomAction = () => openPhotoZoomModal(proofUrl, `Bukti QRIS #${o.orderNumber} - Wisata Niaga Campus`);
+  const zoomBtn = $('#btnZoomReceiptImg', m);
+  if (zoomBtn) zoomBtn.onclick = zoomAction;
+  const imgWrap = $('#auditImgWrapper', m);
+  if (imgWrap) imgWrap.onclick = zoomAction;
+
+  const btnConfirm = $('#btnAuditConfirmPaid', m);
+  if (btnConfirm) {
+    btnConfirm.onclick = async () => {
+      btnConfirm.disabled = true;
+      btnConfirm.innerHTML = '<span class="spinner"></span> Mengonfirmasi...';
+      try {
+        await api('/admin/orders/' + encodeURIComponent(o.orderNumber) + '/payment', {
+          method: 'PATCH',
+          body: JSON.stringify({ note: 'Diverifikasi kasir via Audit Forensik QRIS' })
+        });
+        toast('✅ Pembayaran QRIS berhasil dikonfirmasi LUNAS!');
+        alarm.playPaymentDing();
+        m.remove();
+        onDone && onDone();
+      } catch (err) {
+        toast(err.message, true);
+        btnConfirm.disabled = false;
+        btnConfirm.textContent = '✅ Verifikasi & Konfirmasi LUNAS';
+      }
+    };
+  }
+
+  const btnReject = $('#btnAuditRejectProof', m);
+  if (btnReject) {
+    btnReject.onclick = async () => {
+      const reason = prompt('Masukkan alasan penolakan bukti pembayaran (akan ditampilkan ke layar customer):', 'Nominal transfer tidak sesuai / mutasi belum masuk di rekening');
+      if (!reason) return;
+      btnReject.disabled = true;
+      try {
+        await api('/admin/orders/' + encodeURIComponent(o.orderNumber) + '/reject-proof', {
+          method: 'POST',
+          body: JSON.stringify({ reason })
+        });
+        toast('⚠️ Bukti QRIS ditolak. Customer diminta mengunggah ulang bukti transfer.');
+        m.remove();
+        onDone && onDone();
+      } catch (err) {
+        toast(err.message, true);
+        btnReject.disabled = false;
+      }
+    };
+  }
 }
 
 async function viewStudentPhotoModal(orderNumber, onUpdate) {
@@ -3209,7 +3604,7 @@ async function orderDetailModal(orderNumber, onUpdate) {
       </div>
       ${!isBdayClaimed ? `<button type="button" class="btn btn-green btn-small" id="btnClaimBirthdayReward">🎁 Berikan Kado Ultah</button>` : `<span class="badge-bday-done">✅ Kado Ultah Diberikan</span>`}
     </div>` : ''}
-    <div class="order-detail-grid"><div><div class="detail-meta"><div><span>WAKTU PESAN</span><b>${formatTime(o.createdAt)}</b></div><div><span>TIPE CUSTOMER</span><b>${isStud ? '🎓 Pelajar / Mahasiswa' : '☕ Pelanggan Umum'}</b></div><div><span>METODE</span><b>${o.payment.method === 'QRIS_DEMO' ? 'QRIS' : 'Tunai di Kasir'}</b></div><div><span>STATUS BAYAR</span><b>${o.payment.status === 'PAID' ? 'Lunas' : 'Belum Bayar'}</b></div></div>${o.studentInfo ? `<div class="student-form-card" style="margin-bottom:14px;padding:12px 16px;"><div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;"><h4 style="margin:0;color:#1b633a;font-size:13px;display:flex;align-items:center;gap:5px;">🎓 Verifikasi Pelajar & Anti-Fraud</h4><div style="display:flex;align-items:center;gap:6px;"><span class="badge-fraud-score ${o.studentInfo.fraudRisk === 'HIGH' ? 'high' : (o.studentInfo.fraudRisk === 'MEDIUM' ? 'medium' : 'low')}">${o.studentInfo.fraudRisk === 'HIGH' ? '🔴 Risiko Tinggi' : (o.studentInfo.fraudRisk === 'MEDIUM' ? '🟡 Risiko Sedang' : '🟢 Aman')} • ${o.studentInfo.fraudScore || 0}%</span>${vStatus === 'AUTOMATICALLY_VERIFIED' ? '<span class="badge-verify-approved">🤖 AI Sah</span>' : (vStatus === 'VERIFIED' ? '<span class="badge-verify-approved">✅ Sah</span>' : (vStatus === 'REJECTED' ? '<span class="badge-verify-rejected">⚠️ Ditolak</span>' : '<span class="badge-verify-pending">⏳ Cek KTM</span>'))}${o.totalSavings ? `<span class="badge-role-student">Hemat ${money(o.totalSavings)}</span>` : ''}</div></div><div class="detail-student-preview-strip" style="display:flex;gap:10px;margin-bottom:10px;background:#f8fafc;padding:8px 12px;border-radius:10px;border:1px solid #e2e8f0;align-items:center;"><div style="display:flex;align-items:center;gap:8px;flex:1;"><img src="${esc(o.studentInfo?.studentPhoto || '/assets/hero-desktop.jpg')}" style="width:48px;height:36px;object-fit:cover;border-radius:6px;border:1.5px solid #0284c7;" alt="KTM" onerror="this.onerror=null;this.src='/assets/hero-desktop.jpg'"><div><small style="color:#64748b;display:block;font-size:10px;font-weight:700;">1. KARTU MAHASISWA</small><b style="font-size:11px;color:#0f172a;">${esc(o.studentInfo?.campus || 'KTM Valid')}</b></div></div><div style="width:1px;height:30px;background:#cbd5e1;"></div><div style="display:flex;align-items:center;gap:8px;flex:1;"><img src="${esc(o.studentInfo?.facePhoto || '/assets/hero-desktop.jpg')}" style="width:36px;height:36px;object-fit:cover;border-radius:50%;border:1.5px solid #16a34a;" alt="Face" onerror="this.onerror=null;this.src='/assets/hero-desktop.jpg'"><div><small style="color:#64748b;display:block;font-size:10px;font-weight:700;">2. WAJAH REAL-TIME</small><b style="font-size:11px;color:${o.studentInfo?.facePhoto ? '#15803d' : '#b45309'};">${o.studentInfo?.facePhoto ? '🟢 Live Selfie Valid' : '⚠️ Belum Ada'}</b></div></div></div><div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;font-size:12px;margin-bottom:10px;"><div><span style="color:#666;">Nama Mahasiswa:</span> <b style="display:block;">${esc(o.studentInfo?.studentName || '-')}</b></div><div><span style="color:#666;">Asal Kampus / Sekolah:</span> <b style="display:block;">${esc(o.studentInfo?.campus || '-')}</b></div><div><span style="color:#666;">Fakultas / Prodi:</span> <b style="display:block;">${esc(o.studentInfo?.facultyName || o.studentInfo?.facultyCode || '-')} • ${esc(o.studentInfo?.studyProgram || '-')}</b></div><div><span style="color:#666;">NIM / NIS:</span> <b style="display:inline-block;">${esc(o.studentInfo?.studentId || '-')}</b></div><div><span style="color:#666;">Email Institusi:</span> <b style="display:inline-block;">${esc(o.studentInfo?.email || '-')}</b></div>${o.studentInfo?.rejectionReason ? `<div style="grid-column:1/-1;"><span style="color:#e03131;">Alasan Tolak:</span> <b style="color:#c92a2a;display:inline-block;">${esc(o.studentInfo.rejectionReason)}</b></div>` : ''}</div><div style="display:flex;gap:8px;"><button type="button" class="btn btn-soft btn-small" id="btnInspectDetailPhoto" style="flex:1;">🔍 Periksa Foto KTM & Wajah Real-Time</button><button type="button" class="btn btn-soft btn-small" id="btnAdminViewKtm" style="flex:1;">🪪 Buka KTM Digital</button></div></div>` : ''}<div class="admin-items-box">${o.items.map(i => `<div class="admin-order-item"><img src="${esc(i.imageUrl || '/assets/iced-latte.jpg')}" alt=""><div><b>${i.quantity}x ${esc(i.productName)}</b><span>${esc(optionSummary(i))}</span>${i.note ? `<small>Catatan: ${esc(i.note)}</small>` : ''}${i.savings ? `<small style="color:#2c8b5b;display:block;font-weight:700;">Hemat Kampus: ${money(i.savings)}</small>` : ''}</div><strong>${money(i.lineTotal)}</strong></div>`).join('')}</div><div class="detail-bill"><div><span>Subtotal</span><b>${money(o.subtotal)}</b></div>${o.totalSavings ? `<div style="color:#2c8b5b;"><span>Total Subsidi Pelajar</span><b>- ${money(o.totalSavings)}</b></div>` : ''}${o.serviceFee ? `<div><span>Biaya Layanan</span><b>${money(o.serviceFee)}</b></div>` : ''}${o.tax ? `<div><span>Pajak</span><b>${money(o.tax)}</b></div>` : ''}<div><span>Total</span><strong>${money(o.total)}</strong></div></div></div><div class="detail-side"><h3>Riwayat Status</h3><div class="history-list">${o.history.map(h => `<div><i></i><div><b>${esc(h.label || h.status)}</b><small>${formatTime(h.at)}</small></div></div>`).join('')}</div></div></div><div class="modal-actions">${o.payment.status === 'PENDING' ? `<button class="btn btn-green" id="confirmCash">Konfirmasi Kasir (Lunas)</button>` : ''}${o.status === 'NEW' && o.payment.status === 'PAID' ? (!isPrinted ? `<button class="btn btn-primary btn-highlight-print" id="btnPrintAndProcess">🖨️ Cetak Struk (Wajib) & Mulai Racik</button><button class="btn btn-blue" id="toProcess" data-need-receipt="true" title="Wajib cetak struk terlebih dahulu">Mulai Proses Barista 🔒</button>` : `<button class="btn btn-blue" id="toProcess">Mulai Proses Barista</button>`) : ''}${o.status === 'PROCESSING' ? `<button class="btn btn-primary" id="toReady">🔔 Pesanan Siap Diambil</button>` : ''}${o.status === 'READY' ? `<button class="btn btn-dark" id="toComplete">Pesanan Selesai (Diambil)</button>` : ''}${o.status === 'NEW' && o.payment.status === 'PENDING' ? `<button class="btn btn-danger" id="toCancel">Batalkan Pesanan</button>` : ''}${o.payment.status === 'PAID' && o.status !== 'CANCELLED' ? `<button class="btn btn-danger-soft" id="btnVoidOrder">⛔ Void / Refund (Pulihkan Stok)</button>` : ''}</div>`, 'wide-modal');
+    <div class="order-detail-grid"><div><div class="detail-meta"><div><span>WAKTU PESAN</span><b>${formatTime(o.createdAt)}</b></div><div><span>TIPE CUSTOMER</span><b>${isStud ? '🎓 Pelajar / Mahasiswa' : '☕ Pelanggan Umum'}</b></div><div><span>METODE</span><b>${(o.payment.method === 'QRIS' || o.payment.method === 'QRIS_DEMO') ? 'QRIS (Wisata Niaga Campus)' : 'Tunai di Kasir'}</b></div><div><span>STATUS BAYAR</span><b>${o.payment.status === 'PAID' ? 'Lunas' : 'Belum Bayar'}</b></div></div>${(o.payment?.method === 'QRIS' || o.payment?.method === 'QRIS_DEMO') ? `<div class="qris-detail-admin-card" style="margin-bottom:14px;padding:12px 16px;background:#f0fdf4;border:1px solid #bbf7d0;border-radius:12px;"><div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;"><h4 style="margin:0;color:#166534;font-size:13px;display:flex;align-items:center;gap:6px;"><span>📱 Pembayaran QRIS Wisata Niaga Campus</span></h4><div style="display:flex;align-items:center;gap:6px;"><span class="pay-status-pill ${o.payment.status === 'PAID' ? 'paid' : 'pending'}"><i class="pay-dot"></i>${o.payment.status === 'PAID' ? 'Lunas' : 'Belum Bayar'}</span>${o.payment.proofUrl ? `<span class="badge-qris-audit-status ${o.payment.aiStatus === 'VERIFIED' ? 'verified' : (o.payment.aiStatus === 'SUSPICIOUS' ? 'suspicious' : 'pending')}">${o.payment.aiStatus === 'VERIFIED' ? 'AI: Sah ✅' : (o.payment.aiStatus === 'SUSPICIOUS' ? 'AI: Cek ⚠️' : 'AI: Pending')}</span>` : '<span class="badge-waiting-proof">Belum Upload Bukti</span>'}</div></div><div style="display:flex;gap:12px;align-items:center;">${o.payment.proofUrl ? `<a href="${esc(o.payment.proofUrl)}" target="_blank" style="width:52px;height:52px;border-radius:8px;overflow:hidden;border:1px solid #cbd5e1;display:block;flex-shrink:0;"><img src="${esc(o.payment.proofUrl)}" style="width:100%;height:100%;object-fit:cover;" alt="Bukti Transfer"></a>` : ''}<div style="flex:1;font-size:12px;color:#334155;"><div><span>Nomor RRN:</span> <b>${esc(o.payment.receiptRrn || '-')}</b></div><div><span>Kode Unik:</span> <b>+${o.payment.uniqueCode || 0} (Rp ${o.total.toLocaleString('id-ID')})</b></div>${o.payment.verifiedBy ? `<div><span>Dikonfirmasi Oleh:</span> <b>${esc(o.payment.verifiedBy)}</b> (${formatTime(o.payment.verifiedAt)})</div>` : ''}${o.payment.rejectionReason ? `<div style="color:#b91c1c;"><span>Alasan Tolak:</span> <b>${esc(o.payment.rejectionReason)}</b></div>` : ''}</div>${o.payment.proofUrl ? `<button type="button" class="btn btn-primary btn-small" id="btnOpenQrisAuditFromDetail">🧾 Audit Forensik QRIS</button>` : ''}</div></div>` : ''}${o.studentInfo ? `<div class="student-form-card" style="margin-bottom:14px;padding:12px 16px;"><div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;"><h4 style="margin:0;color:#1b633a;font-size:13px;display:flex;align-items:center;gap:5px;">🎓 Verifikasi Pelajar & Anti-Fraud</h4><div style="display:flex;align-items:center;gap:6px;"><span class="badge-fraud-score ${o.studentInfo.fraudRisk === 'HIGH' ? 'high' : (o.studentInfo.fraudRisk === 'MEDIUM' ? 'medium' : 'low')}">${o.studentInfo.fraudRisk === 'HIGH' ? '🔴 Risiko Tinggi' : (o.studentInfo.fraudRisk === 'MEDIUM' ? '🟡 Risiko Sedang' : '🟢 Aman')} • ${o.studentInfo.fraudScore || 0}%</span>${vStatus === 'AUTOMATICALLY_VERIFIED' ? '<span class="badge-verify-approved">🤖 AI Sah</span>' : (vStatus === 'VERIFIED' ? '<span class="badge-verify-approved">✅ Sah</span>' : (vStatus === 'REJECTED' ? '<span class="badge-verify-rejected">⚠️ Ditolak</span>' : '<span class="badge-verify-pending">⏳ Cek KTM</span>'))}${o.totalSavings ? `<span class="badge-role-student">Hemat ${money(o.totalSavings)}</span>` : ''}</div></div><div class="detail-student-preview-strip" style="display:flex;gap:10px;margin-bottom:10px;background:#f8fafc;padding:8px 12px;border-radius:10px;border:1px solid #e2e8f0;align-items:center;"><div style="display:flex;align-items:center;gap:8px;flex:1;"><img src="${esc(o.studentInfo?.studentPhoto || '/assets/hero-desktop.jpg')}" style="width:48px;height:36px;object-fit:cover;border-radius:6px;border:1.5px solid #0284c7;" alt="KTM" onerror="this.onerror=null;this.src='/assets/hero-desktop.jpg'"><div><small style="color:#64748b;display:block;font-size:10px;font-weight:700;">1. KARTU MAHASISWA</small><b style="font-size:11px;color:#0f172a;">${esc(o.studentInfo?.campus || 'KTM Valid')}</b></div></div><div style="width:1px;height:30px;background:#cbd5e1;"></div><div style="display:flex;align-items:center;gap:8px;flex:1;"><img src="${esc(o.studentInfo?.facePhoto || '/assets/hero-desktop.jpg')}" style="width:36px;height:36px;object-fit:cover;border-radius:50%;border:1.5px solid #16a34a;" alt="Face" onerror="this.onerror=null;this.src='/assets/hero-desktop.jpg'"><div><small style="color:#64748b;display:block;font-size:10px;font-weight:700;">2. WAJAH REAL-TIME</small><b style="font-size:11px;color:${o.studentInfo?.facePhoto ? '#15803d' : '#b45309'};">${o.studentInfo?.facePhoto ? '🟢 Live Selfie Valid' : '⚠️ Belum Ada'}</b></div></div></div><div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;font-size:12px;margin-bottom:10px;"><div><span style="color:#666;">Nama Mahasiswa:</span> <b style="display:block;">${esc(o.studentInfo?.studentName || '-')}</b></div><div><span style="color:#666;">Asal Kampus / Sekolah:</span> <b style="display:block;">${esc(o.studentInfo?.campus || '-')}</b></div><div><span style="color:#666;">Fakultas / Prodi:</span> <b style="display:block;">${esc(o.studentInfo?.facultyName || o.studentInfo?.facultyCode || '-')} • ${esc(o.studentInfo?.studyProgram || '-')}</b></div><div><span style="color:#666;">NIM / NIS:</span> <b style="display:inline-block;">${esc(o.studentInfo?.studentId || '-')}</b></div><div><span style="color:#666;">Email Institusi:</span> <b style="display:inline-block;">${esc(o.studentInfo?.email || '-')}</b></div>${o.studentInfo?.rejectionReason ? `<div style="grid-column:1/-1;"><span style="color:#e03131;">Alasan Tolak:</span> <b style="color:#c92a2a;display:inline-block;">${esc(o.studentInfo.rejectionReason)}</b></div>` : ''}</div><div style="display:flex;gap:8px;"><button type="button" class="btn btn-soft btn-small" id="btnInspectDetailPhoto" style="flex:1;">🔍 Periksa Foto KTM & Wajah Real-Time</button><button type="button" class="btn btn-soft btn-small" id="btnAdminViewKtm" style="flex:1;">🪪 Buka KTM Digital</button></div></div>` : ''}<div class="admin-items-box">${o.items.map(i => `<div class="admin-order-item"><img src="${esc(i.imageUrl || '/assets/iced-latte.jpg')}" alt=""><div><b>${i.quantity}x ${esc(i.productName)}</b><span>${esc(optionSummary(i))}</span>${i.note ? `<small>Catatan: ${esc(i.note)}</small>` : ''}${i.savings ? `<small style="color:#2c8b5b;display:block;font-weight:700;">Hemat Kampus: ${money(i.savings)}</small>` : ''}</div><strong>${money(i.lineTotal)}</strong></div>`).join('')}</div><div class="detail-bill"><div><span>Subtotal</span><b>${money(o.subtotal)}</b></div>${o.totalSavings ? `<div style="color:#2c8b5b;"><span>Total Subsidi Pelajar</span><b>- ${money(o.totalSavings)}</b></div>` : ''}${o.serviceFee ? `<div><span>Biaya Layanan</span><b>${money(o.serviceFee)}</b></div>` : ''}${o.tax ? `<div><span>Pajak</span><b>${money(o.tax)}</b></div>` : ''}<div><span>Total</span><strong>${money(o.total)}</strong></div></div></div><div class="detail-side"><h3>Riwayat Status</h3><div class="history-list">${o.history.map(h => `<div><i></i><div><b>${esc(h.label || h.status)}</b><small>${formatTime(h.at)}</small></div></div>`).join('')}</div></div></div><div class="modal-actions">${o.payment.status === 'PENDING' ? ((o.payment.method === 'QRIS' || o.payment.method === 'QRIS_DEMO') && o.payment.proofUrl ? `<button class="btn btn-primary" id="btnAuditFromDetailActions">🧾 Cek Bukti & Konfirmasi Lunas</button>` : `<button class="btn btn-green" id="confirmCash">Konfirmasi Kasir (Lunas)</button>`) : ''}${o.status === 'NEW' && o.payment.status === 'PAID' ? (!isPrinted ? `<button class="btn btn-primary btn-highlight-print" id="btnPrintAndProcess">🖨️ Cetak Struk (Wajib) & Mulai Racik</button><button class="btn btn-blue" id="toProcess" data-need-receipt="true" title="Wajib cetak struk terlebih dahulu">Mulai Proses Barista 🔒</button>` : `<button class="btn btn-blue" id="toProcess">Mulai Proses Barista</button>`) : ''}${o.status === 'PROCESSING' ? `<button class="btn btn-primary" id="toReady">🔔 Pesanan Siap Diambil</button>` : ''}${o.status === 'READY' ? `<button class="btn btn-dark" id="toComplete">Pesanan Selesai (Diambil)</button>` : ''}${o.status === 'NEW' && o.payment.status === 'PENDING' ? `<button class="btn btn-danger" id="toCancel">Batalkan Pesanan</button>` : ''}${o.payment.status === 'PAID' && o.status !== 'CANCELLED' ? `<button class="btn btn-danger-soft" id="btnVoidOrder">⛔ Void / Refund (Pulihkan Stok)</button>` : ''}</div>`, 'wide-modal');
   // Print buttons — fetch receipt data sekali, lalu cetak sesuai tipe
   const fetchAndPrint = async (type) => {
     try {
@@ -3261,6 +3656,20 @@ async function orderDetailModal(orderNumber, onUpdate) {
     }
   };
   const cash = $('#confirmCash', d); if (cash) cash.onclick = async () => { cash.disabled = true; try { await api('/admin/orders/' + encodeURIComponent(o.orderNumber) + '/payment', { method: 'PATCH', body: '{}' }); toast('Pembayaran kasir dikonfirmasi LUNAS'); d.remove(); onUpdate(); } catch (e) { toast(e.message, true); cash.disabled = false; } };
+  const btnOpenAudit = $('#btnOpenQrisAuditFromDetail', d);
+  if (btnOpenAudit) {
+    btnOpenAudit.onclick = () => {
+      d.remove();
+      openQrisAuditModal(o.orderNumber, onUpdate);
+    };
+  }
+  const auditActionBtn = $('#btnAuditFromDetailActions', d);
+  if (auditActionBtn) {
+    auditActionBtn.onclick = () => {
+      d.remove();
+      openQrisAuditModal(o.orderNumber, onUpdate);
+    };
+  }
   const printAndProc = $('#btnPrintAndProcess', d);
   if (printAndProc) {
     printAndProc.onclick = () => {
@@ -3315,7 +3724,7 @@ function printKitchenReceipt(r, type) {
 
   const now = new Date();
   const printTime = now.toLocaleString('id-ID', { day:'2-digit', month:'short', year:'numeric', hour:'2-digit', minute:'2-digit' });
-  const methodLabel = r.paymentMethod === 'QRIS_DEMO' ? 'QRIS' : 'Tunai';
+  const methodLabel = (r.paymentMethod === 'QRIS' || r.paymentMethod === 'QRIS_DEMO') ? 'QRIS' : 'Tunai';
   const paidLabel = r.paymentStatus === 'PAID' ? 'LUNAS' : 'BELUM BAYAR';
 
   const itemRows = items.map(i => {

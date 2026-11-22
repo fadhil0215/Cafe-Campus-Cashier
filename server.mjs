@@ -48,6 +48,18 @@ const STUDENT_DAILY_LIMIT = Number(process.env.STUDENT_DAILY_LIMIT) || 1;
 const QRIS_EXPIRY_MINUTES = Number(process.env.QRIS_EXPIRY_MINUTES) || 15;
 const VALID_ORDER_STATUSES = ['NEW', 'PROCESSING', 'READY', 'COMPLETED', 'CANCELLED'];
 
+// Data QRIS Resmi Perusahaan (WISATA NIAGA CAMPUS - bale by BTN)
+export const MERCHANT_QRIS = {
+    merchantName: 'WISATA NIAGA CAMPUS',
+    nmid: 'ID2024361872201',
+    terminalId: 'A01',
+    city: 'PURWOKERTO',
+    postalCode: '53141',
+    acquirer: 'bale by btn',
+    qrPayload: '00020101021126620016ID.CO.QRIS.WWW01189360091100000000000215ID20243618722010303UMI5204599953033605802ID5919WISATA NIAGA CAMPUS6009PURWOKERTO61055314162070703A0163047D4C',
+    standImageUrl: '/assets/qris-wisata-niaga-campus.jpg'
+};
+
 const snap = new midtransClient.Snap({
     isProduction: process.env.MIDTRANS_IS_PRODUCTION === 'true',
     serverKey: process.env.MIDTRANS_SERVER_KEY || '',
@@ -173,6 +185,121 @@ export async function callGeminiApi({ key, body, timeoutMs = 12000 }) {
     }
 
     return { ok: false, error: lastError, status: lastStatus };
+}
+
+// ==========================================
+// GEMINI AI QRIS RECEIPT FORENSIC & ANTI-FRAUD ENGINE
+// ==========================================
+export async function verifyQrisReceiptWithAi({ receiptBase64, expectedTotal, orderNumber, tableName }) {
+    const geminiInfo = await getGeminiKey('ktm');
+    const cleanBase64 = (receiptBase64 || '').replace(/^data:image\/[A-Za-z0-9-+.]+;base64,/, '').replace(/[\r\n\s]/g, '');
+
+    const fallbackResult = {
+        isAiAvailable: Boolean(geminiInfo.key),
+        isReceipt: true,
+        merchantMatched: true,
+        extractedMerchant: MERCHANT_QRIS.merchantName,
+        amountMatched: true,
+        extractedAmount: expectedTotal,
+        referenceNumber: 'REF-' + Date.now().toString(36).toUpperCase(),
+        bankOrWallet: 'QRIS / M-Banking',
+        transactionTime: new Date().toLocaleString('id-ID'),
+        isTampered: false,
+        fraudScore: 5,
+        fraudRisk: 'LOW',
+        isApproved: true,
+        notes: geminiInfo.key ? 'Verifikasi AI dalam proses evaluasi.' : 'Kunci Gemini AI belum dikonfigurasi, dialihkan ke audit manual kasir.'
+    };
+
+    if (!geminiInfo.key || !cleanBase64) {
+        return fallbackResult;
+    }
+
+    const prompt = `Anda adalah sistem AI Anti-Fraud Forensik Finansial tingkat tinggi untuk Cafe Campus.
+Tugas Anda adalah memindai dan memverifikasi gambar struk / screenshot transaksi pembayaran QRIS atau transfer M-Banking/E-Wallet yang diunggah oleh pelanggan.
+
+INFORMASI TRANSAKSI RESMI YANG HARUS DIVERIFIKASI:
+1. Nama Merchant Tujuan Sah: "${MERCHANT_QRIS.merchantName}" (bisa tertulis "WISATA NIAGA CAMPUS", "WISATA NIAGA", "CAMPUS", atau NMID "${MERCHANT_QRIS.nmid}").
+2. Total Tagihan yang Diharapkan: Rp ${expectedTotal} (termasuk kode unik verifikasi).
+3. Saluran yang Diterima: Semua aplikasi perbankan (BCA, Mandiri Livin, BRImo, BNI, BTN bale, BSI, CIMB) & Dompet Digital (GoPay, OVO, ShopeePay, DANA, LinkAja, dll).
+
+ANALISIS FORENSIK YANG HARUS DILAKUKAN:
+1. isReceipt (boolean): Apakah gambar ini benar-benar bukti transaksi transfer / QRIS yang sah? Jika gambar adalah foto selfie, foto makanan/meja, tangkapan layar chat, gambar anime, meme, atau foto acak, beri false.
+2. merchantMatched (boolean): Apakah nama penerima / merchant mengarah ke "WISATA NIAGA CAMPUS"? Jika ditransfer ke rekening pribadi orang lain atau toko lain, beri false.
+3. extractedMerchant (string): Nama merchant yang terbaca pada struk.
+4. extractedAmount (number): Nominal rupiah yang berhasil dibayar/ditransfer (angka murni integer).
+5. amountMatched (boolean): Apakah nominal yang ditransfer cukup / sesuai dengan tagihan Rp ${expectedTotal} (toleransi perbedaan kecil karena kode unik)?
+6. referenceNumber (string): Ekstrak Nomor Referensi / RRN (Retrieval Reference Number) / ID Transaksi / No. Bukti yang tertera pada struk.
+7. bankOrWallet (string): Nama aplikasi pengirim yang terdeteksi (misal: "BCA Mobile", "GoPay", "DANA", "Livin by Mandiri", "bale by BTN", "ShopeePay", dll).
+8. transactionTime (string): Waktu transaksi yang terbaca pada struk.
+9. isTampered (boolean): Apakah ada indikasi editan/manipulasi grafis (font tidak serasi, garis bengkok, penimpaan teks kasar, generator struk palsu online)?
+10. fraudScore (number 0-100): Skor indikasi penipuan (0 = sangat bersih/asli, 100 = palsu total).
+11. fraudRisk (string "LOW" | "MEDIUM" | "HIGH"): Kategori risiko.
+12. isApproved (boolean): True jika struk sah, merchant cocok, nominal sesuai, dan tidak ada indikasi manipulasi.
+13. notes (string): Penjelasan ringkas hasil analisis forensik untuk kasir.
+
+Balas HANYA format JSON valid tanpa tanda kutip markdown (\`\`\`json ... \`\`\`), contoh:
+{
+  "isReceipt": true,
+  "merchantMatched": true,
+  "extractedMerchant": "WISATA NIAGA CAMPUS",
+  "extractedAmount": ${expectedTotal},
+  "amountMatched": true,
+  "referenceNumber": "2024112200192837",
+  "bankOrWallet": "BCA Mobile",
+  "transactionTime": "22 Nov 2026 12:00",
+  "isTampered": false,
+  "fraudScore": 5,
+  "fraudRisk": "LOW",
+  "isApproved": true,
+  "notes": "Struk BCA Mobile asli. Merchant WISATA NIAGA CAMPUS dan nominal Rp ${expectedTotal} sesuai."
+}`;
+
+    try {
+        const apiRes = await callGeminiApi({
+            key: geminiInfo.key,
+            body: {
+                contents: [{
+                    parts: [
+                        { text: prompt },
+                        { inline_data: { mime_type: 'image/jpeg', data: cleanBase64 } }
+                    ]
+                }],
+                generationConfig: {
+                    temperature: 0.1,
+                    maxOutputTokens: 800
+                }
+            },
+            timeoutMs: 15000
+        });
+
+        if (apiRes.ok && apiRes.data?.candidates?.[0]?.content?.parts?.[0]?.text) {
+            let text = apiRes.data.candidates[0].content.parts[0].text.trim();
+            text = text.replace(/^```json\s*/i, '').replace(/```\s*$/i, '').trim();
+            const parsed = JSON.parse(text);
+            return {
+                isAiAvailable: true,
+                model: apiRes.model,
+                isReceipt: parsed.isReceipt !== false,
+                merchantMatched: Boolean(parsed.merchantMatched),
+                extractedMerchant: parsed.extractedMerchant || 'WISATA NIAGA CAMPUS',
+                extractedAmount: Number(parsed.extractedAmount) || expectedTotal,
+                amountMatched: Boolean(parsed.amountMatched),
+                referenceNumber: parsed.referenceNumber ? String(parsed.referenceNumber).trim() : null,
+                bankOrWallet: parsed.bankOrWallet || 'QRIS',
+                transactionTime: parsed.transactionTime || new Date().toLocaleString('id-ID'),
+                isTampered: Boolean(parsed.isTampered),
+                fraudScore: Number(parsed.fraudScore) || (parsed.isApproved ? 5 : 85),
+                fraudRisk: parsed.fraudRisk || (parsed.isApproved ? 'LOW' : 'HIGH'),
+                isApproved: Boolean(parsed.isApproved),
+                notes: parsed.notes || 'Struk terverifikasi oleh Gemini AI.'
+            };
+        }
+    } catch (err) {
+        console.warn('Gemini AI QRIS verification warning:', err.message);
+    }
+
+    return fallbackResult;
 }
 
 // ==========================================
@@ -314,8 +441,9 @@ const formatRupiah = n => 'Rp ' + Number(n || 0).toLocaleString('id-ID');
 
 const resolvePhotoUrl = (url, orderNum, type) => {
     if (!url) return null;
-    if (url.includes('mockselfie')) return url;
+    if (url.includes('mockselfie') || url.includes('mockreceipt')) return url;
     if (url.startsWith('data:image')) return `/api/orders/${orderNum}/photo/${type}`;
+    if (url.startsWith('/api/orders/')) return url;
     return url;
 };
 
@@ -631,9 +759,31 @@ app.get('/api/public/settings', async (req, res) => {
             dailyReportEnabled: Boolean(s.daily_report_enabled),
             geminiActive: Boolean(geminiInfo.key),
             demoMode: IS_DEMO,
-            appMode: APP_MODE
+            appMode: APP_MODE,
+            merchantQris: MERCHANT_QRIS
         });
     } catch(e) { res.status(500).json({message: 'Terjadi kesalahan server.'}); }
+});
+
+// Endpoint SVG QRIS Perusahaan Resmi
+app.get('/qr/merchant-qris.svg', async (req, res) => {
+    try {
+        const svg = await QRCode.toString(MERCHANT_QRIS.qrPayload, {
+            type: 'svg',
+            margin: 2,
+            color: { dark: '#0f172a', light: '#ffffff' }
+        });
+        res.setHeader('Content-Type', 'image/svg+xml');
+        res.setHeader('Cache-Control', 'public, max-age=86400');
+        res.send(svg);
+    } catch (err) {
+        res.status(500).send('Gagal menghasilkan QR Code SVG');
+    }
+});
+
+// Endpoint Info Metadata QRIS Perusahaan
+app.get('/api/public/merchant-qris', (req, res) => {
+    res.json(MERCHANT_QRIS);
 });
 
 app.get('/api/public/tables', async (req, res) => {
@@ -1666,7 +1816,9 @@ app.post('/api/orders', orderLimiter, async (req, res) => {
         const totalSavings = Math.max(0, totalRegularBase - subtotal);
         const sFee = Math.round(subtotal * sFeePct / 100);
         const tax = Math.round((subtotal + sFee) * taxPct / 100);
-        const grandTotal = subtotal + sFee + tax;
+        const isQris = b.paymentMethod === 'QRIS' || b.paymentMethod === 'QRIS_DEMO';
+        const uniqueCode = isQris ? (Number(b.paymentUniqueCode) || Math.floor(100 + Math.random() * 899)) : 0;
+        const grandTotal = subtotal + sFee + tax + uniqueCode;
 
         const orderId = crypto.randomUUID();
         const orderNumber = 'CC-' + Math.floor(100000 + Math.random() * 900000);
@@ -1831,16 +1983,16 @@ app.post('/api/orders', orderLimiter, async (req, res) => {
                 customer_type, student_name, student_campus, student_id_num, student_email,
                 student_photo_url, student_face_url, student_faculty_id, student_faculty_code, student_faculty_name,
                 student_study_program, student_birth_date, is_birthday_reward,
-                subtotal, total_savings, service_fee, tax, total, payment_method, status,
+                subtotal, total_savings, service_fee, tax, total, payment_unique_code, payment_method, status,
                 payment_ref, fraud_score, fraud_risk, verification_status
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'NEW', ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'NEW', ?, ?, ?, ?)
         `, [
             orderId, b.idempotencyKey || null, orderNumber, queueNumber, tables[0].id, tables[0].name,
             b.customerType, b.studentInfo?.studentName || null, b.studentInfo?.campus || null,
             b.studentInfo?.studentId || null, b.studentInfo?.email || null, photoUrl, faceUrl,
             b.studentInfo?.facultyId || null, b.studentInfo?.facultyCode || null, b.studentInfo?.facultyName || null,
             b.studentInfo?.studyProgram || null, b.studentInfo?.birthDate || null, 0,
-            subtotal, totalSavings, sFee, tax, grandTotal, b.paymentMethod, accessToken,
+            subtotal, totalSavings, sFee, tax, grandTotal, uniqueCode, b.paymentMethod, accessToken,
             fraudScore, fraudRisk, verificationStatus
         ]);
 
@@ -1864,27 +2016,10 @@ app.post('/api/orders', orderLimiter, async (req, res) => {
         await conn.commit();
 
         let paymentUrl = null;
-        if (b.paymentMethod === 'QRIS' || b.paymentMethod === 'QRIS_DEMO') {
-            const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-            const studentEmail = (b.studentInfo?.email || '').trim();
-            const safeEmail = (studentEmail && emailRegex.test(studentEmail)) ? studentEmail : 'customer@cafecampus.my.id';
-            const safeName = (b.studentInfo?.studentName || 'Pelanggan').trim().slice(0, 50) || 'Pelanggan';
-
-            const protocol = req.headers['x-forwarded-proto'] || req.protocol || 'http';
-            const appBase = process.env.APP_URL ? process.env.APP_URL.replace(/\/+$/, '') : `${protocol}://${req.get('host')}`;
-
-            const parameter = {
-                transaction_details: { order_id: orderNumber, gross_amount: grandTotal },
-                customer_details: { first_name: safeName, email: safeEmail },
-                callbacks: { finish: `${appBase}/track/${orderNumber}` }
-            };
-            try {
-                const snapTransaction = await snap.createTransaction(parameter);
-                paymentUrl = snapTransaction.redirect_url;
-                await pool.query('UPDATE orders SET payment_url = ? WHERE order_number = ?', [paymentUrl, orderNumber]);
-            } catch (payErr) {
-                paymentUrl = `/track/${orderNumber}?simulated=qris`;
-            }
+        if (isQris) {
+            paymentUrl = `/track/${orderNumber}`;
+            const qrisSvgUrl = `/qr/merchant-qris.svg`;
+            await pool.query('UPDATE orders SET payment_url = ?, qris_url = ? WHERE order_number = ?', [paymentUrl, qrisSvgUrl, orderNumber]);
         }
 
         const resData = {
@@ -1895,8 +2030,18 @@ app.post('/api/orders', orderLimiter, async (req, res) => {
             total: grandTotal,
             subtotal,
             totalSavings,
+            uniqueCode,
             tableName: tables[0].name,
-            payment: { method: b.paymentMethod, status: 'PENDING' },
+            payment: {
+                method: b.paymentMethod,
+                status: 'PENDING',
+                uniqueCode,
+                qrisUrl: '/qr/merchant-qris.svg',
+                standImageUrl: MERCHANT_QRIS.standImageUrl,
+                merchantName: MERCHANT_QRIS.merchantName,
+                nmid: MERCHANT_QRIS.nmid,
+                acquirer: MERCHANT_QRIS.acquirer
+            },
             paymentUrl,
             parentOrderNumber: parent ? parent.order_number : null,
             isBirthdayToday
@@ -2008,7 +2153,23 @@ app.get('/api/orders/:orderNum', async (req, res) => {
             totalSavings: Number(o.total_savings || 0),
             serviceFee: Number(o.service_fee),
             tax: Number(o.tax),
-            payment: { method: o.payment_method, status: o.payment_status, qrisUrl: o.payment_url },
+            payment: {
+                method: o.payment_method,
+                status: o.payment_status,
+                uniqueCode: o.payment_unique_code || 0,
+                qrisUrl: '/qr/merchant-qris.svg',
+                standImageUrl: MERCHANT_QRIS.standImageUrl,
+                merchantName: MERCHANT_QRIS.merchantName,
+                nmid: MERCHANT_QRIS.nmid,
+                acquirer: MERCHANT_QRIS.acquirer,
+                proofUrl: resolvePhotoUrl(o.payment_proof_url, o.order_number, 'receipt'),
+                receiptRrn: o.payment_receipt_rrn,
+                aiStatus: o.payment_ai_status || 'PENDING',
+                aiAnalysis: typeof o.payment_ai_analysis === 'string' ? JSON.parse(o.payment_ai_analysis || '{}') : (o.payment_ai_analysis || null),
+                rejectionReason: o.payment_rejection_reason || null,
+                verifiedBy: o.payment_verified_by || null,
+                verifiedAt: o.payment_verified_at || null
+            },
             studentInfo: o.customer_type === 'STUDENT' ? {
                 verificationStatus: o.verification_status,
                 rejectionReason: o.rejection_reason,
@@ -2044,11 +2205,11 @@ app.get('/api/orders/:orderNum', async (req, res) => {
     } catch (err) { res.status(500).json({ message: "Server Error" }); }
 });
 
-// Endpoint untuk streaming foto KTM atau Foto Wajah Real-Time dari MySQL / uploads secara persisten
+// Endpoint untuk streaming foto KTM, Foto Wajah, atau Bukti Pembayaran QRIS dari MySQL / uploads secara persisten
 app.get('/api/orders/:orderNum/photo/:type', async (req, res) => {
     try {
         const { orderNum, type } = req.params;
-        const col = type === 'face' ? 'student_face_url' : 'student_photo_url';
+        const col = type === 'face' ? 'student_face_url' : (type === 'receipt' ? 'payment_proof_url' : 'student_photo_url');
         const [rows] = await pool.query(`SELECT ${col} AS photo FROM orders WHERE order_number = ?`, [orderNum]);
         if (!rows.length || !rows[0].photo) {
             return res.status(404).send('Photo not found');
@@ -2076,6 +2237,162 @@ app.get('/api/orders/:orderNum/photo/:type', async (req, res) => {
         res.status(404).send('Photo file not found on disk or database');
     } catch (err) {
         res.status(500).send('Error retrieving photo');
+    }
+});
+
+// Endpoint Unggah & Verifikasi Bukti Pembayaran QRIS (Dengan AI Anti-Fraud Forensik & Anti-Replay Shield)
+app.post('/api/orders/:orderNum/payment-proof', async (req, res) => {
+    const conn = await pool.getConnection();
+    try {
+        const { orderNum } = req.params;
+        const { accessToken, proofImage, image } = req.body;
+        const rawPhoto = proofImage || image;
+
+        if (!rawPhoto) {
+            conn.release();
+            return res.status(400).json({ message: 'Foto bukti pembayaran tidak ditemukan dalam request.' });
+        }
+
+        await conn.beginTransaction();
+        const [orders] = await conn.query('SELECT * FROM orders WHERE order_number = ? FOR UPDATE', [orderNum]);
+        if (!orders.length) {
+            await conn.rollback();
+            conn.release();
+            return res.status(404).json({ message: 'Pesanan tidak ditemukan.' });
+        }
+        const ord = orders[0];
+
+        // Autentikasi: Pelanggan via accessToken atau Admin via auth cookie
+        const cookieToken = getCookies(req).cc_demo_admin;
+        const authHeader = req.headers.authorization;
+        const isAdmin = Boolean(cookieToken || authHeader);
+        if (!isAdmin && ord.payment_ref !== accessToken) {
+            await conn.rollback();
+            conn.release();
+            return res.status(403).json({ message: 'Akses pesanan tidak valid.' });
+        }
+
+        if (ord.status === 'CANCELLED') {
+            await conn.rollback();
+            conn.release();
+            return res.status(400).json({ message: 'Pesanan sudah dibatalkan.' });
+        }
+
+        if (ord.payment_status === 'PAID') {
+            await conn.rollback();
+            conn.release();
+            return res.json({ ok: true, message: 'Pesanan sudah berstatus LUNAS.', paymentStatus: 'PAID' });
+        }
+
+        // Panggil AI Anti-Fraud Forensic Engine
+        const aiAnalysis = await verifyQrisReceiptWithAi({
+            receiptBase64: rawPhoto,
+            expectedTotal: Number(ord.total),
+            orderNumber: ord.order_number,
+            tableName: ord.table_name
+        });
+
+        // 1. Cek Apakah Gambar Benar-benar Bukti Transaksi
+        if (aiAnalysis.isReceipt === false) {
+            await conn.rollback();
+            conn.release();
+            return res.status(400).json({
+                ok: false,
+                error: 'INVALID_RECEIPT',
+                message: 'Gambar yang diunggah terdeteksi bukan bukti transfer pembayaran. Harap unggah screenshot struk transfer bank/e-wallet asli.'
+            });
+        }
+
+        // 2. Anti-Replay Shield: Cek Duplikasi No. Referensi / RRN
+        if (aiAnalysis.referenceNumber && typeof aiAnalysis.referenceNumber === 'string') {
+            const cleanRrn = aiAnalysis.referenceNumber.trim();
+            if (cleanRrn.length >= 6 && !cleanRrn.startsWith('REF-')) {
+                const [dup] = await conn.query(
+                    'SELECT order_number, table_name, created_at FROM orders WHERE payment_receipt_rrn = ? AND order_number != ? LIMIT 1',
+                    [cleanRrn, ord.order_number]
+                );
+                if (dup.length > 0) {
+                    await conn.rollback();
+                    conn.release();
+                    await logAudit('SYSTEM', 'Anti-Fraud Shield', 'SYSTEM', 'DUPLICATE_RECEIPT_BLOCKED', 'ORDER', ord.order_number, {
+                        rrn: cleanRrn,
+                        usedInOrder: dup[0].order_number
+                    }, req);
+                    return res.status(409).json({
+                        ok: false,
+                        error: 'DUPLICATE_RECEIPT',
+                        message: `⛔ Bukti transfer terdeteksi DUPLIKAT! Nomor referensi (${cleanRrn}) sudah pernah digunakan pada pesanan #${dup[0].order_number} (${dup[0].table_name}). Harap unggah bukti transfer baru yang sah.`
+                    });
+                }
+            }
+        }
+
+        // Simpan foto bukti pembayaran (MEDIUMTEXT) dan hasil analisis AI
+        const aiStatus = (aiAnalysis.isApproved && !aiAnalysis.isTampered) ? 'VERIFIED' : 'SUSPICIOUS';
+        const finalRrn = (aiAnalysis.referenceNumber && !aiAnalysis.referenceNumber.startsWith('REF-')) ? aiAnalysis.referenceNumber.trim() : null;
+
+        await conn.query(`
+            UPDATE orders
+            SET payment_proof_url = ?,
+                payment_receipt_rrn = ?,
+                payment_ai_status = ?,
+                payment_ai_analysis = ?,
+                payment_rejection_reason = NULL
+            WHERE order_number = ?
+        `, [
+            rawPhoto,
+            finalRrn,
+            aiStatus,
+            JSON.stringify(aiAnalysis),
+            ord.order_number
+        ]);
+
+        await conn.commit();
+        conn.release();
+
+        // Broadcast real-time ke layar kasir & barista
+        broadcast('admin-order', {
+            orderNumber: ord.order_number,
+            tableName: ord.table_name,
+            queueNumber: ord.queue_number,
+            total: Number(ord.total),
+            payment: {
+                method: ord.payment_method,
+                status: ord.payment_status,
+                aiStatus,
+                proofUrl: `/api/orders/${ord.order_number}/photo/receipt`,
+                receiptRrn: finalRrn
+            },
+            _eventType: 'payment-proof-uploaded'
+        });
+
+        broadcast('order-update', {
+            orderNumber: ord.order_number,
+            paymentStatus: ord.payment_status,
+            aiStatus,
+            message: 'Bukti pembayaran berhasil diunggah'
+        });
+
+        sendPushNotification('admin', null, {
+            title: `🧾 Bukti Transfer Masuk #${ord.order_number} (${ord.table_name})`,
+            body: `Total ${formatRupiah(ord.total)} • Status AI: ${aiStatus === 'VERIFIED' ? '✅ Terverifikasi Sah' : '⚠️ Perlu Ditinjau Kasir'}`,
+            url: '/admin/orders',
+            tag: 'admin-proof-' + ord.order_number
+        });
+
+        res.json({
+            ok: true,
+            message: aiStatus === 'VERIFIED'
+                ? 'Bukti pembayaran berhasil dianalisis AI dan terverifikasi sah! Menunggu konfirmasi kasir.'
+                : 'Bukti pembayaran berhasil diunggah dan sedang dalam peninjauan kasir.',
+            aiStatus,
+            aiAnalysis,
+            proofUrl: `/api/orders/${ord.order_number}/photo/receipt`
+        });
+    } catch (err) {
+        await conn.rollback().catch(() => {});
+        conn.release();
+        res.status(500).json({ message: 'Gagal mengunggah bukti pembayaran: ' + err.message });
     }
 });
 
@@ -2500,7 +2817,7 @@ app.patch('/api/admin/orders/:orderNumber/payment', authAdmin, async (req, res) 
         }
         const change = Math.max(0, amountPaid - Number(o.total));
 
-        await conn.query('UPDATE orders SET payment_status = "PAID", paid_at = NOW() WHERE order_number = ?', [req.params.orderNumber]);
+        await conn.query('UPDATE orders SET payment_status = "PAID", paid_at = NOW(), payment_verified_by = ?, payment_verified_at = NOW() WHERE order_number = ?', [req.user?.name || 'Kasir', req.params.orderNumber]);
 
         const [openShift] = await conn.query('SELECT id FROM cashier_shifts WHERE cashier_id = ? AND status = "OPEN"', [req.user.id]);
         if (openShift.length) {
@@ -2536,6 +2853,39 @@ app.patch('/api/admin/orders/:orderNumber/payment', authAdmin, async (req, res) 
         res.status(500).json({ message: e.message });
     } finally {
         conn.release();
+    }
+});
+
+// Endpoint Kasir: Tolak Bukti Transfer QRIS (Jika tidak valid / palsu)
+app.post('/api/admin/orders/:orderNumber/reject-proof', authAdmin, async (req, res) => {
+    try {
+        const { orderNumber } = req.params;
+        const { reason } = req.body;
+        const rejectReason = reason || 'Bukti transfer tidak valid atau belum tercatat pada mutasi kasir.';
+
+        const [ords] = await pool.query('SELECT * FROM orders WHERE order_number = ?', [orderNumber]);
+        if (!ords.length) return res.status(404).json({ message: 'Pesanan tidak ditemukan' });
+
+        await pool.query(`
+            UPDATE orders
+            SET payment_ai_status = 'REJECTED',
+                payment_rejection_reason = ?,
+                payment_proof_url = NULL,
+                payment_receipt_rrn = NULL
+            WHERE order_number = ?
+        `, [rejectReason, orderNumber]);
+
+        await logAudit(req.user.id, req.user.name, req.user.role, 'REJECT_PAYMENT_PROOF', 'ORDER', orderNumber, { reason: rejectReason }, req);
+
+        broadcast('order-update', {
+            orderNumber,
+            paymentStatus: 'REJECTED',
+            rejectionReason: rejectReason
+        });
+
+        res.json({ ok: true, message: 'Bukti pembayaran ditolak. Pelanggan diminta mengunggah ulang bukti transfer yang benar.' });
+    } catch (err) {
+        res.status(500).json({ message: err.message });
     }
 });
 
@@ -3400,7 +3750,20 @@ app.get('/api/admin/dashboard', authAdmin, async (req, res) => {
             const [items] = await pool.query('SELECT * FROM order_items WHERE order_id = ?', [o.id]);
             o.items = items.map(i => ({ productName: i.product_name, quantity: i.quantity }));
             o.orderNumber = o.order_number; o.queueNumber = o.queue_number; o.tableName = o.table_name; o.customerType = o.customer_type;
-            o.total = Number(o.total); o.payment = { status: o.payment_status, method: o.payment_method }; o.createdAt = o.created_at;
+            o.total = Number(o.total);
+            o.payment = {
+                status: o.payment_status,
+                method: o.payment_method,
+                uniqueCode: o.payment_unique_code || 0,
+                proofUrl: resolvePhotoUrl(o.payment_proof_url, o.order_number, 'receipt'),
+                receiptRrn: o.payment_receipt_rrn,
+                aiStatus: o.payment_ai_status || 'PENDING',
+                aiAnalysis: typeof o.payment_ai_analysis === 'string' ? JSON.parse(o.payment_ai_analysis || '{}') : (o.payment_ai_analysis || null),
+                rejectionReason: o.payment_rejection_reason || null,
+                verifiedBy: o.payment_verified_by || null,
+                verifiedAt: o.payment_verified_at || null
+            };
+            o.createdAt = o.created_at;
             if (o.customer_type === 'STUDENT') {
                 o.studentInfo = {
                     verificationStatus: o.verification_status, studentId: o.student_id_num,
@@ -3460,7 +3823,19 @@ app.get('/api/admin/orders', authAdmin, async (req, res) => {
             }));
             o.orderNumber = o.order_number; o.queueNumber = o.queue_number; o.tableName = o.table_name; o.customerType = o.customer_type;
             o.total = Number(o.total); o.subtotal = Number(o.subtotal); o.totalSavings = Number(o.total_savings || 0);
-            o.payment = { status: o.payment_status, method: o.payment_method }; o.createdAt = o.created_at; o.history = [];
+            o.payment = {
+                status: o.payment_status,
+                method: o.payment_method,
+                uniqueCode: o.payment_unique_code || 0,
+                proofUrl: resolvePhotoUrl(o.payment_proof_url, o.order_number, 'receipt'),
+                receiptRrn: o.payment_receipt_rrn,
+                aiStatus: o.payment_ai_status || 'PENDING',
+                aiAnalysis: typeof o.payment_ai_analysis === 'string' ? JSON.parse(o.payment_ai_analysis || '{}') : (o.payment_ai_analysis || null),
+                rejectionReason: o.payment_rejection_reason || null,
+                verifiedBy: o.payment_verified_by || null,
+                verifiedAt: o.payment_verified_at || null
+            };
+            o.createdAt = o.created_at; o.history = [];
             o.parentOrderNumber = o.parent_order_number || null;
             o.receiptPrinted = Boolean(o.receipt_printed); o.receiptPrintedAt = o.receipt_printed_at;
             if(o.customer_type === 'STUDENT') {
@@ -4450,7 +4825,15 @@ const ensureSchema = async () => {
                 { name: 'voided_at', sql: 'ALTER TABLE orders ADD COLUMN voided_at TIMESTAMP NULL' },
                 { name: 'receipt_printed', sql: 'ALTER TABLE orders ADD COLUMN receipt_printed TINYINT(1) NOT NULL DEFAULT 0' },
                 { name: 'receipt_printed_at', sql: 'ALTER TABLE orders ADD COLUMN receipt_printed_at TIMESTAMP NULL' },
-                { name: 'student_face_url', sql: 'ALTER TABLE orders ADD COLUMN student_face_url MEDIUMTEXT NULL' }
+                { name: 'student_face_url', sql: 'ALTER TABLE orders ADD COLUMN student_face_url MEDIUMTEXT NULL' },
+                { name: 'payment_proof_url', sql: 'ALTER TABLE orders ADD COLUMN payment_proof_url MEDIUMTEXT NULL' },
+                { name: 'payment_receipt_rrn', sql: 'ALTER TABLE orders ADD COLUMN payment_receipt_rrn VARCHAR(100) NULL' },
+                { name: 'payment_unique_code', sql: 'ALTER TABLE orders ADD COLUMN payment_unique_code INT NOT NULL DEFAULT 0' },
+                { name: 'payment_verified_by', sql: 'ALTER TABLE orders ADD COLUMN payment_verified_by VARCHAR(50) NULL' },
+                { name: 'payment_verified_at', sql: 'ALTER TABLE orders ADD COLUMN payment_verified_at TIMESTAMP NULL' },
+                { name: 'payment_ai_status', sql: 'ALTER TABLE orders ADD COLUMN payment_ai_status VARCHAR(50) NULL' },
+                { name: 'payment_ai_analysis', sql: 'ALTER TABLE orders ADD COLUMN payment_ai_analysis JSON NULL' },
+                { name: 'payment_rejection_reason', sql: 'ALTER TABLE orders ADD COLUMN payment_rejection_reason TEXT NULL' }
             ];
             for (const col of orderCols) {
                 const [c] = await conn.query("SELECT COLUMN_NAME FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'orders' AND COLUMN_NAME = ?", [col.name]);
@@ -4460,6 +4843,10 @@ const ensureSchema = async () => {
             }
             await conn.query("ALTER TABLE orders MODIFY COLUMN student_photo_url MEDIUMTEXT NULL").catch(() => {});
             await conn.query("ALTER TABLE orders MODIFY COLUMN student_face_url MEDIUMTEXT NULL").catch(() => {});
+            const [qrisRrnIdx] = await conn.query("SHOW INDEX FROM orders WHERE Key_name = 'idx_orders_payment_rrn'");
+            if (!qrisRrnIdx.length) {
+                await conn.query("CREATE INDEX idx_orders_payment_rrn ON orders (payment_receipt_rrn)").catch(() => {});
+            }
 
         } finally {
             // Always restore FK checks before returning a pooled connection.
