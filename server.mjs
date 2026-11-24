@@ -786,6 +786,68 @@ app.get('/api/public/merchant-qris', (req, res) => {
     res.json(MERCHANT_QRIS);
 });
 
+// Endpoint SVG QR Bayar Langsung (Untuk scan kamera HP / Simulator)
+app.get('/qr/pay/:orderNumber.svg', async (req, res) => {
+    try {
+        let fullBaseUrl;
+        if (process.env.APP_URL && process.env.APP_URL.startsWith('http')) {
+            fullBaseUrl = process.env.APP_URL.replace(/\/+$/, '');
+        } else {
+            const protocol = req.headers['x-forwarded-proto'] || req.protocol || 'http';
+            let host = req.get('host') || `127.0.0.1:${PORT}`;
+            if (host.startsWith('localhost') || host.startsWith('127.0.0.1')) {
+                const lanIp = getLanIp();
+                const p = host.split(':')[1] || PORT;
+                host = `${lanIp}:${p}`;
+            }
+            fullBaseUrl = `${protocol}://${host}`;
+        }
+        const url = `${fullBaseUrl}/pay/${encodeURIComponent(req.params.orderNumber)}`;
+        const svg = await QRCode.toString(url, {
+            type: 'svg',
+            margin: 2,
+            width: 280,
+            color: { dark: '#0f172a', light: '#ffffff' }
+        });
+        res.setHeader('Content-Type', 'image/svg+xml');
+        res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
+        res.send(svg);
+    } catch (err) {
+        res.status(500).send('<svg xmlns="http://www.w3.org/2000/svg" width="280" height="280"><text y="140" x="40" fill="red">QR Error</text></svg>');
+    }
+});
+
+// Endpoint Info Publik Pembayaran Pesanan (Untuk Portal Bayar HP / Simulator)
+app.get('/api/orders/:orderNum/pay-info', async (req, res) => {
+    try {
+        const [orders] = await pool.query('SELECT * FROM orders WHERE order_number = ?', [req.params.orderNum]);
+        if (!orders.length) return res.status(404).json({ message: 'Pesanan tidak ditemukan' });
+        const o = orders[0];
+        const [items] = await pool.query('SELECT * FROM order_items WHERE order_id = ?', [o.id]);
+        res.json({
+            orderNumber: o.order_number,
+            tableName: o.table_name,
+            customerType: o.customer_type,
+            status: o.status,
+            total: Number(o.total),
+            subtotal: Number(o.subtotal),
+            paymentMethod: o.payment_method,
+            paymentStatus: o.payment_status,
+            uniqueCode: o.payment_unique_code || 0,
+            accessToken: o.payment_ref,
+            merchantName: MERCHANT_QRIS.merchantName,
+            nmid: MERCHANT_QRIS.nmid,
+            items: items.map(i => ({
+                productName: i.product_name,
+                quantity: i.quantity,
+                lineTotal: Number(i.line_total)
+            }))
+        });
+    } catch(err) {
+        res.status(500).json({ message: 'Gagal memuat data pembayaran: ' + err.message });
+    }
+});
+
 app.get('/api/public/tables', async (req, res) => {
     try {
         const [rows] = await pool.query(`

@@ -1520,7 +1520,7 @@ async function render() {
     if (p === '/' || p === '/demo') return landing();
     const parts = p.split('/').filter(Boolean);
     if (parts[0] === 'order') { if (parts.length === 1) return landing(); if (parts.length === 2) return tableWelcomePage(decodeURIComponent(parts[1])); if (parts[2] === 'menu') return menuPage(decodeURIComponent(parts[1])); if (parts[2] === 'product' && parts[3]) return productDetailPage(decodeURIComponent(parts[1]), decodeURIComponent(parts[3])); }
-    if (p === '/cart') return cartPage(); if (p === '/checkout') return checkoutPage(); if (parts[0] === 'track' && parts[1]) return trackPage(decodeURIComponent(parts[1]));
+    if (p === '/cart') return cartPage(); if (p === '/checkout') return checkoutPage(); if (parts[0] === 'track' && parts[1]) return trackPage(decodeURIComponent(parts[1])); if (parts[0] === 'pay' && parts[1]) return paySimulatorPage(decodeURIComponent(parts[1]));
     if (p === '/admin/login') return loginPage(); if (p === '/admin' || p === '/admin/') return adminGuard(dashboardPage);
     if (p === '/admin/orders') return adminGuard(ordersPage); if (p === '/admin/menu') return adminGuard(menuAdminPage);
     if (p === '/admin/kds') return adminGuard(kdsPage);
@@ -2399,6 +2399,315 @@ function trackingTimeline(o) {
   return `<div class="track-timeline">${steps.map((s, i) => `<div class="track-step ${i < index ? 'done' : ''} ${i === index ? 'current' : ''}"><div class="track-node">${i < index ? icon('check', 12) : ''}</div><div><b>${s[1]}</b><span>${s[2]}</span></div></div>`).join('')}</div>`;
 }
 
+function generateMockReceiptCanvas(o) {
+  const canvas = document.createElement('canvas');
+  canvas.width = 600;
+  canvas.height = 920;
+  const ctx = canvas.getContext('2d');
+
+  ctx.fillStyle = '#f8fafc';
+  ctx.fillRect(0, 0, 600, 920);
+
+  ctx.fillStyle = '#ffffff';
+  ctx.beginPath();
+  if (ctx.roundRect) ctx.roundRect(30, 30, 540, 860, 20); else ctx.rect(30, 30, 540, 860);
+  ctx.fill();
+  ctx.strokeStyle = '#e2e8f0';
+  ctx.lineWidth = 2;
+  ctx.stroke();
+
+  ctx.fillStyle = '#1e3a8a';
+  ctx.beginPath();
+  if (ctx.roundRect) ctx.roundRect(30, 30, 540, 90, [20, 20, 0, 0]); else ctx.rect(30, 30, 540, 90);
+  ctx.fill();
+
+  ctx.fillStyle = '#ffffff';
+  ctx.font = 'bold 24px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif';
+  ctx.textAlign = 'center';
+  ctx.fillText('bale by BTN • QRIS GPN', 300, 82);
+
+  ctx.fillStyle = '#22c55e';
+  ctx.beginPath();
+  ctx.arc(300, 185, 42, 0, Math.PI * 2);
+  ctx.fill();
+
+  ctx.strokeStyle = '#ffffff';
+  ctx.lineWidth = 6;
+  ctx.beginPath();
+  ctx.moveTo(284, 185);
+  ctx.lineTo(296, 197);
+  ctx.lineTo(318, 173);
+  ctx.stroke();
+
+  ctx.fillStyle = '#0f172a';
+  ctx.font = 'bold 22px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif';
+  ctx.fillText('TRANSAKSI BERHASIL', 300, 260);
+
+  ctx.fillStyle = '#64748b';
+  ctx.font = '14px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif';
+  ctx.fillText('Pembayaran QRIS Nasional ke Merchant Sah', 300, 285);
+
+  const totalVal = Number(o.total || o.amount || 0);
+  ctx.fillStyle = '#15803d';
+  ctx.font = 'bold 36px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif';
+  ctx.fillText('Rp ' + totalVal.toLocaleString('id-ID'), 300, 340);
+
+  ctx.strokeStyle = '#cbd5e1';
+  ctx.lineWidth = 2;
+  ctx.setLineDash([8, 6]);
+  ctx.beginPath();
+  ctx.moveTo(60, 375);
+  ctx.lineTo(540, 375);
+  ctx.stroke();
+  ctx.setLineDash([]);
+
+  const rows = [
+    ['Penerima / Merchant', 'WISATA NIAGA CAMPUS'],
+    ['NMID', 'ID2024361872201'],
+    ['No. Referensi / RRN', '202611' + Math.floor(10000000 + Math.random() * 90000000)],
+    ['Waktu Transaksi', new Date().toLocaleString('id-ID', { dateStyle: 'medium', timeStyle: 'short' })],
+    ['Nomor Pesanan', '#' + (o.orderNumber || 'CC-ORDER')],
+    ['Nomor Meja', o.tableName || 'Meja Customer'],
+    ['Metode Transaksi', 'QRIS Dinamis (GPN / ASPI)'],
+    ['Sumber Dana', 'Rekening Tabungan / Saldo']
+  ];
+
+  let y = 420;
+  ctx.font = '15px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif';
+  rows.forEach(([label, val]) => {
+    ctx.textAlign = 'left';
+    ctx.fillStyle = '#64748b';
+    ctx.fillText(label, 60, y);
+
+    ctx.textAlign = 'right';
+    ctx.fillStyle = '#0f172a';
+    ctx.font = 'bold 15px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif';
+    ctx.fillText(val, 540, y);
+
+    y += 44;
+  });
+
+  ctx.fillStyle = '#f1f5f9';
+  ctx.beginPath();
+  if (ctx.roundRect) ctx.roundRect(60, 785, 480, 75, 12); else ctx.rect(60, 785, 480, 75);
+  ctx.fill();
+
+  ctx.fillStyle = '#475569';
+  ctx.textAlign = 'center';
+  ctx.font = '12.5px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif';
+  ctx.fillText('Simpan struk digital ini sebagai bukti pembayaran yang sah.', 300, 816);
+  ctx.fillText('Anti-Fraud Shield • Diverifikasi oleh Google Gemini AI', 300, 838);
+
+  return canvas.toDataURL('image/jpeg', 0.92);
+}
+
+async function paySimulatorPage(orderNumber) {
+  document.body.className = 'customer-body pay-portal-body';
+  document.body.innerHTML = `
+    <div class="pay-portal-page">
+      <div class="pay-portal-card">
+        <div style="text-align:center;padding:40px 20px;">
+          <div class="spinner" style="margin:0 auto 16px;width:36px;height:36px;"></div>
+          <b style="font-size:16px;color:#0f172a;display:block;">Memuat Data Tagihan QRIS...</b>
+          <p style="color:#64748b;font-size:13px;margin:4px 0 0;">Menghubungkan ke sistem Cafe Campus...</p>
+        </div>
+      </div>
+    </div>
+  `;
+
+  let info;
+  try {
+    info = await api('/orders/' + encodeURIComponent(orderNumber) + '/pay-info');
+  } catch (err) {
+    document.body.innerHTML = `
+      <div class="pay-portal-page">
+        <div class="pay-portal-card" style="text-align:center;padding:32px 20px;">
+          <div style="font-size:48px;margin-bottom:12px;">⚠️</div>
+          <h2 style="font-size:20px;font-weight:800;color:#0f172a;margin:0 0 8px;">Pesanan Tidak Ditemukan</h2>
+          <p style="color:#64748b;font-size:14px;margin:0 0 20px;">${esc(err.message || 'Data pembayaran tidak tersedia atau telah kadaluarsa.')}</p>
+          <a class="btn btn-primary" data-nav href="/">Kembali ke Beranda</a>
+        </div>
+      </div>
+    `;
+    return;
+  }
+
+  if (info.accessToken) {
+    sessionStorage.setItem('cc_access_' + orderNumber, info.accessToken);
+  }
+
+  const renderPortal = () => {
+    if (info.paymentStatus === 'PAID') {
+      document.body.innerHTML = `
+        <div class="pay-portal-page">
+          <div class="pay-portal-card success-card">
+            <div class="pay-success-icon">✓</div>
+            <span class="pay-success-pill">PEMBAYARAN LUNAS</span>
+            <h2>Pembayaran Berhasil!</h2>
+            <p>Transaksi untuk pesanan #${esc(orderNumber)} telah berhasil dikonfirmasi.</p>
+            <div class="pay-detail-box">
+              <div class="pdb-row"><span>Nomor Pesanan</span><b>#${esc(orderNumber)}</b></div>
+              <div class="pdb-row"><span>Nomor Meja</span><b>${esc(info.tableName)}</b></div>
+              <div class="pdb-row"><span>Total Terbayar</span><b>${money(info.total)}</b></div>
+              <div class="pdb-row"><span>Status Pesanan</span><b style="color:#16a34a;">${info.status === 'NEW' ? 'Antrean Kasir' : (info.status === 'PROCESSING' ? 'Sedang Disiapkan' : info.status)}</b></div>
+            </div>
+            <a class="btn btn-primary btn-wide btn-large" data-nav href="/track/${encodeURIComponent(orderNumber)}" style="text-decoration:none;">
+              ☕ Pantau Status Racikan Minuman
+            </a>
+          </div>
+        </div>
+      `;
+      return;
+    }
+
+    document.body.innerHTML = `
+      <div class="pay-portal-page">
+        <div class="pay-portal-card">
+          <div class="pay-portal-header">
+            <div class="pph-brand">
+              <span class="pph-qris-tag">QRIS</span>
+              <div>
+                <b>${esc(info.merchantName || 'WISATA NIAGA CAMPUS')}</b>
+                <small>NMID: ${esc(info.nmid || 'ID2024361872201')} • bale by BTN</small>
+              </div>
+            </div>
+            <span class="pph-tag-badge">ASPI • GPN</span>
+          </div>
+
+          <div class="pay-portal-main">
+            <div class="pos-total-card">
+              <small class="pos-total-label">TOTAL TAGIHAN PEMBAYARAN</small>
+              <strong class="pos-total-val">${money(info.total)}</strong>
+              <div class="pdb-row" style="margin-top:10px;"><span>Nomor Pesanan:</span><b>#${esc(orderNumber)}</b></div>
+              <div class="pdb-row"><span>Meja Pelanggan:</span><b>${esc(info.tableName)}</b></div>
+              ${info.uniqueCode ? `<div class="pos-code-pill">🛡️ Termasuk kode unik verifikasi anti-fraud: <b>+${info.uniqueCode}</b></div>` : ''}
+            </div>
+
+            <div class="pay-items-summary" style="margin-bottom:18px;">
+              <div style="font-weight:700;font-size:12px;color:#64748b;margin-bottom:8px;text-transform:uppercase;letter-spacing:0.5px;">Rincian Item (${info.items.length})</div>
+              ${info.items.map(it => `
+                <div class="pdb-row" style="border-bottom:1px solid #f1f5f9;padding:6px 0;">
+                  <span>${esc(it.productName)} x${it.quantity}</span>
+                  <b>${money(it.lineTotal)}</b>
+                </div>
+              `).join('')}
+            </div>
+
+            <div class="pay-actions-group" style="display:flex;flex-direction:column;gap:10px;">
+              <button type="button" class="btn btn-primary btn-wide btn-large" id="btnPayPortalSimulate" style="background:#16a34a;border-color:#16a34a;font-weight:800;font-size:15px;box-shadow:0 4px 14px rgba(22,163,74,0.3);">
+                ⚡ Konfirmasi Bayar Sekarang (Instan)
+              </button>
+
+              <button type="button" class="btn btn-soft btn-wide" id="btnPayPortalProof" style="font-weight:700;">
+                📸 Upload Screenshot Struk Bank / E-Wallet
+              </button>
+              <input type="file" id="portalProofInput" accept="image/*" style="display:none;">
+
+              <button type="button" class="btn btn-soft btn-wide" id="btnPayPortalAiTest" style="font-size:12px;color:#475569;">
+                🧪 Uji Coba Upload Struk Digital (AI Forensik)
+              </button>
+
+              <a class="btn btn-soft btn-wide" data-nav href="/track/${encodeURIComponent(orderNumber)}" style="margin-top:6px;text-decoration:none;font-size:12.5px;color:#64748b;text-align:center;">
+                📱 Buka Halaman Status Pesanan Meja
+              </a>
+            </div>
+
+            <div class="qris-scan-hud" id="portalScanningHud" style="display:none;margin-top:14px;">
+              <div class="laser-scanner"></div>
+              <div class="scan-hud-body">
+                <div class="spinner"></div>
+                <b>⚡ Google Gemini AI memverifikasi struk...</b>
+                <small>Mengecek keaslian merchant WISATA NIAGA CAMPUS & nominal.</small>
+              </div>
+            </div>
+
+            <div class="pay-portal-security-strip">
+              🔒 Transaksi aman dilindungi Standar Nasional QRIS &amp; Anti-Fraud AI Shield
+            </div>
+          </div>
+        </div>
+      </div>
+    `;
+
+    const btnSimulate = $('#btnPayPortalSimulate');
+    if (btnSimulate) {
+      btnSimulate.onclick = async () => {
+        alarm.unlock();
+        btnSimulate.disabled = true;
+        btnSimulate.innerHTML = '<span class="spinner"></span> Memproses Pembayaran...';
+        try {
+          await api('/demo/payments/' + encodeURIComponent(orderNumber) + '/pay', {
+            method: 'POST',
+            body: JSON.stringify({ accessToken: info.accessToken })
+          });
+          info.paymentStatus = 'PAID';
+          alarm.playReadyChime();
+          toast('✅ Pembayaran Berhasil Dikonfirmasi (LUNAS)!');
+          renderPortal();
+        } catch (err) {
+          toast(err.message, true);
+          btnSimulate.disabled = false;
+          btnSimulate.textContent = '⚡ Konfirmasi Bayar Sekarang (Instan)';
+        }
+      };
+    }
+
+    const btnProof = $('#btnPayPortalProof');
+    const fileIn = $('#portalProofInput');
+    const hud = $('#portalScanningHud');
+
+    if (btnProof && fileIn) {
+      btnProof.onclick = () => fileIn.click();
+      fileIn.onchange = async (e) => {
+        const file = e.target.files?.[0];
+        if (!file) return;
+        try {
+          alarm.unlock();
+          if (hud) hud.style.display = 'block';
+          const compressed = await compressImage(file, 1000, 0.88);
+          const res = await api('/orders/' + encodeURIComponent(orderNumber) + '/payment-proof', {
+            method: 'POST',
+            body: JSON.stringify({ accessToken: info.accessToken, proofImage: compressed })
+          });
+          if (hud) hud.style.display = 'none';
+          toast(res.message || '✅ Bukti transfer berhasil diunggah!');
+          nav('/track/' + encodeURIComponent(orderNumber));
+        } catch (err) {
+          if (hud) hud.style.display = 'none';
+          toast(err.message, true);
+        }
+      };
+    }
+
+    const btnAiTest = $('#btnPayPortalAiTest');
+    if (btnAiTest) {
+      btnAiTest.onclick = async () => {
+        alarm.unlock();
+        btnAiTest.disabled = true;
+        btnAiTest.innerHTML = '<span class="spinner"></span> Mengunggah Struk AI...';
+        try {
+          if (hud) hud.style.display = 'block';
+          const receiptDataUrl = generateMockReceiptCanvas(info);
+          const res = await api('/orders/' + encodeURIComponent(orderNumber) + '/payment-proof', {
+            method: 'POST',
+            body: JSON.stringify({ accessToken: info.accessToken, proofImage: receiptDataUrl })
+          });
+          if (hud) hud.style.display = 'none';
+          toast(res.message || '✅ Struk digital berhasil diunggah & diverifikasi AI!');
+          nav('/track/' + encodeURIComponent(orderNumber));
+        } catch (err) {
+          if (hud) hud.style.display = 'none';
+          toast(err.message, true);
+          btnAiTest.disabled = false;
+          btnAiTest.textContent = '🧪 Uji Coba Upload Struk Digital (AI Forensik)';
+        }
+      };
+    }
+  };
+
+  renderPortal();
+}
+
 async function trackPage(orderNumber) {
   const access = sessionStorage.getItem('cc_access_' + orderNumber);
   if (!access) {
@@ -2502,6 +2811,7 @@ async function trackPage(orderNumber) {
       const isRejected = o.payment?.aiStatus === 'REJECTED';
       const isVerified = o.payment?.aiStatus === 'VERIFIED';
       const isSuspicious = o.payment?.aiStatus === 'SUSPICIOUS';
+      const qrScanMode = sessionStorage.getItem('cc_qris_mode_' + o.orderNumber) || 'phone_scan';
 
       return `<section class="tracking-card qris-card-wrap" id="trackingCardInner">
         <div class="qris-card-banner">
@@ -2515,10 +2825,31 @@ async function trackPage(orderNumber) {
           <span class="qris-gpn-pill">ASPI • GPN</span>
         </div>
 
+        <div class="qris-mode-switcher">
+          <button type="button" class="qris-mode-tab ${qrScanMode === 'phone_scan' ? 'active' : ''}" data-qr-mode="phone_scan">
+            📱 Scan Kamera HP (Bayar Otomatis)
+          </button>
+          <button type="button" class="qris-mode-tab ${qrScanMode === 'emvco' ? 'active' : ''}" data-qr-mode="emvco">
+            🏦 QRIS Standee BTN (Aplikasi Bank)
+          </button>
+        </div>
+
         <div class="qris-main-box">
           <div class="qris-qr-frame">
-            <img src="/qr/merchant-qris.svg" alt="QRIS Wisata Niaga Campus" class="qris-barcode-img">
-            <div class="qris-scan-caption">SCAN DENGAN M-BANKING / E-WALLET</div>
+            <img src="${qrScanMode === 'phone_scan' ? `/qr/pay/${encodeURIComponent(o.orderNumber)}.svg` : '/qr/merchant-qris.svg'}" alt="QRIS Wisata Niaga Campus" class="qris-barcode-img">
+            <div class="qris-scan-caption">
+              ${qrScanMode === 'phone_scan'
+                ? `📷 <b>ARAHKAN KAMERA HP KE QRIS DI ATAS</b><br><span style="font-size:10.5px;color:#64748b;font-weight:normal;">Buka kamera HP Anda, scan QR di atas untuk membuka portal pembayaran &amp; bayar langsung.</span>`
+                : `🏦 <b>SCAN DENGAN M-BANKING / E-WALLET</b><br><span style="font-size:10.5px;color:#64748b;font-weight:normal;">BCA, Mandiri, BRI, BNI, bale by BTN, GoPay, OVO, DANA, ShopeePay</span>`
+              }
+            </div>
+            ${qrScanMode === 'phone_scan' ? `
+              <div style="margin-top:8px;text-align:center;">
+                <a href="/pay/${encodeURIComponent(o.orderNumber)}" target="_blank" class="btn btn-soft btn-small" id="btnOpenPhonePayWeb" style="text-decoration:none;display:inline-flex;align-items:center;gap:6px;font-size:11.5px;padding:5px 12px;">
+                  🔗 Buka Portal Bayar di Tab Baru
+                </a>
+              </div>
+            ` : ''}
           </div>
 
           <div class="qris-amount-card">
@@ -2535,6 +2866,15 @@ async function trackPage(orderNumber) {
                 <div>Termasuk 3 digit kode unik verifikasi: <b>+${o.payment.uniqueCode}</b> (Wajib transfer tepat persis agar terverifikasi otomatis)</div>
               </div>
             ` : ''}
+          </div>
+
+          <div class="qris-instant-actions">
+            <button type="button" class="btn btn-primary btn-wide" id="demoPay" style="background:#16a34a;border-color:#16a34a;font-weight:700;box-shadow:0 4px 12px rgba(22,163,74,0.25);">
+              ⚡ Simulasikan Pembayaran Berhasil (QRIS Lunas Langsung)
+            </button>
+            <button type="button" class="btn btn-soft btn-wide" id="btnSimulateProof" style="font-size:12.5px;">
+              🧪 Uji Coba Upload Struk AI Forensik Otomatis
+            </button>
           </div>
         </div>
 
@@ -2793,6 +3133,14 @@ async function trackPage(orderNumber) {
   };
 
   const bindPayButton = () => {
+    $$('.qris-mode-tab').forEach(tab => {
+      tab.onclick = () => {
+        const mode = tab.dataset.qrMode;
+        sessionStorage.setItem('cc_qris_mode_' + orderNumber, mode);
+        updateTrackView();
+      };
+    });
+
     const pay = $('#demoPay');
     if (pay) pay.onclick = async () => {
       alarm.unlock();
@@ -2803,12 +3151,39 @@ async function trackPage(orderNumber) {
           method: 'POST',
           body: JSON.stringify({ accessToken: access })
         });
-        toast('✅ Pembayaran QRIS demo berhasil!');
-        refresh();
+        if (!o.payment) o.payment = {};
+        o.payment.status = 'PAID';
+        alarm.playReadyChime();
+        toast('✅ Pembayaran Berhasil (LUNAS)!');
+        await refresh();
       } catch (e) {
         toast(e.message, true);
         pay.disabled = false;
-        pay.textContent = '⚡ Simulasikan Pembayaran Berhasil (QRIS)';
+        pay.textContent = '⚡ Simulasikan Pembayaran Berhasil (QRIS Lunas Langsung)';
+      }
+    };
+
+    const btnSim = $('#btnSimulateProof');
+    if (btnSim) btnSim.onclick = async () => {
+      alarm.unlock();
+      btnSim.disabled = true;
+      btnSim.innerHTML = '<span class="spinner"></span> Mengunggah Struk AI...';
+      const hud = $('#qrisScanningHud');
+      try {
+        if (hud) hud.style.display = 'block';
+        const receiptDataUrl = generateMockReceiptCanvas(o);
+        const res = await api('/orders/' + encodeURIComponent(orderNumber) + '/payment-proof', {
+          method: 'POST',
+          body: JSON.stringify({ accessToken: access, proofImage: receiptDataUrl })
+        });
+        if (hud) hud.style.display = 'none';
+        toast(res.message || '✅ Struk simulasi berhasil diunggah dan diverifikasi AI!');
+        await refresh();
+      } catch (err) {
+        if (hud) hud.style.display = 'none';
+        toast(err.message, true);
+        btnSim.disabled = false;
+        btnSim.textContent = '🧪 Uji Coba Upload Struk AI Forensik Otomatis';
       }
     };
   };
@@ -2850,6 +3225,20 @@ async function trackPage(orderNumber) {
         if (data.status) {
           o.status = data.status;
           if (data.tableName) o.tableName = data.tableName;
+        }
+        if (data.paymentStatus === 'PAID' || data.payment?.status === 'PAID' || data.paid === true) {
+          if (!o.payment) o.payment = {};
+          const wasPending = o.payment.status !== 'PAID';
+          o.payment.status = 'PAID';
+          if (data.status) o.status = data.status;
+          if (wasPending) {
+            alarm.unlock();
+            alarm.playReadyChime();
+            toast('✅ Pembayaran Berhasil Dikonfirmasi (LUNAS)!');
+          }
+        }
+        if (data.payment) {
+          o.payment = Object.assign(o.payment || {}, data.payment);
         }
         if (data.verificationStatus) {
           if (o.studentInfo) o.studentInfo.verificationStatus = data.verificationStatus;
