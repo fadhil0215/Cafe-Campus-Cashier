@@ -2812,6 +2812,49 @@ async function trackPage(orderNumber) {
       const isVerified = o.payment?.aiStatus === 'VERIFIED';
       const isSuspicious = o.payment?.aiStatus === 'SUSPICIOUS';
       const qrScanMode = sessionStorage.getItem('cc_qris_mode_' + o.orderNumber) || 'emvco';
+      const showStandeePhoto = sessionStorage.getItem('cc_qris_standee_' + o.orderNumber) === '1';
+
+      let qrImageHtml = '';
+      if (qrScanMode === 'phone_scan') {
+        qrImageHtml = `
+          <img src="/qr/pay/${encodeURIComponent(o.orderNumber)}.svg?v=${Date.now()}" alt="QRIS Wisata Niaga Campus" class="qris-barcode-img">
+          <div class="qris-scan-caption">
+            📷 <b>ARAHKAN KAMERA BAWAAN HP KE SINI</b><br>
+            <span style="font-size:11px;color:#475569;font-weight:normal;">Buka kamera foto biasa (tanpa aplikasi bank), ketuk tautan yang muncul untuk membuka portal di HP.</span>
+          </div>
+          <div style="margin-top:8px;text-align:center;">
+            <a href="/pay/${encodeURIComponent(o.orderNumber)}" target="_blank" class="btn btn-soft btn-small" id="btnOpenPhonePayWeb" style="text-decoration:none;display:inline-flex;align-items:center;gap:6px;font-size:11.5px;padding:5px 12px;">
+              🔗 Buka Portal Bayar di Tab Baru
+            </a>
+          </div>
+        `;
+      } else if (showStandeePhoto) {
+        qrImageHtml = `
+          <div style="text-align:center;">
+            <img src="/assets/qris-wisata-niaga-campus.jpg?v=${Date.now()}" alt="Foto Akrilik Standee QRIS Wisata Niaga Campus" style="width:100%;max-width:280px;height:auto;border-radius:12px;border:1.5px solid #cbd5e1;box-shadow:0 4px 14px rgba(0,0,0,0.08);display:block;margin:0 auto;">
+            <div class="qris-scan-caption" style="margin-top:10px;">
+              🖼️ <b>FOTO STANDEE AKRILIK ASLI (bale by BTN)</b><br>
+              <span style="font-size:11px;color:#475569;font-weight:normal;">Scan langsung barcode pada foto standee fisik kasir di atas dengan <b>DANA / M-Banking</b>.</span>
+            </div>
+            <button type="button" class="btn btn-soft btn-small" id="btnToggleQrisView" style="margin-top:10px;font-size:11px;">
+              🏁 Beralih ke Barcode Digital HD
+            </button>
+          </div>
+        `;
+      } else {
+        qrImageHtml = `
+          <img src="/qr/merchant-qris.png?v=${Date.now()}" alt="QRIS Wisata Niaga Campus" class="qris-barcode-img">
+          <div class="qris-scan-caption">
+            🏦 <b>SCAN MENGGUNAKAN DANA / M-BANKING</b><br>
+            <span style="font-size:11px;color:#475569;font-weight:normal;">Buka aplikasi <b>DANA, BCA, Mandiri, BRI, GoPay, OVO, ShopeePay, bale by BTN</b> lalu tekan tombol <b>Pindai / Scan QR</b>.</span>
+          </div>
+          <div style="margin-top:8px;text-align:center;">
+            <button type="button" class="btn btn-soft btn-small" id="btnToggleQrisView" style="font-size:11px;">
+              🖼️ Tampilkan Foto Akrilik Standee Asli
+            </button>
+          </div>
+        `;
+      }
 
       return `<section class="tracking-card qris-card-wrap" id="trackingCardInner">
         <div class="qris-card-banner">
@@ -2836,20 +2879,7 @@ async function trackPage(orderNumber) {
 
         <div class="qris-main-box">
           <div class="qris-qr-frame">
-            <img src="${qrScanMode === 'phone_scan' ? `/qr/pay/${encodeURIComponent(o.orderNumber)}.svg?v=${Date.now()}` : `/qr/merchant-qris.svg?v=btn_${encodeURIComponent(o.orderNumber)}`}" alt="QRIS Wisata Niaga Campus" class="qris-barcode-img">
-            <div class="qris-scan-caption">
-              ${qrScanMode === 'phone_scan'
-                ? `📷 <b>ARAHKAN KAMERA BAWAAN HP KE SINI</b><br><span style="font-size:11px;color:#475569;font-weight:normal;">Buka kamera foto biasa (tanpa aplikasi bank), ketuk tautan yang muncul untuk membuka portal di HP.</span>`
-                : `🏦 <b>SCAN MENGGUNAKAN DANA / M-BANKING</b><br><span style="font-size:11px;color:#475569;font-weight:normal;">Buka aplikasi <b>DANA, GoPay, OVO, ShopeePay, BCA, Mandiri, BRI, bale by BTN</b> lalu tekan menu <b>Pindai / Scan QR</b>.</span>`
-              }
-            </div>
-            ${qrScanMode === 'phone_scan' ? `
-              <div style="margin-top:8px;text-align:center;">
-                <a href="/pay/${encodeURIComponent(o.orderNumber)}" target="_blank" class="btn btn-soft btn-small" id="btnOpenPhonePayWeb" style="text-decoration:none;display:inline-flex;align-items:center;gap:6px;font-size:11.5px;padding:5px 12px;">
-                  🔗 Buka Portal Bayar di Tab Baru
-                </a>
-              </div>
-            ` : ''}
+            ${qrImageHtml}
           </div>
 
           <div class="qris-amount-card">
@@ -3140,6 +3170,15 @@ async function trackPage(orderNumber) {
         updateTrackView();
       };
     });
+
+    const btnToggle = $('#btnToggleQrisView');
+    if (btnToggle) {
+      btnToggle.onclick = () => {
+        const cur = sessionStorage.getItem('cc_qris_standee_' + orderNumber) === '1';
+        sessionStorage.setItem('cc_qris_standee_' + orderNumber, cur ? '0' : '1');
+        updateTrackView();
+      };
+    }
 
     const pay = $('#demoPay');
     if (pay) pay.onclick = async () => {

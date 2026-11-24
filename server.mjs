@@ -770,14 +770,34 @@ app.get('/qr/merchant-qris.svg', async (req, res) => {
     try {
         const svg = await QRCode.toString(MERCHANT_QRIS.qrPayload, {
             type: 'svg',
-            margin: 2,
-            color: { dark: '#0f172a', light: '#ffffff' }
+            margin: 4,
+            width: 360,
+            errorCorrectionLevel: 'M',
+            color: { dark: '#000000', light: '#ffffff' }
         });
         res.setHeader('Content-Type', 'image/svg+xml');
         res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
         res.send(svg);
     } catch (err) {
         res.status(500).send('Gagal menghasilkan QR Code SVG');
+    }
+});
+
+// Endpoint PNG QRIS Perusahaan Resmi (High-res 600px, optimal untuk camera scanner DANA/BCA)
+app.get('/qr/merchant-qris.png', async (req, res) => {
+    try {
+        const png = await QRCode.toBuffer(MERCHANT_QRIS.qrPayload, {
+            type: 'png',
+            margin: 4,
+            width: 600,
+            errorCorrectionLevel: 'M',
+            color: { dark: '#000000', light: '#ffffff' }
+        });
+        res.setHeader('Content-Type', 'image/png');
+        res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
+        res.send(png);
+    } catch (err) {
+        res.status(500).send('Gagal menghasilkan QR Code PNG');
     }
 });
 
