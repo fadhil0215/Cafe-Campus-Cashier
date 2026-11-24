@@ -3587,6 +3587,101 @@ img {
   font-weight: 700;
 }
 
+/* Multi-Printer 2-Kitchen POS Routing Banner */
+.printer-routing-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+  border-radius: 10px;
+  padding: 10px 14px;
+  margin-bottom: 12px;
+  flex-wrap: wrap;
+}
+
+.routing-station-box {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 1;
+  min-width: 170px;
+}
+
+.routing-station-box .station-icon {
+  font-size: 20px;
+  background: #fff;
+  border: 1px solid #cbd5e1;
+  border-radius: 8px;
+  width: 34px;
+  height: 34px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.routing-station-box .station-info {
+  display: flex;
+  flex-direction: column;
+}
+
+.routing-station-box .station-info b {
+  font-size: 11.5px;
+  color: #0f172a;
+}
+
+.routing-station-box .station-info small {
+  font-size: 10.5px;
+  color: #64748b;
+}
+
+.routing-divider {
+  width: 1px;
+  height: 32px;
+  background: #cbd5e1;
+}
+
+@media (max-width: 600px) {
+  .routing-divider {
+    display: none;
+  }
+}
+
+.routing-paper-toggle {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+}
+
+.btn-tiny {
+  padding: 4px 8px;
+  font-size: 10.5px;
+  border-radius: 6px;
+  font-weight: 600;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.chrome-print-tip {
+  background: #eff6ff;
+  border: 1px solid #bfdbfe;
+  border-radius: 8px;
+  padding: 8px 12px;
+  margin-top: 10px;
+  font-size: 11.5px;
+  color: #1e40af;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  line-height: 1.4;
+}
+
+.chrome-print-tip strong, .chrome-print-tip b {
+  color: #1d4ed8;
+}
+
 
 /* Admin Filters & Tabs */
 .order-tabs, .report-tabs {

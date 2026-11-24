@@ -3452,6 +3452,41 @@ function printShiftSummaryModal(dashData, allOrders) {
   $('#btnDoPrintShift', d).onclick = () => window.print(); $('#btnCloseShiftPrint', d).onclick = () => d.remove();
 }
 
+// ==========================================
+// MULTI-PRINTER (2 DAPUR & 2 PRINTER) POS CONFIG
+// ==========================================
+function getPrinterConfig() {
+  try {
+    const raw = localStorage.getItem('cafe_printer_config');
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      return {
+        printer1Name: parsed.printer1Name || 'Printer 1 (Barista & Kasir)',
+        printer2Name: parsed.printer2Name || 'Printer 2 (Dapur Makanan)',
+        paperWidth: parsed.paperWidth || '80mm',
+        autoPrintPrompt: parsed.autoPrintPrompt !== false
+      };
+    }
+  } catch (e) {}
+  return {
+    printer1Name: 'Printer 1 (Barista & Kasir)',
+    printer2Name: 'Printer 2 (Dapur Makanan)',
+    paperWidth: '80mm',
+    autoPrintPrompt: true
+  };
+}
+
+function setPrinterConfig(cfg) {
+  try {
+    const current = getPrinterConfig();
+    const updated = { ...current, ...cfg };
+    localStorage.setItem('cafe_printer_config', JSON.stringify(updated));
+    return updated;
+  } catch (e) {
+    return getPrinterConfig();
+  }
+}
+
 async function showOrderReceiptDialog(orderNumber, onDone, autoAdvance = false) {
   let r;
   try {
@@ -3460,8 +3495,19 @@ async function showOrderReceiptDialog(orderNumber, onDone, autoAdvance = false) 
     return toast('Gagal memuat data struk: ' + err.message, true);
   }
 
+  let printerCfg = getPrinterConfig();
   let selectedStation = 'CUSTOMER';
   let printed = Boolean(r.receiptPrinted);
+  let paperWidth = printerCfg.paperWidth || '80mm';
+
+  const hasDrink = Boolean(r.drinkItems && r.drinkItems.length > 0);
+  const hasFood = Boolean(r.foodItems && r.foodItems.length > 0);
+
+  const getStationTargetText = (st) => {
+    if (st === 'FOOD') return `🍽️ Dapur Makanan &rarr; <b>${esc(printerCfg.printer2Name)}</b>`;
+    if (st === 'DRINK') return `☕ Dapur Minuman &rarr; <b>${esc(printerCfg.printer1Name)}</b>`;
+    return `🧾 Struk Kasir & Pelanggan &rarr; <b>${esc(printerCfg.printer1Name)}</b>`;
+  };
 
   const getReceiptHtml = (type) => {
     const isCustomer = type === 'CUSTOMER';
@@ -3473,21 +3519,27 @@ async function showOrderReceiptDialog(orderNumber, onDone, autoAdvance = false) 
 
     if (!isCustomer && (!items || items.length === 0)) {
       return `<div style="padding:32px 16px;text-align:center;color:#64748b;">
-        <div style="font-size:28px;margin-bottom:8px;">${isDrink ? '☕' : '🍽️'}</div>
+        <div style="font-size:32px;margin-bottom:8px;">${isDrink ? '☕' : '🍽️'}</div>
         <b>Tidak Ada Menu ${isDrink ? 'Minuman' : 'Makanan'}</b>
         <p style="font-size:12px;margin-top:4px;color:#94a3b8;">Pesanan ini tidak memiliki menu untuk stasiun dapur ${isDrink ? 'barista minuman' : 'dapur makanan'}.</p>
       </div>`;
     }
 
+    const maxWidth = paperWidth === '58mm' ? '280px' : '340px';
+    const baseFontSize = paperWidth === '58mm' ? '10.5px' : '11.5px';
+
     return `
-      <div class="receipt-paper" style="max-width:340px;margin:0 auto;box-shadow:0 4px 14px rgba(0,0,0,0.08);background:#fff;padding:16px;border-radius:6px;font-family:'Courier New',Courier,monospace;color:#111;">
+      <div class="receipt-paper" style="max-width:${maxWidth};margin:0 auto;box-shadow:0 4px 14px rgba(0,0,0,0.08);background:#fff;padding:14px;border-radius:6px;font-family:'Courier New',Courier,monospace;color:#111;font-size:${baseFontSize};">
         <div class="receipt-header" style="text-align:center;">
-          <h2 style="font-size:17px;margin:0 0 2px 0;letter-spacing:1px;font-family:inherit;">${esc(r.cafeName || 'CAFE CAMPUS')}</h2>
-          ${r.cafeAddress ? `<p style="font-size:10.5px;margin:0;color:#555;">${esc(r.cafeAddress)}</p>` : ''}
-          ${r.cafePhone ? `<p style="font-size:10px;margin:1px 0 0;color:#666;">📞 ${esc(r.cafePhone)}</p>` : ''}
+          <h2 style="font-size:16px;margin:0 0 2px 0;letter-spacing:1px;font-family:inherit;">${esc(r.cafeName || 'CAFE CAMPUS')}</h2>
+          ${r.cafeAddress ? `<p style="font-size:10px;margin:0;color:#555;">${esc(r.cafeAddress)}</p>` : ''}
+          ${r.cafePhone ? `<p style="font-size:9.5px;margin:1px 0 0;color:#666;">📞 ${esc(r.cafePhone)}</p>` : ''}
           <div style="border-top:1px dashed #999;margin:8px 0 6px;"></div>
-          <div style="font-size:12px;font-weight:bold;letter-spacing:2px;text-transform:uppercase;color:${isDrink ? '#1a6fb5' : (isFood ? '#c0522a' : '#1e293b')};">
+          <div style="font-size:12px;font-weight:bold;letter-spacing:1.5px;text-transform:uppercase;color:${isDrink ? '#1a6fb5' : (isFood ? '#c0522a' : '#1e293b')};">
             ${isCustomer ? 'STRUK PELANGGAN' : (isDrink ? '☕ TIKET DAPUR MINUMAN' : '🍽️ TIKET DAPUR MAKANAN')}
+          </div>
+          <div style="font-size:10px;color:#64748b;margin-top:2px;">
+            Target Printer: <b>${esc(isFood ? printerCfg.printer2Name : printerCfg.printer1Name)}</b>
           </div>
           <div style="border-top:1px dashed #999;margin:6px 0 8px;"></div>
         </div>
@@ -3508,14 +3560,14 @@ async function showOrderReceiptDialog(orderNumber, onDone, autoAdvance = false) 
             <span>Metode:</span><b>${(r.paymentMethod === 'QRIS' || r.paymentMethod === 'QRIS_DEMO') ? 'QRIS' : 'Tunai Kasir'} (${r.paymentStatus === 'PAID' ? 'LUNAS' : 'BELUM LUNAS'})</b>
           </div>
           ${r.customerType === 'STUDENT' ? `
-            <div style="background:#eaf7ed;border-radius:4px;padding:4px 6px;margin:6px 0;font-size:10.5px;color:#1b633a;">
+            <div style="background:#eaf7ed;border-radius:4px;padding:4px 6px;margin:6px 0;font-size:10px;color:#1b633a;">
               <b>🎓 DISKON PELAJAR / MAHASISWA</b><br>
               ${esc(r.studentName || '')} (${esc(r.studentCampus || 'Kampus')}${r.studentIdNum ? ` • NIM: ${esc(r.studentIdNum)}` : ''})
             </div>
           ` : ''}
         </div>
         <div style="border-top:1px dashed #999;margin:6px 0;"></div>
-        <div style="font-size:11.5px;">
+        <div style="font-size:${baseFontSize};">
           ${(items || []).map(i => {
             const opts = Object.entries(i.options || {}).filter(([,v]) => v).map(([k,v]) => `${k}: ${v}`).join(', ');
             return `
@@ -3558,7 +3610,7 @@ async function showOrderReceiptDialog(orderNumber, onDone, autoAdvance = false) 
           </div>
         ` : ''}
         <div style="border-top:1px dashed #999;margin:8px 0 6px;"></div>
-        <p style="text-align:center;font-size:10px;color:#666;margin:0;">
+        <p style="text-align:center;font-size:9.5px;color:#666;margin:0;">
           ${isCustomer ? 'Terima Kasih Atas Kunjungan Anda! ☕' : `Tiket ${isDrink ? 'Dapur Minuman' : 'Dapur Makanan'} • Cafe Campus`}
         </p>
       </div>
@@ -3569,7 +3621,7 @@ async function showOrderReceiptDialog(orderNumber, onDone, autoAdvance = false) 
     <div class="modal-heading">
       <div>
         <span style="display:flex;align-items:center;gap:6px;">
-          🖨️ POS CETAK STRUK & TIKET DAPUR
+          🖨️ POS CETAK STRUK & 2 DAPUR
           <span id="receiptStatusBadgeContainer">
             ${printed ? '<span class="badge-receipt-done">✓ Struk Dicetak</span>' : '<span class="badge-receipt-pending">⚠️ Belum Cetak Struk</span>'}
           </span>
@@ -3581,20 +3633,67 @@ async function showOrderReceiptDialog(orderNumber, onDone, autoAdvance = false) 
       </div>
     </div>
 
-    <div style="display:flex;gap:8px;margin-bottom:12px;background:#f8fafc;padding:6px;border-radius:8px;border:1px solid #e2e8f0;overflow-x:auto;">
-      <button type="button" class="btn btn-small btn-primary" id="tabPrintCust">🧾 Struk Customer (${r.items.length})</button>
-      <button type="button" class="btn btn-small btn-soft" id="tabPrintDrink">☕ Tiket Barista (${(r.drinkItems || []).length})</button>
-      <button type="button" class="btn btn-small btn-soft" id="tabPrintFood">🍽️ Tiket Dapur (${(r.foodItems || []).length})</button>
+    <!-- 2 Kitchen Multi-Printer Routing Status -->
+    <div class="printer-routing-banner">
+      <div class="routing-station-box">
+        <span class="station-icon">☕</span>
+        <div class="station-info">
+          <b>Printer 1: Barista & Kasir</b>
+          <small>${esc(printerCfg.printer1Name)}</small>
+        </div>
+        <button type="button" class="btn btn-tiny btn-outline" id="btnQuickPrintDrink" ${!hasDrink ? 'disabled style="opacity:0.4;"' : ''} title="Cetak tiket pesanan ke Printer 1 (Barista)">
+          ☕ Cetak Barista (${(r.drinkItems || []).length})
+        </button>
+      </div>
+      <div class="routing-divider"></div>
+      <div class="routing-station-box">
+        <span class="station-icon">🍽️</span>
+        <div class="station-info">
+          <b>Printer 2: Dapur Makanan</b>
+          <small>${esc(printerCfg.printer2Name)}</small>
+        </div>
+        <button type="button" class="btn btn-tiny btn-outline" id="btnQuickPrintFood" ${!hasFood ? 'disabled style="opacity:0.4;"' : ''} title="Cetak tiket pesanan ke Printer 2 (Dapur)">
+          🍽️ Cetak Dapur (${(r.foodItems || []).length})
+        </button>
+      </div>
+      <div class="routing-divider"></div>
+      <div class="routing-paper-toggle">
+        <label style="font-size:11px;font-weight:bold;margin-bottom:2px;color:#334155;">Ukuran Roll:</label>
+        <select id="selPaperWidth" style="font-size:11.5px;padding:3px 8px;border-radius:6px;border:1px solid #cbd5e1;background:#fff;">
+          <option value="80mm" ${paperWidth === '80mm' ? 'selected' : ''}>80mm (Standar)</option>
+          <option value="58mm" ${paperWidth === '58mm' ? 'selected' : ''}>58mm (Mini)</option>
+        </select>
+      </div>
     </div>
 
-    <div id="receiptPreviewBox" style="background:#f1f5f9;padding:16px;border-radius:8px;max-height:360px;overflow-y:auto;border:1px solid #e2e8f0;">
+    <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;margin-bottom:10px;background:#f8fafc;padding:6px;border-radius:8px;border:1px solid #e2e8f0;flex-wrap:wrap;">
+      <div style="display:flex;gap:6px;overflow-x:auto;">
+        <button type="button" class="btn btn-small btn-primary" id="tabPrintCust">🧾 Struk Customer (${r.items.length})</button>
+        <button type="button" class="btn btn-small btn-soft" id="tabPrintDrink">☕ Tiket Barista (${(r.drinkItems || []).length})</button>
+        <button type="button" class="btn btn-small btn-soft" id="tabPrintFood">🍽️ Tiket Dapur (${(r.foodItems || []).length})</button>
+      </div>
+      <div id="targetPrinterIndicator" style="font-size:11px;color:#475569;padding:0 4px;">
+        ${getStationTargetText('CUSTOMER')}
+      </div>
+    </div>
+
+    <div id="receiptPreviewBox" style="background:#f1f5f9;padding:16px;border-radius:8px;max-height:340px;overflow-y:auto;border:1px solid #e2e8f0;">
       ${getReceiptHtml('CUSTOMER')}
+    </div>
+
+    <!-- Chrome Destination Hint -->
+    <div class="chrome-print-tip">
+      <span style="font-size:18px;">💡</span>
+      <div>
+        <b>Panduan Memilih Printer:</b> Jika dialog Chrome menampilkan tombol <u>"Save"</u> (Save as PDF), klik opsi <b>"Destination"</b> di sebelah kanan &rarr; pilih nama thermal printer Anda (<b>${esc(printerCfg.printer1Name)}</b> / <b>${esc(printerCfg.printer2Name)}</b>). Setelah dipilih sekali, Chrome akan otomatis mengingat printer tersebut!
+      </div>
     </div>
 
     <div class="modal-actions" style="margin-top:16px;display:flex;flex-wrap:wrap;gap:8px;justify-content:space-between;">
       <div style="display:flex;gap:8px;flex-wrap:wrap;">
         <button class="btn btn-primary btn-highlight-print" id="btnExecutePrint">🖨️ Cetak Tab Ini (Print)</button>
-        <button class="btn btn-soft" id="btnPrintAllStation">🖨️ Cetak Semua Tiket</button>
+        <button class="btn btn-soft" id="btnSplitKitchenPrint" title="Kirim otomatis: Tiket Minuman ke Printer 1 dan Tiket Makanan ke Printer 2">⚡ Split Cetak 2 Dapur (P1 + P2)</button>
+        <button class="btn btn-soft" id="btnPrintAllStation">🧾 Cetak Semua (Kasir + 2 Dapur)</button>
       </div>
       <div style="display:flex;gap:8px;flex-wrap:wrap;">
         ${r.status === 'NEW' ? `
@@ -3610,12 +3709,22 @@ async function showOrderReceiptDialog(orderNumber, onDone, autoAdvance = false) 
     $('#tabPrintCust', d).className = `btn btn-small ${st === 'CUSTOMER' ? 'btn-primary' : 'btn-soft'}`;
     $('#tabPrintDrink', d).className = `btn btn-small ${st === 'DRINK' ? 'btn-primary' : 'btn-soft'}`;
     $('#tabPrintFood', d).className = `btn btn-small ${st === 'FOOD' ? 'btn-primary' : 'btn-soft'}`;
+    $('#targetPrinterIndicator', d).innerHTML = getStationTargetText(st);
     $('#receiptPreviewBox', d).innerHTML = getReceiptHtml(st);
   };
 
   $('#tabPrintCust', d).onclick = () => updateTabs('CUSTOMER');
   $('#tabPrintDrink', d).onclick = () => updateTabs('DRINK');
   $('#tabPrintFood', d).onclick = () => updateTabs('FOOD');
+
+  const selPaper = $('#selPaperWidth', d);
+  if (selPaper) {
+    selPaper.onchange = (e) => {
+      paperWidth = e.target.value;
+      setPrinterConfig({ paperWidth });
+      updateTabs(selectedStation);
+    };
+  }
 
   const markPrinted = async (st) => {
     try {
@@ -3630,9 +3739,10 @@ async function showOrderReceiptDialog(orderNumber, onDone, autoAdvance = false) 
     } catch(e) {}
   };
 
+  // Cetak Tab Aktif
   $('#btnExecutePrint', d).onclick = async () => {
     await markPrinted(selectedStation);
-    printKitchenReceipt(r, selectedStation);
+    printKitchenReceipt(r, selectedStation, paperWidth);
     toast('Mencetak struk ' + (selectedStation === 'CUSTOMER' ? 'pelanggan' : (selectedStation === 'DRINK' ? 'dapur minuman' : 'dapur makanan')));
     if (autoAdvance && r.status === 'NEW') {
       try {
@@ -3649,12 +3759,56 @@ async function showOrderReceiptDialog(orderNumber, onDone, autoAdvance = false) 
     }
   };
 
+  // Quick Print Barista (P1)
+  const qDrink = $('#btnQuickPrintDrink', d);
+  if (qDrink && hasDrink) {
+    qDrink.onclick = async () => {
+      await markPrinted('DRINK');
+      printKitchenReceipt(r, 'DRINK', paperWidth);
+      toast(`Mencetak tiket barista ke ${printerCfg.printer1Name}...`);
+    };
+  }
+
+  // Quick Print Kitchen (P2)
+  const qFood = $('#btnQuickPrintFood', d);
+  if (qFood && hasFood) {
+    qFood.onclick = async () => {
+      await markPrinted('FOOD');
+      printKitchenReceipt(r, 'FOOD', paperWidth);
+      toast(`Mencetak tiket dapur makanan ke ${printerCfg.printer2Name}...`);
+    };
+  }
+
+  // Split Cetak 2 Dapur (P1 + P2)
+  $('#btnSplitKitchenPrint', d).onclick = async () => {
+    if (!hasDrink && !hasFood) {
+      toast('Tidak ada item minuman atau makanan pada pesanan ini.', true);
+      return;
+    }
+    await markPrinted('KITCHEN_SPLIT');
+    if (hasDrink && hasFood) {
+      toast(`[1/2] Mengirim tiket barista ke ${printerCfg.printer1Name}...`);
+      printKitchenReceipt(r, 'DRINK', paperWidth);
+      setTimeout(() => {
+        toast(`[2/2] Mengirim tiket dapur ke ${printerCfg.printer2Name}...`);
+        printKitchenReceipt(r, 'FOOD', paperWidth);
+      }, 750);
+    } else if (hasDrink) {
+      toast(`Mengirim tiket barista ke ${printerCfg.printer1Name}...`);
+      printKitchenReceipt(r, 'DRINK', paperWidth);
+    } else {
+      toast(`Mengirim tiket dapur ke ${printerCfg.printer2Name}...`);
+      printKitchenReceipt(r, 'FOOD', paperWidth);
+    }
+  };
+
+  // Cetak Semua (Kasir + 2 Dapur)
   $('#btnPrintAllStation', d).onclick = async () => {
     await markPrinted('ALL');
-    printKitchenReceipt(r, 'CUSTOMER');
-    if (r.drinkItems?.length) setTimeout(() => printKitchenReceipt(r, 'DRINK'), 600);
-    if (r.foodItems?.length) setTimeout(() => printKitchenReceipt(r, 'FOOD'), 1200);
-    toast('Mencetak seluruh tiket stasiun...');
+    printKitchenReceipt(r, 'CUSTOMER', paperWidth);
+    if (r.drinkItems?.length) setTimeout(() => printKitchenReceipt(r, 'DRINK', paperWidth), 700);
+    if (r.foodItems?.length) setTimeout(() => printKitchenReceipt(r, 'FOOD', paperWidth), 1400);
+    toast('Mencetak struk kasir & tiket seluruh dapur...');
     if (autoAdvance && r.status === 'NEW') {
       try {
         await api('/admin/orders/' + encodeURIComponent(r.orderNumber) + '/status', {
@@ -3677,7 +3831,7 @@ async function showOrderReceiptDialog(orderNumber, onDone, autoAdvance = false) 
       try {
         if (!printed) {
           await markPrinted('CUSTOMER');
-          printKitchenReceipt(r, 'CUSTOMER');
+          printKitchenReceipt(r, 'CUSTOMER', paperWidth);
         }
         await api('/admin/orders/' + encodeURIComponent(r.orderNumber) + '/status', {
           method: 'PATCH',
@@ -4135,19 +4289,42 @@ async function orderDetailModal(orderNumber, onUpdate) {
 // KITCHEN PRINT RECEIPT ENGINE
 // Cetak struk untuk 3 tujuan berbeda:
 //   'CUSTOMER' → struk lengkap untuk pelanggan
-//   'DRINK'    → tiket dapur minuman
-//   'FOOD'     → tiket dapur makanan
+//   'DRINK'    → tiket dapur minuman (Printer 1)
+//   'FOOD'     → tiket dapur makanan (Printer 2)
 // ==========================================
-function printKitchenReceipt(r, type) {
+function printKitchenReceipt(r, type, paperWidthOverride) {
   const isCustomer = type === 'CUSTOMER';
   const isDrink    = type === 'DRINK';
   const isFood     = type === 'FOOD';
 
   // Pilih items sesuai tipe
   const items = isCustomer ? r.items : (isDrink ? r.drinkItems : r.foodItems);
-  if (!isCustomer && items.length === 0) {
+  if (!isCustomer && (!items || items.length === 0)) {
     toast(`Tidak ada item ${isDrink ? 'minuman' : 'makanan'} di pesanan ini.`, true);
     return;
+  }
+
+  const cfg = getPrinterConfig();
+  const paperWidth = paperWidthOverride || cfg.paperWidth || '80mm';
+  const is58 = paperWidth === '58mm';
+  const bodyWidth = is58 ? '58mm' : '80mm';
+  const baseFontSize = is58 ? '10.5px' : '12px';
+
+  let targetPrinter = cfg.printer1Name || 'Printer 1 (Barista & Kasir)';
+  let stationIcon = '🧾';
+  let stationName = 'STRUK PELANGGAN';
+  let titlePrefix = '[PRINTER 1 - KASIR]';
+
+  if (isDrink) {
+    targetPrinter = cfg.printer1Name || 'Printer 1 (Barista & Kasir)';
+    stationIcon = '☕';
+    stationName = 'DAPUR MINUMAN (BARISTA)';
+    titlePrefix = '[PRINTER 1 - BARISTA]';
+  } else if (isFood) {
+    targetPrinter = cfg.printer2Name || 'Printer 2 (Dapur Makanan)';
+    stationIcon = '🍽️';
+    stationName = 'DAPUR MAKANAN (KITCHEN)';
+    titlePrefix = '[PRINTER 2 - DAPUR]';
   }
 
   const now = new Date();
@@ -4155,11 +4332,11 @@ function printKitchenReceipt(r, type) {
   const methodLabel = (r.paymentMethod === 'QRIS' || r.paymentMethod === 'QRIS_DEMO') ? 'QRIS' : 'Tunai';
   const paidLabel = r.paymentStatus === 'PAID' ? 'LUNAS' : 'BELUM BAYAR';
 
-  const itemRows = items.map(i => {
+  const itemRows = (items || []).map(i => {
     const opts = Object.entries(i.options || {}).filter(([,v]) => v).map(([k,v]) => `${k}: ${v}`).join(', ');
     return `<tr>
       <td class="qty">${i.quantity}x</td>
-      <td class="name">${i.productName}${opts ? `<br><span class="mod">${opts}</span>` : ''}${i.note ? `<br><span class="note">📝 ${i.note}</span>` : ''}</td>
+      <td class="name">${esc(i.productName)}${opts ? `<br><span class="mod">${esc(opts)}</span>` : ''}${i.note ? `<br><span class="note">📝 ${esc(i.note)}</span>` : ''}</td>
       ${isCustomer ? `<td class="price">${money(i.lineTotal)}</td>` : ''}
     </tr>`;
   }).join('');
@@ -4168,86 +4345,305 @@ function printKitchenReceipt(r, type) {
   let header = '';
   if (isCustomer) {
     header = `
-      <div class="cafe-name">${r.cafeName}</div>
-      ${r.cafeAddress ? `<div class="cafe-addr">${r.cafeAddress}</div>` : ''}
-      ${r.cafePhone ? `<div class="cafe-addr">📞 ${r.cafePhone}</div>` : ''}
+      <div class="cafe-name">${esc(r.cafeName || 'CAFE CAMPUS')}</div>
+      ${r.cafeAddress ? `<div class="cafe-addr">${esc(r.cafeAddress)}</div>` : ''}
+      ${r.cafePhone ? `<div class="cafe-addr">📞 ${esc(r.cafePhone)}</div>` : ''}
       <div class="divider">================================</div>
-      <div class="receipt-type">STRUK PELANGGAN</div>`;
+      <div class="receipt-type">STRUK PELANGGAN</div>
+      <div style="font-size:9.5px;color:#555;text-align:center;">Target: ${esc(targetPrinter)}</div>`;
   } else if (isDrink) {
-    header = `<div class="kitchen-header drink-header">☕ DAPUR MINUMAN</div>`;
+    header = `<div class="kitchen-header drink-header">☕ DAPUR MINUMAN</div>
+      <div style="font-size:10px;font-weight:bold;color:#1a6fb5;text-align:center;margin-bottom:4px;">🎯 PRINTER: ${esc(targetPrinter)}</div>`;
   } else {
-    header = `<div class="kitchen-header food-header">🍽️ DAPUR MAKANAN</div>`;
+    header = `<div class="kitchen-header food-header">🍽️ DAPUR MAKANAN</div>
+      <div style="font-size:10px;font-weight:bold;color:#c0522a;text-align:center;margin-bottom:4px;">🎯 PRINTER: ${esc(targetPrinter)}</div>`;
   }
 
   const html = `<!DOCTYPE html><html lang="id"><head>
     <meta charset="utf-8">
-    <title>Struk #${r.orderNumber}</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>${titlePrefix} Pesanan #${esc(r.orderNumber)}</title>
     <style>
       * { margin:0; padding:0; box-sizing:border-box; }
-      body { font-family: 'Courier New', Courier, monospace; font-size: 12px; width: 80mm; padding: 6px 8px; color: #000; }
-      .cafe-name { font-size: 16px; font-weight: bold; text-align: center; margin-bottom: 2px; }
-      .cafe-addr { font-size: 10px; text-align: center; color: #333; }
-      .kitchen-header { font-size: 20px; font-weight: bold; text-align: center; padding: 8px 0 4px; letter-spacing: 1px; }
-      .drink-header { border-bottom: 3px solid #1a6fb5; color: #1a6fb5; margin-bottom: 6px; }
-      .food-header  { border-bottom: 3px solid #c0522a; color: #c0522a; margin-bottom: 6px; }
-      .divider { text-align:center; letter-spacing: 0; margin: 4px 0; font-size: 11px; color: #555; }
-      .receipt-type { font-size: 11px; text-align: center; letter-spacing: 2px; text-transform: uppercase; margin-bottom: 4px; }
+      @page {
+        margin: 0;
+        size: auto;
+      }
+      body {
+        font-family: 'Courier New', Courier, monospace;
+        font-size: ${baseFontSize};
+        color: #000;
+        background: #f1f5f9;
+        margin: 0;
+        padding: 0;
+      }
+      .no-print {
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      }
+      .print-control-bar {
+        position: sticky;
+        top: 0;
+        width: 100%;
+        background: #0f172a;
+        color: #fff;
+        padding: 10px 14px;
+        box-shadow: 0 4px 16px rgba(0,0,0,0.25);
+        z-index: 999;
+      }
+      .print-control-inner {
+        max-width: 440px;
+        margin: 0 auto;
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        gap: 8px;
+        flex-wrap: wrap;
+      }
+      .station-pill {
+        display: inline-flex;
+        align-items: center;
+        gap: 4px;
+        background: rgba(255,255,255,0.15);
+        border: 1px solid rgba(255,255,255,0.25);
+        padding: 2px 8px;
+        border-radius: 4px;
+        font-size: 11px;
+        font-weight: bold;
+      }
+      .printer-target-tag {
+        font-size: 11px;
+        color: #94a3b8;
+        display: block;
+        margin-top: 2px;
+      }
+      .printer-target-tag b {
+        color: #38bdf8;
+      }
+      .print-btn-actions {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+      }
+      .btn-print-action {
+        background: #16a34a;
+        color: #fff;
+        border: none;
+        padding: 8px 16px;
+        border-radius: 6px;
+        font-weight: bold;
+        font-size: 12.5px;
+        cursor: pointer;
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        box-shadow: 0 2px 8px rgba(22,163,74,0.4);
+      }
+      .btn-print-action:hover {
+        background: #15803d;
+      }
+      .btn-close-action {
+        background: rgba(255,255,255,0.12);
+        color: #fff;
+        border: 1px solid rgba(255,255,255,0.2);
+        padding: 8px 12px;
+        border-radius: 6px;
+        font-size: 11.5px;
+        cursor: pointer;
+      }
+      .btn-close-action:hover {
+        background: rgba(255,255,255,0.2);
+      }
+      .chrome-guide-box {
+        max-width: 440px;
+        margin: 8px auto 0;
+        background: rgba(234, 179, 8, 0.12);
+        border: 1px solid rgba(234, 179, 8, 0.35);
+        border-radius: 6px;
+        padding: 6px 10px;
+        display: flex;
+        align-items: flex-start;
+        gap: 6px;
+        font-size: 11px;
+        line-height: 1.35;
+        color: #fef08a;
+      }
+      .paper-switch-bar {
+        max-width: 440px;
+        margin: 6px auto 0;
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        font-size: 10.5px;
+        color: #94a3b8;
+      }
+      .paper-pill {
+        background: rgba(255,255,255,0.1);
+        border: 1px solid rgba(255,255,255,0.2);
+        color: #cbd5e1;
+        padding: 2px 7px;
+        border-radius: 4px;
+        cursor: pointer;
+        font-size: 10.5px;
+      }
+      .paper-pill.active {
+        background: #38bdf8;
+        color: #0f172a;
+        font-weight: bold;
+        border-color: #38bdf8;
+      }
+      .receipt-wrapper {
+        display: flex;
+        justify-content: center;
+        padding: 16px 8px 40px;
+      }
+      .receipt-container {
+        width: 100%;
+        max-width: ${bodyWidth};
+        background: #fff;
+        padding: 10px 8px;
+        box-shadow: 0 4px 16px rgba(0,0,0,0.1);
+        border-radius: 4px;
+      }
+      .cafe-name { font-size: 15px; font-weight: bold; text-align: center; margin-bottom: 2px; }
+      .cafe-addr { font-size: 9.5px; text-align: center; color: #333; }
+      .kitchen-header { font-size: 18px; font-weight: bold; text-align: center; padding: 6px 0 2px; letter-spacing: 1px; }
+      .drink-header { border-bottom: 2.5px solid #1a6fb5; color: #1a6fb5; margin-bottom: 4px; }
+      .food-header  { border-bottom: 2.5px solid #c0522a; color: #c0522a; margin-bottom: 4px; }
+      .divider { text-align:center; letter-spacing: 0; margin: 4px 0; font-size: 10.5px; color: #555; }
+      .receipt-type { font-size: 11px; text-align: center; letter-spacing: 2px; text-transform: uppercase; margin-bottom: 4px; font-weight: bold; }
       .order-info { margin: 6px 0; }
-      .order-info table { width: 100%; }
-      .order-info td { padding: 1px 0; font-size: 11px; vertical-align: top; }
+      .order-info table { width: 100%; border-collapse: collapse; }
+      .order-info td { padding: 1.5px 0; font-size: 10.5px; vertical-align: top; }
       .order-info td:last-child { text-align: right; font-weight: bold; }
-      .section-title { font-size: 10px; text-transform: uppercase; letter-spacing: 1px; border-top: 1px dashed #000; padding-top: 4px; margin-top: 6px; margin-bottom: 4px; }
+      .section-title { font-size: 10px; text-transform: uppercase; letter-spacing: 1px; border-top: 1px dashed #000; padding-top: 4px; margin-top: 6px; margin-bottom: 4px; font-weight: bold; }
       table.items { width: 100%; border-collapse: collapse; }
-      table.items td { padding: 3px 2px; vertical-align: top; font-size: 12px; }
+      table.items td { padding: 3px 1px; vertical-align: top; font-size: ${baseFontSize}; }
       td.qty  { width: 22px; font-weight: bold; white-space: nowrap; }
       td.name { width: auto; }
       td.price { text-align: right; white-space: nowrap; font-weight: bold; }
-      .mod  { font-size: 10px; color: #444; }
-      .note { font-size: 10px; color: #b84a00; font-style: italic; }
+      .mod  { font-size: 9.5px; color: #444; }
+      .note { font-size: 9.5px; color: #b84a00; font-style: italic; }
       .total-section { border-top: 1px dashed #000; margin-top: 6px; padding-top: 4px; }
       .total-section table { width: 100%; }
-      .total-section td { padding: 1px 0; font-size: 11px; }
+      .total-section td { padding: 1px 0; font-size: 10.5px; }
       .total-section td:last-child { text-align: right; }
-      .grand-total td { font-size: 14px; font-weight: bold; }
-      .footer { text-align: center; margin-top: 10px; font-size: 10px; color: #555; }
-      .badge-paid { display:inline-block; background:#2c8b5b; color:#fff; padding:1px 6px; border-radius:3px; font-size:10px; font-weight:bold; }
-      .badge-unpaid { display:inline-block; background:#c0522a; color:#fff; padding:1px 6px; border-radius:3px; font-size:10px; font-weight:bold; }
-      .kitchen-order-num { font-size: 36px; font-weight: bold; text-align: center; margin: 8px 0 4px; }
-      .kitchen-table { font-size: 16px; text-align: center; margin-bottom: 6px; font-weight: bold; }
-      @media print { body { width: 80mm; } }
+      .grand-total td { font-size: 13.5px; font-weight: bold; }
+      .footer { text-align: center; margin-top: 10px; font-size: 9.5px; color: #555; }
+      .badge-paid { display:inline-block; background:#2c8b5b; color:#fff; padding:1px 5px; border-radius:3px; font-size:9.5px; font-weight:bold; }
+      .badge-unpaid { display:inline-block; background:#c0522a; color:#fff; padding:1px 5px; border-radius:3px; font-size:9.5px; font-weight:bold; }
+      .kitchen-order-num { font-size: 32px; font-weight: bold; text-align: center; margin: 4px 0; line-height: 1; }
+      .kitchen-table { font-size: 15px; text-align: center; margin-bottom: 4px; font-weight: bold; }
+
+      @media print {
+        .no-print { display: none !important; }
+        body {
+          background: #fff !important;
+          width: ${bodyWidth} !important;
+          margin: 0 !important;
+          padding: 2mm 0 !important;
+        }
+        .receipt-wrapper {
+          padding: 0 !important;
+          margin: 0 !important;
+          display: block !important;
+        }
+        .receipt-container {
+          box-shadow: none !important;
+          border: none !important;
+          width: 100% !important;
+          max-width: ${bodyWidth} !important;
+          padding: 0 !important;
+          margin: 0 !important;
+        }
+      }
     </style>
   </head><body>
-    ${header}
-    <div class="order-info">
-      <table>${!isCustomer ? `<tr><td>No. Pesanan</td><td class="kitchen-order-num">#${r.orderNumber.replace('CC-','')}</td></tr>` : `<tr><td>No. Pesanan</td><td>${r.orderNumber}</td></tr>`}
-        <tr><td>Meja</td><td>${isCustomer ? r.tableName : `<div class="kitchen-table">${r.tableName}</div>`}</td></tr>
-        ${isCustomer ? `<tr><td>Waktu</td><td>${printTime}</td></tr>` : `<tr><td>Waktu Print</td><td>${printTime}</td></tr>`}
-        ${isCustomer ? `<tr><td>Pembayaran</td><td>${methodLabel} <span class="${r.paymentStatus === 'PAID' ? 'badge-paid' : 'badge-unpaid'}">${paidLabel}</span></td></tr>` : ''}
-        ${isCustomer && r.customerType === 'STUDENT' && r.studentName ? `<tr><td>Pelajar</td><td>${r.studentName}</td></tr>` : ''}
-      </table>
+    <div class="no-print print-control-bar">
+      <div class="print-control-inner">
+        <div>
+          <span class="station-pill">${stationIcon} ${stationName}</span>
+          <span class="printer-target-tag">🎯 Tujuan: <b>${esc(targetPrinter)}</b></span>
+        </div>
+        <div class="print-btn-actions">
+          <button type="button" class="btn-print-action" id="btnWinPrint" onclick="window.print()">
+            🖨️ PRINT SEKARANG
+          </button>
+          <button type="button" class="btn-close-action" onclick="window.close()">✕ Tutup</button>
+        </div>
+      </div>
+      <div class="chrome-guide-box">
+        <span>💡</span>
+        <div>
+          <b>Tips Chrome:</b> Jika tombol dialog bertuliskan <u>"Save"</u> (Save as PDF), klik opsi <b>"Destination"</b> di sebelah kanan &rarr; pilih <b>"${esc(targetPrinter)}"</b>. Setelah dipilih sekali, Chrome akan otomatis mengingat printer tersebut!
+        </div>
+      </div>
+      <div class="paper-switch-bar">
+        <span>Lebar Kertas:</span>
+        <button type="button" class="paper-pill ${!is58 ? 'active' : ''}" onclick="switchPaper('80mm')">80mm (Standar)</button>
+        <button type="button" class="paper-pill ${is58 ? 'active' : ''}" onclick="switchPaper('58mm')">58mm (Mini)</button>
+      </div>
     </div>
-    <div class="section-title">${isCustomer ? 'Item Pesanan' : (isDrink ? '☕ Menu Minuman' : '🍽️ Menu Makanan')}</div>
-    <table class="items">${itemRows}</table>
-    ${isCustomer ? `
-    <div class="total-section">
-      <table>
-        <tr><td>Subtotal</td><td>${money(r.subtotal)}</td></tr>
-        ${r.serviceFee ? `<tr><td>Biaya Layanan</td><td>${money(r.serviceFee)}</td></tr>` : ''}
-        ${r.tax ? `<tr><td>Pajak</td><td>${money(r.tax)}</td></tr>` : ''}
-        <tr class="grand-total"><td>TOTAL</td><td>${money(r.total)}</td></tr>
-      </table>
-    </div>` : ''}
-    ${r.note ? `<div class="divider">- - - - - - - - - - - - - - - - -</div><div style="font-size:11px;">📝 Catatan: <b>${r.note}</b></div>` : ''}
-    <div class="footer">
-      ${isCustomer ? `<div>Terima kasih sudah mampir! ☕</div><div>${r.cafeName} &bull; Cetak: ${printTime}</div>` : `<div>Pesanan masuk: ${printTime}</div><div style="margin-top:4px;font-size:9px;">Struk ${isDrink ? 'Dapur Minuman' : 'Dapur Makanan'} — ${r.cafeName}</div>`}
+
+    <div class="receipt-wrapper">
+      <div class="receipt-container" id="receiptContent">
+        ${header}
+        <div class="order-info">
+          <table>${!isCustomer ? `<tr><td>No. Pesanan</td><td class="kitchen-order-num">#${esc(r.orderNumber.replace('CC-',''))}</td></tr>` : `<tr><td>No. Pesanan</td><td>#${esc(r.orderNumber)}</td></tr>`}
+            ${r.queueNumber ? `<tr><td>No. Antrean</td><td style="font-size:14px;font-weight:bold;color:#b45309;">${esc(r.queueNumber)}</td></tr>` : ''}
+            <tr><td>Meja</td><td>${isCustomer ? esc(r.tableName) : `<div class="kitchen-table">${esc(r.tableName)}</div>`}</td></tr>
+            ${isCustomer ? `<tr><td>Waktu</td><td>${printTime}</td></tr>` : `<tr><td>Waktu Print</td><td>${printTime}</td></tr>`}
+            ${isCustomer ? `<tr><td>Pembayaran</td><td>${methodLabel} <span class="${r.paymentStatus === 'PAID' ? 'badge-paid' : 'badge-unpaid'}">${paidLabel}</span></td></tr>` : ''}
+            ${isCustomer && r.customerType === 'STUDENT' && r.studentName ? `<tr><td>Pelajar</td><td>${esc(r.studentName)}</td></tr>` : ''}
+          </table>
+        </div>
+        <div class="section-title">${isCustomer ? 'Item Pesanan' : (isDrink ? '☕ Menu Minuman' : '🍽️ Menu Makanan')}</div>
+        <table class="items">${itemRows}</table>
+        ${isCustomer ? `
+        <div class="total-section">
+          <table>
+            <tr><td>Subtotal</td><td>${money(r.subtotal)}</td></tr>
+            ${r.totalSavings ? `<tr><td>Diskon Pelajar</td><td>- ${money(r.totalSavings)}</td></tr>` : ''}
+            ${r.serviceFee ? `<tr><td>Biaya Layanan</td><td>${money(r.serviceFee)}</td></tr>` : ''}
+            ${r.tax ? `<tr><td>Pajak</td><td>${money(r.tax)}</td></tr>` : ''}
+            <tr class="grand-total"><td>TOTAL</td><td>${money(r.total)}</td></tr>
+          </table>
+        </div>` : ''}
+        ${r.note ? `<div class="divider">- - - - - - - - - - - - - - - - -</div><div style="font-size:10.5px;">📝 Catatan: <b>${esc(r.note)}</b></div>` : ''}
+        <div class="footer">
+          ${isCustomer ? `<div>Terima kasih atas kunjungan Anda! ☕</div><div>${esc(r.cafeName || 'Cafe Campus')} &bull; ${printTime}</div>` : `<div>Tiket pesanan stasiun • ${printTime}</div><div style="margin-top:3px;font-size:9px;">${esc(r.cafeName || 'Cafe Campus')}</div>`}
+        </div>
+      </div>
     </div>
+
+    <script>
+      function switchPaper(w) {
+        var is58 = w === '58mm';
+        var c = document.getElementById('receiptContent');
+        if (c) {
+          c.style.maxWidth = is58 ? '58mm' : '80mm';
+          c.style.fontSize = is58 ? '10.5px' : '12px';
+        }
+        var pills = document.querySelectorAll('.paper-pill');
+        pills.forEach(function(p) {
+          if (p.textContent.indexOf(w) !== -1) p.classList.add('active');
+          else p.classList.remove('active');
+        });
+      }
+    </script>
   </body></html>`;
 
-  const w = window.open('', '_blank', 'width=400,height=600');
+  const w = window.open('', '_blank', 'width=460,height=680,scrollbars=yes');
   if (!w) { toast('Pop-up diblokir browser. Izinkan pop-up untuk mencetak struk.', true); return; }
   w.document.write(html);
   w.document.close();
-  w.onload = () => { w.focus(); w.print(); };
+  if (cfg.autoPrintPrompt !== false) {
+    w.onload = () => {
+      w.focus();
+      setTimeout(() => {
+        try { w.print(); } catch(e){}
+      }, 250);
+    };
+  }
 }
 
 async function menuAdminPage(user) {
@@ -4369,13 +4765,127 @@ async function reportsPage(user) {
 async function settingsPage(user) {
   const [s, audit] = await Promise.all([api('/admin/settings'), api('/admin/audit')]);
   let switches = { qrisEnabled: s.qrisEnabled !== false, cashEnabled: s.cashEnabled !== false, soundEnabled: s.soundEnabled !== false, dailyReportEnabled: s.dailyReportEnabled !== false };
+  let printerCfg = getPrinterConfig();
   document.body.className = 'admin-body';
-  document.body.innerHTML = adminShell(`${adminTop('Pengaturan Sistem', 'Kelola profil cafe, integrasi pembayaran digital, Gemini AI, dan akun operasional.')}<section class="settings-grid"><div><section class="admin-panel settings-panel"><h2>Profil Cafe</h2>${[['cafeName', 'Nama Cafe', s.cafeName], ['cafeAddress', 'Alamat', s.cafeAddress || ''], ['cafePhone', 'No. Telepon', s.cafePhone || ''], ['operatingHours', 'Jam Operasional', s.operatingHours || '']].map(([id, l, v]) => `<label>${l}<input id="${id}" value="${esc(v)}"></label>`).join('')}<div class="two-fields"><label>Biaya Layanan (%)<input id="serviceFee" type="number" min="0" max="30" value="${s.serviceFee}"></label><label>Pajak (%)<input id="taxPercent" type="number" min="0" max="30" value="${s.taxPercent}"></label></div></section><section class="admin-panel settings-panel"><h2>Metode Pembayaran</h2>${settingSwitch('qrisEnabled', 'Integrasi QRIS Otomatis', 'Pembayaran QRIS digital real-time terintegrasi.', switches.qrisEnabled)}${settingSwitch('cashEnabled', 'Bayar di Kasir (Tunai)', 'Pelanggan membayar langsung di meja kasir.', switches.cashEnabled)}</section><section class="admin-panel settings-panel"><div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;"><h2 style="margin:0;">🤖 Integrasi Google Gemini AI</h2><span class="badge ${s.geminiStatus?.active ? 'badge-success' : 'badge-warning'}" id="geminiStatusBadge" style="padding: 3px 8px; font-size:11px;">${s.geminiStatus?.active ? '🟢 AKTIF' : '🟡 KUNCI BELUM DIISI'}</span></div><p style="font-size:12px; color:var(--muted); margin-bottom:12px;">Digunakan untuk OCR scan KTM presisi tinggi dan percakapan cerdas Barista AI Chatbot.${s.geminiStatus?.source ? `<br><small style="color:var(--text); display:inline-block; margin-top:4px;">Sumber Kunci: <b>${s.geminiStatus.source === 'ENV' ? 'Railway / Environment' : s.geminiStatus.source === 'DATABASE' ? 'Database Pengaturan' : 'Kunci Bawaan Sistem'}</b> ${s.geminiStatus.maskedKey ? `(${s.geminiStatus.maskedKey})` : ''}</small>` : ''}</p><label>Google Gemini API Key<div style="display:flex; gap:8px;"><input id="geminiApiKey" type="password" placeholder="AIzaSy... atau biarkan bawaan" value="${esc(s.geminiApiKey || '')}" style="flex:1;"><button type="button" class="btn btn-soft" id="btnToggleGeminiKey" style="padding:0 12px;" title="Tampilkan/Sembunyikan">👁️</button></div></label><div style="margin-top:10px; display:flex; gap:8px; align-items:center;"><button type="button" class="btn btn-outline" id="btnTestGemini">⚡ Uji Koneksi AI</button><span id="geminiTestResult" style="font-size:12px; color:var(--muted);"></span></div></section></div><div><section class="admin-panel settings-panel"><h2>Notifikasi & Suara</h2>${settingSwitch('soundEnabled', 'Pesanan Masuk Baru', 'Mainkan notifikasi suara saat browser mengizinkan.', switches.soundEnabled)}${settingSwitch('dailyReportEnabled', 'Laporan Penutupan Harian', 'Siapkan ringkasan operasional harian.', switches.dailyReportEnabled)}</section><section class="admin-panel settings-panel"><h2>Keamanan & Akun</h2><label>Email Akun<input value="${esc(user.email || '')}" disabled></label><div class="setting-actions"><button class="btn btn-outline" id="btnChangePassword">Ubah Password</button><button class="btn btn-danger" id="logoutSettings">Keluar Sesi</button></div></section><section class="admin-panel settings-panel"><div><div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;"><h2 style="margin:0;">👥 Akun Staf & Hak Akses</h2>${user?.role === 'ADMIN' ? `<button type="button" class="btn btn-primary btn-small" id="btnAddStaff">+ Tambah Staf</button>` : ''}</div><p style="font-size:12px; color:var(--muted); margin-bottom:12px;">Daftarkan atau kelola akun Kasir, Barista Dapur, dan Administrator.</p><div id="staffListWrapper" style="display:flex; flex-direction:column; gap:8px;"></div></div></section></div></section><section class="admin-panel audit-panel"><div class="panel-head"><h2>Audit Trail</h2><span>${audit.length} aktivitas terakhir</span></div><div class="audit-list">${audit.slice(0, 12).map(a => `<div><span>${formatTime(a.at)}</span><b>${esc(a.action.replaceAll('_', ' '))}</b><small>${esc(JSON.stringify(a.meta || {}))}</small></div>`).join('') || '<div class="admin-empty">Belum ada aktivitas admin.</div>'}</div></section><div class="settings-save"><button class="btn btn-primary" id="saveSettings">Simpan Perubahan</button></div>`, 'settings', user);
+  document.body.innerHTML = adminShell(`${adminTop('Pengaturan Sistem', 'Kelola profil cafe, integrasi pembayaran digital, Gemini AI, konfigurasi 2 printer dapur, dan akun operasional.')}<section class="settings-grid"><div><section class="admin-panel settings-panel"><h2>Profil Cafe</h2>${[['cafeName', 'Nama Cafe', s.cafeName], ['cafeAddress', 'Alamat', s.cafeAddress || ''], ['cafePhone', 'No. Telepon', s.cafePhone || ''], ['operatingHours', 'Jam Operasional', s.operatingHours || '']].map(([id, l, v]) => `<label>${l}<input id="${id}" value="${esc(v)}"></label>`).join('')}<div class="two-fields"><label>Biaya Layanan (%)<input id="serviceFee" type="number" min="0" max="30" value="${s.serviceFee}"></label><label>Pajak (%)<input id="taxPercent" type="number" min="0" max="30" value="${s.taxPercent}"></label></div></section><section class="admin-panel settings-panel"><h2>Metode Pembayaran</h2>${settingSwitch('qrisEnabled', 'Integrasi QRIS Otomatis', 'Pembayaran QRIS digital real-time terintegrasi.', switches.qrisEnabled)}${settingSwitch('cashEnabled', 'Bayar di Kasir (Tunai)', 'Pelanggan membayar langsung di meja kasir.', switches.cashEnabled)}</section><section class="admin-panel settings-panel"><div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;"><h2 style="margin:0;">🤖 Integrasi Google Gemini AI</h2><span class="badge ${s.geminiStatus?.active ? 'badge-success' : 'badge-warning'}" id="geminiStatusBadge" style="padding: 3px 8px; font-size:11px;">${s.geminiStatus?.active ? '🟢 AKTIF' : '🟡 KUNCI BELUM DIISI'}</span></div><p style="font-size:12px; color:var(--muted); margin-bottom:12px;">Digunakan untuk OCR scan KTM presisi tinggi dan percakapan cerdas Barista AI Chatbot.${s.geminiStatus?.source ? `<br><small style="color:var(--text); display:inline-block; margin-top:4px;">Sumber Kunci: <b>${s.geminiStatus.source === 'ENV' ? 'Railway / Environment' : s.geminiStatus.source === 'DATABASE' ? 'Database Pengaturan' : 'Kunci Bawaan Sistem'}</b> ${s.geminiStatus.maskedKey ? `(${s.geminiStatus.maskedKey})` : ''}</small>` : ''}</p><label>Google Gemini API Key<div style="display:flex; gap:8px;"><input id="geminiApiKey" type="password" placeholder="AIzaSy... atau biarkan bawaan" value="${esc(s.geminiApiKey || '')}" style="flex:1;"><button type="button" class="btn btn-soft" id="btnToggleGeminiKey" style="padding:0 12px;" title="Tampilkan/Sembunyikan">👁️</button></div></label><div style="margin-top:10px; display:flex; gap:8px; align-items:center;"><button type="button" class="btn btn-outline" id="btnTestGemini">⚡ Uji Koneksi AI</button><span id="geminiTestResult" style="font-size:12px; color:var(--muted);"></span></div></section></div><div><section class="admin-panel settings-panel"><h2>Notifikasi & Suara</h2>${settingSwitch('soundEnabled', 'Pesanan Masuk Baru', 'Mainkan notifikasi suara saat browser mengizinkan.', switches.soundEnabled)}${settingSwitch('dailyReportEnabled', 'Laporan Penutupan Harian', 'Siapkan ringkasan operasional harian.', switches.dailyReportEnabled)}</section><section class="admin-panel settings-panel"><div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;"><h2 style="margin:0;">🖨️ Konfigurasi 2 Printer & 2 Dapur (POS)</h2><span class="badge badge-success" style="padding: 3px 8px; font-size:11px;">2 DAPUR AKTIF</span></div><p style="font-size:12px; color:var(--muted); margin-bottom:12px;">Perutean cetak pesanan otomatis ke 2 printer thermal: Printer 1 untuk Barista (Minuman) & Kasir, dan Printer 2 khusus Dapur Makanan.</p><label>☕ Nama Printer 1 (Barista & Kasir)<input id="cfgPrinter1" value="${esc(printerCfg.printer1Name)}" placeholder="Contoh: POS-80 Barista / Kasir"><small style="color:var(--muted);font-size:10.5px;">Menerima struk kasir dan tiket pesanan minuman.</small></label><label style="margin-top:8px;">🍽️ Nama Printer 2 (Dapur Makanan)<input id="cfgPrinter2" value="${esc(printerCfg.printer2Name)}" placeholder="Contoh: POS-80 Dapur Makanan"><small style="color:var(--muted);font-size:10.5px;">Menerima tiket pesanan khusus makanan dan snack dapur.</small></label><div class="two-fields" style="margin-top:8px;"><label>Lebar Roll Kertas<select id="cfgPaperWidth"><option value="80mm" ${printerCfg.paperWidth === '80mm' ? 'selected' : ''}>80mm (Standar POS)</option><option value="58mm" ${printerCfg.paperWidth === '58mm' ? 'selected' : ''}>58mm (Mini POS)</option></select></label><label>Buka Dialog Print<select id="cfgAutoPrompt"><option value="true" ${printerCfg.autoPrintPrompt !== false ? 'selected' : ''}>Otomatis (Langsung Cetak)</option><option value="false" ${printerCfg.autoPrintPrompt === false ? 'selected' : ''}>Manual (Pratinjau Dulu)</option></select></label></div><div style="margin-top:12px;padding:10px 12px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;"><div style="font-size:11.5px;font-weight:bold;margin-bottom:6px;color:#0f172a;">🧪 Uji Cetak Hardware (Test Print Thermal):</div><div style="display:flex;gap:6px;flex-wrap:wrap;"><button type="button" class="btn btn-outline btn-small" id="btnTestPrintBarista">☕ Tes Printer 1 (Barista)</button><button type="button" class="btn btn-outline btn-small" id="btnTestPrintKitchen">🍽️ Tes Printer 2 (Dapur)</button><button type="button" class="btn btn-outline btn-small" id="btnTestPrintCashier">🧾 Tes Struk Kasir</button></div></div></section><section class="admin-panel settings-panel"><h2>Keamanan & Akun</h2><label>Email Akun<input value="${esc(user.email || '')}" disabled></label><div class="setting-actions"><button class="btn btn-outline" id="btnChangePassword">Ubah Password</button><button class="btn btn-danger" id="logoutSettings">Keluar Sesi</button></div></section><section class="admin-panel settings-panel"><div><div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;"><h2 style="margin:0;">👥 Akun Staf & Hak Akses</h2>${user?.role === 'ADMIN' ? `<button type="button" class="btn btn-primary btn-small" id="btnAddStaff">+ Tambah Staf</button>` : ''}</div><p style="font-size:12px; color:var(--muted); margin-bottom:12px;">Daftarkan atau kelola akun Kasir, Barista Dapur, dan Administrator.</p><div id="staffListWrapper" style="display:flex; flex-direction:column; gap:8px;"></div></div></section></div></section><section class="admin-panel audit-panel"><div class="panel-head"><h2>Audit Trail</h2><span>${audit.length} aktivitas terakhir</span></div><div class="audit-list">${audit.slice(0, 12).map(a => `<div><span>${formatTime(a.at)}</span><b>${esc(a.action.replaceAll('_', ' '))}</b><small>${esc(JSON.stringify(a.meta || {}))}</small></div>`).join('') || '<div class="admin-empty">Belum ada aktivitas admin.</div>'}</div></section><div class="settings-save"><button class="btn btn-primary" id="saveSettings">Simpan Perubahan</button></div>`, 'settings', user);
 
   bindAdminChrome('settings');
-  $$('[data-setting-switch]').forEach(b => b.onclick = () => { const k = b.dataset.settingSwitch; switches[k] = !switches[k]; b.classList.toggle('on', switches[k]); });$('#saveSettings').onclick = async () => {
-    try { await api('/admin/settings', { method: 'PATCH', body: JSON.stringify({ cafeName: $('#cafeName').value, cafeAddress: $('#cafeAddress').value, cafePhone: $('#cafePhone').value, operatingHours: $('#operatingHours').value, serviceFee: +$('#serviceFee').value, taxPercent: +$('#taxPercent').value, geminiApiKey: $('#geminiApiKey') ? $('#geminiApiKey').value.trim() : undefined, ...switches }) }); toast('Pengaturan berhasil disimpan'); } catch (e) { toast(e.message, true); }
+  $$('[data-setting-switch]').forEach(b => b.onclick = () => { const k = b.dataset.settingSwitch; switches[k] = !switches[k]; b.classList.toggle('on', switches[k]); });
+  
+  const savePrinterValues = () => {
+    const p1 = $('#cfgPrinter1') ? $('#cfgPrinter1').value.trim() : 'Printer 1 (Barista & Kasir)';
+    const p2 = $('#cfgPrinter2') ? $('#cfgPrinter2').value.trim() : 'Printer 2 (Dapur Makanan)';
+    const pw = $('#cfgPaperWidth') ? $('#cfgPaperWidth').value : '80mm';
+    const ap = $('#cfgAutoPrompt') ? $('#cfgAutoPrompt').value !== 'false' : true;
+    return setPrinterConfig({ printer1Name: p1, printer2Name: p2, paperWidth: pw, autoPrintPrompt: ap });
   };
+
+  $('#saveSettings').onclick = async () => {
+    try {
+      savePrinterValues();
+      await api('/admin/settings', { method: 'PATCH', body: JSON.stringify({ cafeName: $('#cafeName').value, cafeAddress: $('#cafeAddress').value, cafePhone: $('#cafePhone').value, operatingHours: $('#operatingHours').value, serviceFee: +$('#serviceFee').value, taxPercent: +$('#taxPercent').value, geminiApiKey: $('#geminiApiKey') ? $('#geminiApiKey').value.trim() : undefined, ...switches }) });
+      toast('Pengaturan berhasil disimpan');
+    } catch (e) {
+      toast(e.message, true);
+    }
+  };
+
+  // Test Print Hardware Handlers
+  if ($('#btnTestPrintBarista')) {
+    $('#btnTestPrintBarista').onclick = () => {
+      const cfg = savePrinterValues();
+      const mockDrinkOrder = {
+        orderNumber: 'TEST-BARISTA-01',
+        queueNumber: 'Q-001',
+        tableName: 'Meja 01 (Tes Hardware)',
+        cafeName: $('#cafeName')?.value || 'CAFE CAMPUS',
+        cafeAddress: $('#cafeAddress')?.value || '',
+        cafePhone: $('#cafePhone')?.value || '',
+        paymentMethod: 'QRIS',
+        paymentStatus: 'PAID',
+        customerType: 'STUDENT',
+        studentName: 'Budi Santoso (Tes)',
+        items: [
+          { quantity: 2, productName: 'Iced Caramel Macchiato', options: { 'Ice': 'Less Ice', 'Sugar': 'Normal 50%' }, note: 'Extra shot espresso', lineTotal: 56000 }
+        ],
+        drinkItems: [
+          { quantity: 2, productName: 'Iced Caramel Macchiato', options: { 'Ice': 'Less Ice', 'Sugar': 'Normal 50%' }, note: 'Extra shot espresso', lineTotal: 56000 }
+        ],
+        foodItems: [],
+        subtotal: 56000,
+        total: 56000
+      };
+      toast(`Mengirim sampel tiket barista ke ${cfg.printer1Name}...`);
+      printKitchenReceipt(mockDrinkOrder, 'DRINK', cfg.paperWidth);
+    };
+  }
+
+  if ($('#btnTestPrintKitchen')) {
+    $('#btnTestPrintKitchen').onclick = () => {
+      const cfg = savePrinterValues();
+      const mockFoodOrder = {
+        orderNumber: 'TEST-DAPUR-02',
+        queueNumber: 'Q-002',
+        tableName: 'Meja 02 (Tes Hardware)',
+        cafeName: $('#cafeName')?.value || 'CAFE CAMPUS',
+        cafeAddress: $('#cafeAddress')?.value || '',
+        cafePhone: $('#cafePhone')?.value || '',
+        paymentMethod: 'CASH',
+        paymentStatus: 'PAID',
+        customerType: 'REGULAR',
+        items: [
+          { quantity: 1, productName: 'Croissant Butter Warm', options: { 'Penyajian': 'Hangat' }, note: 'Tolong potong dua', lineTotal: 25000 },
+          { quantity: 1, productName: 'Beef Bolognese Pasta', options: { 'Pedas': 'Sedang' }, note: 'Taburi keju parmesan', lineTotal: 38000 }
+        ],
+        drinkItems: [],
+        foodItems: [
+          { quantity: 1, productName: 'Croissant Butter Warm', options: { 'Penyajian': 'Hangat' }, note: 'Tolong potong dua', lineTotal: 25000 },
+          { quantity: 1, productName: 'Beef Bolognese Pasta', options: { 'Pedas': 'Sedang' }, note: 'Taburi keju parmesan', lineTotal: 38000 }
+        ],
+        subtotal: 63000,
+        total: 63000
+      };
+      toast(`Mengirim sampel tiket dapur makanan ke ${cfg.printer2Name}...`);
+      printKitchenReceipt(mockFoodOrder, 'FOOD', cfg.paperWidth);
+    };
+  }
+
+  if ($('#btnTestPrintCashier')) {
+    $('#btnTestPrintCashier').onclick = () => {
+      const cfg = savePrinterValues();
+      const mockCashierOrder = {
+        orderNumber: 'TEST-KASIR-03',
+        queueNumber: 'Q-003',
+        tableName: 'Meja 03 (Tes Hardware)',
+        cafeName: $('#cafeName')?.value || 'CAFE CAMPUS',
+        cafeAddress: $('#cafeAddress')?.value || 'Jl. Kampus Merdeka No. 1',
+        cafePhone: $('#cafePhone')?.value || '0812-3456-7890',
+        paymentMethod: 'QRIS',
+        paymentStatus: 'PAID',
+        customerType: 'STUDENT',
+        studentName: 'Fadhil Putra',
+        studentCampus: 'Universitas Amikom',
+        studentIdNum: '24SA11A065',
+        items: [
+          { quantity: 2, productName: 'Iced Caramel Macchiato', options: { 'Ice': 'Normal' }, lineTotal: 56000 },
+          { quantity: 1, productName: 'Croissant Butter Warm', options: {}, lineTotal: 25000 }
+        ],
+        drinkItems: [
+          { quantity: 2, productName: 'Iced Caramel Macchiato', options: { 'Ice': 'Normal' }, lineTotal: 56000 }
+        ],
+        foodItems: [
+          { quantity: 1, productName: 'Croissant Butter Warm', options: {}, lineTotal: 25000 }
+        ],
+        subtotal: 81000,
+        totalSavings: 15000,
+        serviceFee: 3300,
+        tax: 7260,
+        total: 76560
+      };
+      toast(`Mengirim sampel struk kasir ke ${cfg.printer1Name}...`);
+      printKitchenReceipt(mockCashierOrder, 'CUSTOMER', cfg.paperWidth);
+    };
+  }
   if ($('#btnTestGemini')) {
     $('#btnTestGemini').onclick = async () => {
       const statusSpan = $('#geminiTestResult');
