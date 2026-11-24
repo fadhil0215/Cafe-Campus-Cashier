@@ -42,7 +42,7 @@ describe('QRIS ANTI-FRAUD & MERCHANT STANDARDS TEST SUITE', () => {
             assert.equal(dataMeta.merchantName, 'WISATA NIAGA CAMPUS');
             assert.equal(dataMeta.nmid, 'ID2024361872201');
             assert.equal(dataMeta.acquirer, 'bale by btn');
-            assert.ok(dataMeta.qrPayload.startsWith('00020101021126620016ID.CO.QRIS.WWW'));
+            assert.ok(dataMeta.qrPayload.startsWith('00020101021126650013ID.CO.BTN.WWW'));
 
             // Verify SVG QR code
             const resSvg = await fetch(`http://127.0.0.1:${testPort}/qr/merchant-qris.svg`);

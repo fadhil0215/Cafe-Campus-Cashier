@@ -53,10 +53,10 @@ export const MERCHANT_QRIS = {
     merchantName: 'WISATA NIAGA CAMPUS',
     nmid: 'ID2024361872201',
     terminalId: 'A01',
-    city: 'PURWOKERTO',
-    postalCode: '53141',
+    city: 'BANYUMAS',
+    postalCode: '53122',
     acquirer: 'bale by btn',
-    qrPayload: '00020101021126620016ID.CO.QRIS.WWW01189360091100000000000215ID20243618722010303UMI5204599953033605802ID5919WISATA NIAGA CAMPUS6009PURWOKERTO61055314162070703A0163047D4C',
+    qrPayload: '00020101021126650013ID.CO.BTN.WWW011893600200137011000202154300033701100020303UMI51440014ID.CO.QRIS.WWW0215ID20243618722010303UMI5204701153033605802ID5919WISATA NIAGA CAMPUS6008BANYUMAS61055312262070703A0163044EDA',
     standImageUrl: '/assets/qris-wisata-niaga-campus.jpg'
 };
 
@@ -774,7 +774,7 @@ app.get('/qr/merchant-qris.svg', async (req, res) => {
             color: { dark: '#0f172a', light: '#ffffff' }
         });
         res.setHeader('Content-Type', 'image/svg+xml');
-        res.setHeader('Cache-Control', 'public, max-age=86400');
+        res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
         res.send(svg);
     } catch (err) {
         res.status(500).send('Gagal menghasilkan QR Code SVG');

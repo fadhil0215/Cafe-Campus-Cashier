@@ -2811,7 +2811,7 @@ async function trackPage(orderNumber) {
       const isRejected = o.payment?.aiStatus === 'REJECTED';
       const isVerified = o.payment?.aiStatus === 'VERIFIED';
       const isSuspicious = o.payment?.aiStatus === 'SUSPICIOUS';
-      const qrScanMode = sessionStorage.getItem('cc_qris_mode_' + o.orderNumber) || 'phone_scan';
+      const qrScanMode = sessionStorage.getItem('cc_qris_mode_' + o.orderNumber) || 'emvco';
 
       return `<section class="tracking-card qris-card-wrap" id="trackingCardInner">
         <div class="qris-card-banner">
@@ -2826,21 +2826,21 @@ async function trackPage(orderNumber) {
         </div>
 
         <div class="qris-mode-switcher">
-          <button type="button" class="qris-mode-tab ${qrScanMode === 'phone_scan' ? 'active' : ''}" data-qr-mode="phone_scan">
-            📱 Scan Kamera HP (Bayar Otomatis)
-          </button>
           <button type="button" class="qris-mode-tab ${qrScanMode === 'emvco' ? 'active' : ''}" data-qr-mode="emvco">
-            🏦 QRIS Standee BTN (Aplikasi Bank)
+            🏦 Scan DANA / BCA / M-Banking (QRIS Asli)
+          </button>
+          <button type="button" class="qris-mode-tab ${qrScanMode === 'phone_scan' ? 'active' : ''}" data-qr-mode="phone_scan">
+            📱 Scan Kamera HP Biasa (Portal Web)
           </button>
         </div>
 
         <div class="qris-main-box">
           <div class="qris-qr-frame">
-            <img src="${qrScanMode === 'phone_scan' ? `/qr/pay/${encodeURIComponent(o.orderNumber)}.svg` : '/qr/merchant-qris.svg'}" alt="QRIS Wisata Niaga Campus" class="qris-barcode-img">
+            <img src="${qrScanMode === 'phone_scan' ? `/qr/pay/${encodeURIComponent(o.orderNumber)}.svg?v=${Date.now()}` : `/qr/merchant-qris.svg?v=btn_${encodeURIComponent(o.orderNumber)}`}" alt="QRIS Wisata Niaga Campus" class="qris-barcode-img">
             <div class="qris-scan-caption">
               ${qrScanMode === 'phone_scan'
-                ? `📷 <b>ARAHKAN KAMERA HP KE QRIS DI ATAS</b><br><span style="font-size:10.5px;color:#64748b;font-weight:normal;">Buka kamera HP Anda, scan QR di atas untuk membuka portal pembayaran &amp; bayar langsung.</span>`
-                : `🏦 <b>SCAN DENGAN M-BANKING / E-WALLET</b><br><span style="font-size:10.5px;color:#64748b;font-weight:normal;">BCA, Mandiri, BRI, BNI, bale by BTN, GoPay, OVO, DANA, ShopeePay</span>`
+                ? `📷 <b>ARAHKAN KAMERA BAWAAN HP KE SINI</b><br><span style="font-size:11px;color:#475569;font-weight:normal;">Buka kamera foto biasa (tanpa aplikasi bank), ketuk tautan yang muncul untuk membuka portal di HP.</span>`
+                : `🏦 <b>SCAN MENGGUNAKAN DANA / M-BANKING</b><br><span style="font-size:11px;color:#475569;font-weight:normal;">Buka aplikasi <b>DANA, GoPay, OVO, ShopeePay, BCA, Mandiri, BRI, bale by BTN</b> lalu tekan menu <b>Pindai / Scan QR</b>.</span>`
               }
             </div>
             ${qrScanMode === 'phone_scan' ? `
